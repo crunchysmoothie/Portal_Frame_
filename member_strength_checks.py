@@ -91,3 +91,8 @@ def read_member_database(filename, section_name, fy=350, E=200):
 
 # Example call
 read_member_database('member_database.csv', '533x210x122')
+
+def LTB (fy, d):
+    return 0
+
+
