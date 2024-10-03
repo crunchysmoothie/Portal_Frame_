@@ -1,7 +1,7 @@
 import csv
 import math
 
-Cu, Lx, Kx = 5000, 5.0, 1.0  # Example values; modify as needed
+Cu, Lx, Kx = 500, 5.0, 1.0  # Example values; modify as needed
 Ly, Ky = 2.5, 1
 Mux_Top, Mux_Bot = 200, 50
 Muy_Top, Muy_Bot = 150, 10
@@ -37,13 +37,11 @@ def calculate_css(section, fy, E):
     )
 
     print(f"Cross Sectional Strength (CSS): {section['CSS']:.3f}")
-    print(section['U1y'])
 
 def calculate_u1y(section, fy, E):
     Cey = (math.pi ** 2 * E * section['Iy']) / (Ky * Ly) ** 2
     section['Kappa_y'] = (min(Muy_Top, Muy_Bot) / max(Muy_Top, Muy_Bot)) if max(Muy_Top, Muy_Bot) else 0
     section['w1y'] = max(0.6 - 0.4 * section['Kappa_y'], 0.4)
-    print(Cey)
     return max(section['w1y'] / (1 - (Cu / Cey)), 1)
 
 def calculate_oms(section, fy=350, E=200, Braced="No"):
