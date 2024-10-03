@@ -4,6 +4,7 @@ import math
 import itertools
 from PyNite import FEModel3D
 import member_strength_checks
+from member_strength_checks import calculate_css
 
 
 # Function to read input data from JSON file
@@ -52,12 +53,7 @@ def get_member_length(node_coords, node_start, node_end):
     return math.sqrt(dx ** 2 + dy ** 2)
 
 
-# Strength check functions (implement your equations)
-def cross_sectional_strength(forces, section):
-    # Placeholder implementation
-    # Use forces and section properties to calculate stress
-    # Return True if the section passes the check
-    return True
+read_member_database('member_database.csv', '533x210x122')
 
 
 def overall_member_strength(forces, section):
