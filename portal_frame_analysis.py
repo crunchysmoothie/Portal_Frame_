@@ -3,6 +3,7 @@ import csv
 import math
 import itertools
 from PyNite import FEModel3D
+import member_strength_checks
 
 
 # Function to read input data from JSON file
