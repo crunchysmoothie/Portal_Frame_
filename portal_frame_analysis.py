@@ -4,11 +4,13 @@ import math
 import itertools
 from PyNite import FEModel3D
 
+
 # Function to read input data from JSON file
 def read_input_data(filename):
     with open(filename, 'r') as f:
         data = json.load(f)
     return data
+
 
 # Function to read member properties from CSV file
 def read_member_database(filename):
@@ -19,21 +21,21 @@ def read_member_database(filename):
             # Convert string values to appropriate types
             section = {
                 'Section Name': row['Designation'],
-                'm': float(row['m']), # Mass per unit length
-                'A': float(row['A']), # Cross-sectional area
-                'Ix': float(row['Ix']), # Moment of inertia about x-axis
-                'Zex': float(row['Ze']), # Elastic section modulus x-axis
-                'Zplx': float(row['Zpl']), # Plastic section modulus x-axis
-                'rx': float(row['rx']), # Radius of gyration about x-axis
-                'Iy': float(row['Iy']), # Moment of inertia about y-axis
-                'Zey': float(row['Ze']), # Elastic section modulus y-axis
-                'Zply': float(row['Zpl']), # Plastic section modulus y-axis
-                'ry': float(row['ry']), # Radius of gyration about y-axis
-                'J': float(row['J']), # Torsional constant
-                'Cw': float(row['Cw']), # Warping constant
+                'm': float(row['m']),  # Mass per unit length
+                'A': float(row['A']),  # Cross-sectional area
+                'Ix': float(row['Ix']),  # Moment of inertia about x-axis
+                'Zex': float(row['Zex']),  # Elastic section modulus x-axis
+                'Zplx': float(row['Zplx']),  # Plastic section modulus x-axis
+                'rx': float(row['rx']),  # Radius of gyration about x-axis
+                'Iy': float(row['Iy']),  # Moment of inertia about y-axis
+                'Zey': float(row['Zey']),  # Elastic section modulus y-axis
+                'ry': float(row['ry']),  # Radius of gyration about y-axis
+                'J': float(row['J']),  # Torsional constant
+                'Cw': float(row['Cw']),  # Warping constant
             }
             available_sections.append(section)
-    return available_sections
+    return print(available_sections)
+
 
 # Function to calculate member length
 def get_member_length(node_coords, node_start, node_end):
@@ -41,7 +43,8 @@ def get_member_length(node_coords, node_start, node_end):
     x2, y2 = node_coords[node_end]
     dx = x2 - x1
     dy = y2 - y1
-    return math.sqrt(dx**2 + dy**2)
+    return math.sqrt(dx ** 2 + dy ** 2)
+
 
 # Strength check functions (implement your equations)
 def cross_sectional_strength(forces, section):
@@ -50,13 +53,16 @@ def cross_sectional_strength(forces, section):
     # Return True if the section passes the check
     return True
 
+
 def overall_member_strength(forces, section):
     # Placeholder implementation
     return True
 
+
 def lateral_torsional_buckling(forces, section):
     # Placeholder implementation
     return True
+
 
 def strength_checks(member_forces, member_sections):
     for member_name, forces in member_forces.items():
@@ -68,6 +74,7 @@ def strength_checks(member_forces, member_sections):
         if not lateral_torsional_buckling(forces, section):
             return False
     return True
+
 
 # Function to analyze the frame using PyNite
 def analyze_frame(input_data, member_sections, node_coords, members_info):
@@ -120,9 +127,10 @@ def analyze_frame(input_data, member_sections, node_coords, members_info):
 
     return results
 
+
 def main():
     # Read input data from JSON file
-    input_data = read_input_data('input_data.json')
+    input_data = read_input_data('load_case_input.json')
 
     # Read member properties from CSV file
     available_sections = read_member_database('member_database.csv')
@@ -203,5 +211,6 @@ def main():
         with open('optimal_sections.txt', 'w') as f:
             f.write("No acceptable configuration found.\n")
 
+
 if __name__ == '__main__':
-    main()
+    read_member_database('member_database.csv')
