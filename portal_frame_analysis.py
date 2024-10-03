@@ -22,6 +22,10 @@ def read_member_database(filename):
             section = {
                 'Section Name': row['Designation'],
                 'm': float(row['m']),  # Mass per unit length
+                'h': float(row['h']),  # Member height
+                'b': float(row['b']),  # Member width
+                'tw': float(row['tw']),  # Member width
+                'tf': float(row['tf']),  # Member width
                 'A': float(row['A']),  # Cross-sectional area
                 'Ix': float(row['Ix']),  # Moment of inertia about x-axis
                 'Zex': float(row['Zex']),  # Elastic section modulus x-axis
@@ -29,6 +33,7 @@ def read_member_database(filename):
                 'rx': float(row['rx']),  # Radius of gyration about x-axis
                 'Iy': float(row['Iy']),  # Moment of inertia about y-axis
                 'Zey': float(row['Zey']),  # Elastic section modulus y-axis
+                'Zply': float(row['Zply']),  # Plastic section modulus y-axis
                 'ry': float(row['ry']),  # Radius of gyration about y-axis
                 'J': float(row['J']),  # Torsional constant
                 'Cw': float(row['Cw']),  # Warping constant
