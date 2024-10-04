@@ -1,5 +1,12 @@
 import csv
 import math
+import member_database as mdb
+
+member_db = mdb.load_member_database()
+rafter_section_name = '254x146x31'
+r_mem_properties = mdb.member_properties(rafter_section_name, member_db)
+column_section_name = '356x171x45'
+c_mem_properties = mdb.member_properties(column_section_name, member_db)
 
 Cu = 2000
 Lx, Kx = 5.0, 1.0
