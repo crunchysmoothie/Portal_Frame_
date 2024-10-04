@@ -1,6 +1,6 @@
 from PyNite import FEModel3D
 from PyNite.Visualization import Renderer
-import member_database
+import member_database as mdb
 
 # Create a new model
 frame = FEModel3D()
@@ -17,10 +17,11 @@ frame.def_support('N1', True, True, True, True, True, True)
 frame.def_support('N5', True, True, True, True, True, True)
 
 # Create members (all members will have the same properties in this example)
-rafter_section_name = '254x254x73'
-rmem_properties = member_database.member_properties(rafter_section_name, member_database.load_member_database())
+member_db = mdb.load_member_database()
+rafter_section_name = '254x146x31'
+rmem_properties = mdb.member_properties(rafter_section_name, member_db)
 column_section_name = '356x171x45'
-cmem_properties = member_database.member_properties(column_section_name, member_database.load_member_database())
+cmem_properties = mdb.member_properties(column_section_name, member_db)
 
 RIx = rmem_properties['Ix']*10**6
 RIy = rmem_properties['Iy']*10**6
@@ -46,17 +47,19 @@ frame.add_member('M4', 'N4', 'N5', 'Steel', CIy, CIx, CJ, CA)
 
 # Add nodal loads
 frame.add_node_load('N3', 'FY', -50)
-frame.add_member_dist_load('M2', 'FY', 6/1000, 6/1000)
+
+# Add distributed loads
+frame.add_member_dist_load('M1', 'Fy', -6/1000, -6/1000)
 
 # Analyze the model
 frame.analyze(check_statics=True)
 
 # Render the deformed shape
 rndr = Renderer(frame)
-rndr.annotation_size = 500
+rndr.annotation_size = 250
 rndr.render_loads = True
 rndr.deformed_shape = True
-rndr.deformed_scale = 1
+rndr.deformed_scale = 100
 rndr.render_model()
 
 print(frame.members['M1'].max_moment('Mz')/1000,
@@ -65,4 +68,10 @@ print(frame.members['M2'].max_moment('Mz')/1000,
       frame.members['M2'].min_moment('Mz')/1000)
 # Correct the direction parameter to 'dx', 'dy', or 'dz'
 print(frame.nodes['N3'].DY)
+print(frame.nodes['N3'].DX)
+
+def lightest_section():
+      rafter = '254x146x31'
+      column = '356x171x45'
+      return rafter, column
 
