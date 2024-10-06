@@ -1,0 +1,71 @@
+{
+  "nodes": [
+    {"name": "N1", "x": 0, "y": 0, "z": 0},
+    {"name": "N2", "x": 0, "y": 5000, "z": 0},
+    {"name": "N3", "x": 4000, "y": 5000, "z": 0},
+    {"name": "N4", "x": 8000, "y": 5000, "z": 0},
+    {"name": "N5", "x": 8000, "y": 0, "z": 0}
+  ],
+  "supports": [
+    {"node": "N1", "DX": true, "DY": true, "DZ": false, "RX": false, "RY": false, "RZ": false},
+    {"node": "N5", "DX": true, "DY": true, "DZ": false, "RX": false, "RY": false, "RZ": false}
+  ],
+  "materials": [
+    {"name": "Steel_S355", "E": 200000, "G": 77000, "nu": 0.3, "rho": 7.85e-9},
+    {"name": "Steel_S275", "E": 200000, "G": 77000, "nu": 0.3, "rho": 7.85e-9}
+  ],
+
+  "members": [
+    {
+      "name": "M1",
+      "i_node": "N1",
+      "j_node": "N2",
+      "material": "Steel_S355",
+      "type": "column"
+    },
+    {
+      "name": "M2",
+      "i_node": "N2",
+      "j_node": "N3",
+      "material": "Steel_S355",
+      "type": "rafter"
+    },
+    {
+      "name": "M3",
+      "i_node": "N3",
+      "j_node": "N4",
+      "material": "Steel_S355",
+      "type": "rafter"
+    },
+    {
+      "name": "M4",
+      "i_node": "N4",
+      "j_node": "N5",
+      "material": "Steel_S355",
+      "type": "column"
+    }
+  ],
+  "loads": {
+    "nodal_loads": [
+      {"node": "N3", "direction": "FY", "magnitude": -50}
+    ],
+    "member_loads": [
+      {"member": "M1", "direction": "Fy", "w1": -0.006, "w2": -0.006}
+    ]
+  },
+
+  "rotational_springs": [
+    {
+      "node": "N1",
+      "dof": "RX",
+      "stiffness": 3,
+      "direction": null
+    },
+    {
+      "node": "N2",
+      "dof": "RX",
+      "stiffness": 3,
+      "direction": null
+    }
+  ]
+}
