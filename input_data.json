@@ -7,12 +7,12 @@
     {"name": "N5", "x": 8000, "y": 0, "z": 0}
   ],
   "supports": [
-    {"node": "N1", "DX": true, "DY": true, "DZ": false, "RX": false, "RY": false, "RZ": false},
-    {"node": "N5", "DX": true, "DY": true, "DZ": false, "RX": false, "RY": false, "RZ": false}
+    {"node": "N1", "DX": true, "DY": true, "DZ": false, "RX": true, "RY": true, "RZ": true},
+    {"node": "N5", "DX": true, "DY": true, "DZ": false, "RX": true, "RY": true, "RZ": true}
   ],
   "materials": [
-    {"name": "Steel_S355", "E": 200000, "G": 77000, "nu": 0.3, "rho": 7.85e-9},
-    {"name": "Steel_S275", "E": 200000, "G": 77000, "nu": 0.3, "rho": 7.85e-9}
+    {"name": "Steel_S355", "E": 200, "G": 77, "nu": 0.3, "rho": 7.85e-9},
+    {"name": "Steel_S275", "E": 200, "G": 77, "nu": 0.3, "rho": 7.85e-9}
   ],
 
   "nodal_loads": [

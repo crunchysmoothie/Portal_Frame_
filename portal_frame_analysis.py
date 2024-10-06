@@ -80,8 +80,6 @@ def lightest_section():
         frame.add_member_dist_load(member_load, data['member_loads'][member_load]['direction'],
                                  data['member_loads'][member_load]['w1'], data['member_loads'][member_load]['w2'])
 
-    frame.add_member_dist_load('M2', 'Fz', 0, -10)
-
     # Analyze the model
     frame.analyze(check_statics=True)
 
@@ -89,8 +87,8 @@ def lightest_section():
     rndr = Renderer(frame)
     rndr.annotation_size = 250
     rndr.render_loads = True
-    # rndr.deformed_shape = True
-    # rndr.deformed_scale = 100
+    rndr.deformed_shape = True
+    rndr.deformed_scale = 100
     rndr.render_model()
 
     print("Member M1 Max Mz:", frame.members['M1'].max_moment('Mz') / 1000, "kN-m")
