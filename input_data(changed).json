@@ -16,34 +16,10 @@
   ],
 
   "members": [
-    {
-      "name": "M1",
-      "i_node": "N1",
-      "j_node": "N2",
-      "material": "Steel_S355",
-      "type": "column"
-    },
-    {
-      "name": "M2",
-      "i_node": "N2",
-      "j_node": "N3",
-      "material": "Steel_S355",
-      "type": "rafter"
-    },
-    {
-      "name": "M3",
-      "i_node": "N3",
-      "j_node": "N4",
-      "material": "Steel_S355",
-      "type": "rafter"
-    },
-    {
-      "name": "M4",
-      "i_node": "N4",
-      "j_node": "N5",
-      "material": "Steel_S355",
-      "type": "column"
-    }
+    {"name": "M1", "i_node": "N1", "j_node": "N2", "material": "Steel_S355", "type": "column"},
+    {"name": "M2", "i_node": "N2", "j_node": "N3", "material": "Steel_S355", "type": "rafter"},
+    {"name": "M3", "i_node": "N3", "j_node": "N4", "material": "Steel_S355", "type": "rafter"},
+    {"name": "M4", "i_node": "N4", "j_node": "N5", "material": "Steel_S355", "type": "column"}
   ],
   "loads": {
     "nodal_loads": [

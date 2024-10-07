@@ -1,6 +1,5 @@
 from PyNite import FEModel3D
 from PyNite.Visualization import Renderer
-from PyNite import Reporting
 import member_database as mdb
 import json
 
@@ -37,7 +36,7 @@ def import_data(file):
         }
 
 def lightest_section():
-# Create a new model
+    # Create a new model
     frame = FEModel3D()
 
     data = import_data('input_data.json')
@@ -59,7 +58,6 @@ def lightest_section():
     rmem_properties = mdb.member_properties(rafter_section_name, member_db)
     column_section_name = '356x171x45'
     cmem_properties = mdb.member_properties(column_section_name, member_db)
-
     RIx = rmem_properties['Ix']*10**6
     RIy = rmem_properties['Iy']*10**6
     RJ = rmem_properties['J']*10**3
@@ -100,14 +98,17 @@ def lightest_section():
     # rndr.deformed_scale = 100
     # rndr.render_model()
 
-    print("Member M1 Max Mz:", frame.members['M1'].max_moment('Mz') / 1000, "kN-m")
-    print("Member M1 Min Mz:", frame.members['M1'].min_moment('Mz') / 1000, "kN-m")
-    print("Member M2 Max Mz:", frame.members['M2'].max_moment('Mz') / 1000, "kN-m")
-    print("Member M2 Min Mz:", frame.members['M2'].min_moment('Mz') / 1000, "kN-m")
-    print("Node N3 DY Displacement:", frame.nodes['N3'].DY, "mm")
-    print("Node N3 DX Displacement:", frame.nodes['N3'].DX, "mm")
-    print("Node N4 DZ Displacement:", frame.nodes['N4'].DX, "mm")
-
+    print("Member M1 Max Mz:", frame.members['M1'].max_moment('Mz', '1.0 DL') / 1000, "kN-m")
+    print("Member M1 Min Mz:", frame.members['M1'].min_moment('Mz', '1.0 DL') / 1000, "kN-m")
+    print("Member M2 Max Mz:", frame.members['M2'].max_moment('Mz', '1.0 DL') / 1000, "kN-m")
+    print("Member M2 Min Mz:", frame.members['M2'].min_moment('Mz', '1.0 DL') / 1000, "kN-m")
+    print("Member M3 Max Mz:", frame.members['M3'].max_moment('Mz', '1.0 DL') / 1000, "kN-m")
+    print("Member M3 Min Mz:", frame.members['M3'].min_moment('Mz', '1.0 DL') / 1000, "kN-m")
+    print("Member M4 Max Mz:", frame.members['M4'].max_moment('Mz', '1.0 DL') / 1000, "kN-m")
+    print("Member M4 Min Mz:", frame.members['M4'].min_moment('Mz', '1.0 DL') / 1000, "kN-m")
+    print("Member M1 Max Dy:", frame.members['M1'].max_deflection('dy', '1.2 DL + 1.6 LL'), "mm")
+    print("Member M1 Min Dy:", frame.members['M1'].min_deflection('dy', '1.2 DL + 1.6 LL'), "mm")
+    print("Node N2 Max Dx:", frame.nodes['N3'].DX)
 
     return
 
