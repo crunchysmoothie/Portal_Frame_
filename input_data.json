@@ -15,6 +15,18 @@
     {"name": "Steel_S275", "E": 200, "G": 80, "nu": 0.3, "rho": 78.50e-9}
   ],
 
+  "load_cases": [
+    {"name": "D_MIN", "type": "dead"},
+    {"name": "D_MAX", "type": "dead"},
+    {"name": "L", "type": "live"},
+    {"name": "W0_0.2U", "type": "wind"},
+    {"name": "W0_0.2D", "type": "wind"},
+    {"name": "W0_0.3U", "type": "wind"},
+    {"name": "W0_0.3D", "type": "wind"},
+    {"name": "W90_0.2", "type": "wind"},
+    {"name": "W90_0.3", "type": "wind"}
+  ],
+
   "nodal_loads": [
     {"node": "N3", "direction": "FY", "magnitude": -50, "case": "L"}
   ],
@@ -22,18 +34,25 @@
     {"member": "M1", "direction": "Fy", "w1": -0.006, "w2": -0.006, "case": "L"}
   ],
 
-  "rotational_springs": [
+  "serviceability_load_combinations": [
+    {"name": "Combo 1", "factors": {"D": 1.1}},
+    {"name": "Combo 2", "factors": {"D": 1.1, "L": 1.0}},
+    {"name": "Combo 3", "factors": {"D": 1.1, "L": 0.3, "W0_0.2U": 0.6}},
+    {"name": "Combo 4", "factors": {"D": 1.1, "L": 0.3, "W0_0.2D": 0.6}},
+    {"name": "Combo 5", "factors": {"D": 1.1, "L": 0.3, "W0_0.3U": 0.6}},
+    {"name": "Combo 6", "factors": {"D": 1.1, "L": 0.3, "W0_0.3D": 0.6}},
+    {"name": "Combo 7", "factors": {"D": 1.1, "L": 0.3, "W90_0.2": 0.6}},
+    {"name": "Combo 4", "factors": {"D": 1.1, "L": 0.3, "W90_0.3": 0.6}}
+  ],
+
+  "wind_data": [
     {
-      "node": "N1",
-      "dof": "RX",
-      "stiffness": 3,
-      "direction": null
-    },
-    {
-      "node": "N2",
-      "dof": "RX",
-      "stiffness": 3,
-      "direction": null
+      "type": "3s gust",
+      "basic_wind_speed": 36,
+      "return_period": 50,
+      "terrain_category": "B",
+      "altitude": 1400,
+      "topographic_category": 1
     }
   ]
 }
