@@ -35,16 +35,15 @@
   {"member":"M1","direction":"Fy","w1":-0.006,"w2":-0.006,"case":"L"},
   {"member":"M2","direction":"Fy","w1":-0.006,"w2":-0.006,"case":"L"}
 ],
-
-  "serviceability_load_combinations":[
-    {"name":"1.1 DL","factors":{"D":1.1}},
-    {"name":"1.1 DL + 1.0 LL","factors":{"D":1.1,"L":1.0}},
-    {"name":"0.9 DL + 0.6 W0_0.2U","factors":{"D":0.9,"W0_0.2U":0.6}},
-    {"name":"1.1 DL + 0.3 LL + 0.6 W0_0.2D","factors":{"D":1.1,"L":0.3,"W0_0.2D":0.6}},
-    {"name":"0.9 DL + 0.6 W0_0.3U","factors":{"D":0.9,"W0_0.3U":0.6}},
-    {"name":"1.1 DL + 0.3 LL + 0.6 W0_0.3U","factors":{"D":1.1,"L":0.3,"W0_0.3D":0.6}},
-    {"name":"0.9 DL + 0.3 LL + 0.6 W90_0.2","factors":{"D":1.1,"L":0.3,"W90_0.2":0.6}},
-    {"name":"0.9 DL + 0.3 LL + 0.6 W90_0.3","factors":{"D":1.1,"L":0.3,"W90_0.3":0.6}}
+"serviceability_load_combinations":[
+  {"name":"1.1 DL","factors":{"D":1.1}},
+  {"name":"1.1 DL + 1.0 LL","factors":{"D":1.1,"L":1.0}},
+  {"name":"0.9 DL + 0.6 W0_0.2U","factors":{"D":0.9,"W0_0.2U":0.6}},
+  {"name":"1.1 DL + 0.3 LL + 0.6 W0_0.2D","factors":{"D":1.1,"L":0.3,"W0_0.2D":0.6}},
+  {"name":"0.9 DL + 0.6 W0_0.3U","factors":{"D":0.9,"W0_0.3U":0.6}},
+  {"name":"1.1 DL + 0.3 LL + 0.6 W0_0.3U","factors":{"D":1.1,"L":0.3,"W0_0.3D":0.6}},
+  {"name":"0.9 DL + 0.3 LL + 0.6 W90_0.2","factors":{"D":1.1,"L":0.3,"W90_0.2":0.6}},
+  {"name":"0.9 DL + 0.3 LL + 0.6 W90_0.3","factors":{"D":1.1,"L":0.3,"W90_0.3":0.6}}
 ],
 "load_combinations":[
   {"name":"1.5 DL","factors":{"D":1.5}},

@@ -198,14 +198,14 @@ def build_model():
     # Analyze the model
     frame.analyze(check_statics=True)
 
-    # Render the deformed shape
-    rndr = Renderer(frame)
-    rndr.annotation_size = 140
-    rndr.render_loads = True
-    rndr.deformed_shape = True
-    rndr.deformed_scale = 100
-    rndr.combo_name = '1.2 DL + 1.6 LL'
-    rndr.render_model()
+    # # Render the deformed shape
+    # rndr = Renderer(frame)
+    # rndr.annotation_size = 140
+    # rndr.render_loads = True
+    # rndr.deformed_shape = True
+    # rndr.deformed_scale = 100
+    # rndr.combo_name = '1.2 DL + 1.6 LL'
+    # rndr.render_model()
 
     # Print results for specific load cases
     print("Member M1 Max Mz:", round(frame.members['M1'].max_moment('Mz', '1.2 DL + 1.6 LL') / 1000, 2), "kNm")
