@@ -8,12 +8,12 @@ r_mem_properties = mdb.member_properties(rafter_section_name, member_db)
 column_section_name = '356x171x45'
 c_mem_properties = mdb.member_properties(column_section_name, member_db)
 
-Cu = 2000
-Lx, Kx = 5.0, 1.0
-Ly, Ky = 2.5, 1
-Mux_Top, Mux_Bot = 80, 30
-Muy_Top, Muy_Bot = 50, 20
-Braced = "no"
+Cu = 100
+Lx, Kx = 3.0, 1.0
+Ly, Ky = 2, 1
+Mux_Top, Mux_Bot = 30, 10
+Muy_Top, Muy_Bot = 15, 5
+Braced = "yes"
 Section_Type = "I-section"
 
 def classify_flange(fy, b, tf):
@@ -117,6 +117,8 @@ def read_member_database(filename, section_choice, fy=350, E=200):
                         'OMS': oms,
                         'LTB': ltb
                     }
+
+# TODO: Sort member_database.csv in order of lightest section size
 
     return lightest_section
 

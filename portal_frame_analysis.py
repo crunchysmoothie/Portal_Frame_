@@ -54,16 +54,17 @@ frame.add_member_dist_load('M1', 'Fy', -6/1000, -6/1000)
 # Analyze the model
 frame.analyze(check_statics=True)
 
-# Render the deformed shape
-rndr = Renderer(frame)
-rndr.annotation_size = 250
-rndr.render_loads = True
-rndr.deformed_shape = True
-rndr.deformed_scale = 100
-rndr.render_model()
+# # Render the deformed shape
+# rndr = Renderer(frame)
+# rndr.annotation_size = 250
+# rndr.render_loads = True
+# rndr.deformed_shape = True
+# rndr.deformed_scale = 100
+# rndr.render_model()
 
 print(frame.members['M1'].max_moment('Mz')/1000,
-      frame.members['M1'].min_moment('Mz')/1000)
+      frame.members['M1'].min_moment('Mz')/1000,
+      frame.members['M1'].plot_moment('Mz'))
 print(frame.members['M2'].max_moment('Mz')/1000,
       frame.members['M2'].min_moment('Mz')/1000)
 # Correct the direction parameter to 'dx', 'dy', or 'dz'
