@@ -1,58 +1,72 @@
-{
-  "nodes": [
-    {"name": "N1", "x": 0, "y": 0, "z": 0},
-    {"name": "N2", "x": 0, "y": 5000, "z": 0},
-    {"name": "N3", "x": 4000, "y": 7000, "z": 0},
-    {"name": "N4", "x": 8000, "y": 5000, "z": 0},
-    {"name": "N5", "x": 8000, "y": 0, "z": 0}
-  ],
-  "supports": [
-    {"node": "N1", "DX": true, "DY": true, "DZ": true, "RX": true, "RY": true, "RZ": true},
-    {"node": "N5", "DX": true, "DY": true, "DZ": true, "RX": true, "RY": true, "RZ": true}
-  ],
-  "materials": [
-    {"name": "Steel_S355", "E": 200, "G": 80, "nu": 0.3, "rho": 78.5e-9},
-    {"name": "Steel_S275", "E": 200, "G": 80, "nu": 0.3, "rho": 78.50e-9}
-  ],
+{"nodes":[
+  {"name":"N1","x":0,"y":0.0,"z":0},
+  {"name":"N2","x":0,"y":2500.0,"z":0},
+  {"name":"N3","x":0,"y":5000.0,"z":0},
+  {"name":"N4","x":2000.0,"y":6000.0,"z":0},
+  {"name":"N5","x":4000.0,"y":7000.0,"z":0},
+  {"name":"N6","x":6000.0,"y":6000.0,"z":0},
+  {"name":"N7","x":8000,"y":5000.0,"z":0},
+  {"name":"N8","x":8000,"y":2500.0,"z":0},
+  {"name":"N9","x":8000,"y":0.0,"z":0}
+],
+"supports":[
+  {"node":"N1","DX":true,"DY":true,"DZ":true,"RX":true,"RY":true,"RZ":true},
+  {"node":"N9","DX":true,"DY":true,"DZ":true,"RX":true,"RY":true,"RZ":true}
+],
+"materials":[
+  {"name":"Steel_S355","E":200,"G":80,"nu":0.3,"rho":7.85e-08},
+  {"name":"Steel_S275","E":200,"G":80,"nu":0.3,"rho":7.85e-08}
+],
+"load_cases":[
+  {"name":"D_MIN","type":"dead"},
+  {"name":"D_MAX","type":"dead"},
+  {"name":"L","type":"live"},
+  {"name":"W0_0.2U","type":"wind"},
+  {"name":"W0_0.2D","type":"wind"},
+  {"name":"W0_0.3U","type":"wind"},
+  {"name":"W0_0.3D","type":"wind"},
+  {"name":"W90_0.2","type":"wind"},
+  {"name":"W90_0.3","type":"wind"}
+],
+"nodal_loads":[
+  {"node":"N5","direction":"FY","magnitude":-50,"case":"L"}
+],
+"member_loads":[
+  {"member":"M1","direction":"Fy","w1":-0.006,"w2":-0.006,"case":"L"},
+  {"member":"M2","direction":"Fy","w1":-0.006,"w2":-0.006,"case":"L"}
+],
 
-  "load_cases": [
-    {"name": "D_MIN", "type": "dead"},
-    {"name": "D_MAX", "type": "dead"},
-    {"name": "L", "type": "live"},
-    {"name": "W0_0.2U", "type": "wind"},
-    {"name": "W0_0.2D", "type": "wind"},
-    {"name": "W0_0.3U", "type": "wind"},
-    {"name": "W0_0.3D", "type": "wind"},
-    {"name": "W90_0.2", "type": "wind"},
-    {"name": "W90_0.3", "type": "wind"}
-  ],
-
-  "nodal_loads": [
-    {"node": "N3", "direction": "FY", "magnitude": -50, "case": "L"}
-  ],
-  "member_loads": [
-    {"member": "M1", "direction": "Fy", "w1": -0.006, "w2": -0.006, "case": "L"}
-  ],
-
-  "serviceability_load_combinations": [
-    {"name": "Combo 1", "factors": {"D": 1.1}},
-    {"name": "Combo 2", "factors": {"D": 1.1, "L": 1.0}},
-    {"name": "Combo 3", "factors": {"D": 1.1, "L": 0.3, "W0_0.2U": 0.6}},
-    {"name": "Combo 4", "factors": {"D": 1.1, "L": 0.3, "W0_0.2D": 0.6}},
-    {"name": "Combo 5", "factors": {"D": 1.1, "L": 0.3, "W0_0.3U": 0.6}},
-    {"name": "Combo 6", "factors": {"D": 1.1, "L": 0.3, "W0_0.3D": 0.6}},
-    {"name": "Combo 7", "factors": {"D": 1.1, "L": 0.3, "W90_0.2": 0.6}},
-    {"name": "Combo 4", "factors": {"D": 1.1, "L": 0.3, "W90_0.3": 0.6}}
-  ],
-
-  "wind_data": [
-    {
-      "type": "3s gust",
-      "basic_wind_speed": 36,
-      "return_period": 50,
-      "terrain_category": "B",
-      "altitude": 1400,
-      "topographic_category": 1
-    }
-  ]
+  "serviceability_load_combinations":[
+    {"name":"1.1 DL","factors":{"D":1.1}},
+    {"name":"1.1 DL + 1.0 LL","factors":{"D":1.1,"L":1.0}},
+    {"name":"0.9 DL + 0.6 W0_0.2U","factors":{"D":0.9,"W0_0.2U":0.6}},
+    {"name":"1.1 DL + 0.3 LL + 0.6 W0_0.2D","factors":{"D":1.1,"L":0.3,"W0_0.2D":0.6}},
+    {"name":"0.9 DL + 0.6 W0_0.3U","factors":{"D":0.9,"W0_0.3U":0.6}},
+    {"name":"1.1 DL + 0.3 LL + 0.6 W0_0.3U","factors":{"D":1.1,"L":0.3,"W0_0.3D":0.6}},
+    {"name":"0.9 DL + 0.3 LL + 0.6 W90_0.2","factors":{"D":1.1,"L":0.3,"W90_0.2":0.6}},
+    {"name":"0.9 DL + 0.3 LL + 0.6 W90_0.3","factors":{"D":1.1,"L":0.3,"W90_0.3":0.6}}
+],
+"load_combinations":[
+  {"name":"1.5 DL","factors":{"D":1.5}},
+  {"name":"1.2 DL + 1.6 LL","factors":{"D":1.2,"L":1.6}},
+  {"name":"0.9 DL + 0.6 W0_0.2U","factors":{"D":0.9,"W0_0.2U":0.6}},
+  {"name":"1.1 DL + 0.5 LL + 0.6 W0_0.2D","factors":{"D":1.1,"L":0.5,"W0_0.2D":0.6}},
+  {"name":"0.9 DL + 0.6 W0_0.3U","factors":{"D":0.9,"W0_0.3U":0.6}},
+  {"name":"1.1 DL + 0.5 LL + 0.6 W0_0.3U","factors":{"D":1.1,"L":0.5,"W0_0.3D":0.6}},
+  {"name":"0.9 DL + 0.6 W90_0.2","factors":{"D":1.1,"W90_0.2":0.6}},
+  {"name":"0.9 DL + 0.6 W90_0.3","factors":{"D":1.1,"W90_0.3":0.6}}
+],
+"wind_data":[
+  {"type":"3s gust","basic_wind_speed":36,"return_period":50,"terrain_category":"B","altitude":1400,"topographic_category":1}
+],
+"members":[
+  {"name":"M1","i_node":"N1","j_node":"N2","material":"Steel_S355","type":"column"},
+  {"name":"M2","i_node":"N2","j_node":"N3","material":"Steel_S355","type":"column"},
+  {"name":"M3","i_node":"N3","j_node":"N4","material":"Steel_S355","type":"rafter"},
+  {"name":"M4","i_node":"N4","j_node":"N5","material":"Steel_S355","type":"rafter"},
+  {"name":"M5","i_node":"N5","j_node":"N6","material":"Steel_S355","type":"rafter"},
+  {"name":"M6","i_node":"N6","j_node":"N7","material":"Steel_S355","type":"rafter"},
+  {"name":"M7","i_node":"N7","j_node":"N8","material":"Steel_S355","type":"column"},
+  {"name":"M8","i_node":"N8","j_node":"N9","material":"Steel_S355","type":"column"}
+]
 }
