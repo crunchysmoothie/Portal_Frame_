@@ -130,6 +130,7 @@ def update_nodes_and_members(json_filename, eaves_height, apex_height, rafter_sp
 eaves_height = 5 * 1000  # Convert to mm
 apex_height = 7 * 1000  # Convert to mm
 rafter_span = 8 * 1000  # Convert to mm
+rafter_spacing = 5 * 1000 # Convert to mm
 
 # Filename of the existing JSON file
 json_filename = 'input_data.json'
