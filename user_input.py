@@ -87,6 +87,7 @@ def generate_member_loads(members):
     return member_loads
 
 
+
 # Function to update nodes and members in the JSON data
 def update_nodes_and_members(json_filename, eaves_height, apex_height, rafter_span):
     # Generate new node and member data based on input dimensions
