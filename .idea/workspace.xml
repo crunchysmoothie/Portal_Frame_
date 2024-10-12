@@ -4,13 +4,9 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="c8f59bdd-e5a4-4338-bd02-6f086981f4ed" name="Changes" comment="Changed Everything.Now runs with all JSON created from user_input.py">
-      <change afterPath="$PROJECT_DIR$/todo.txt" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/pythonProject.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/pythonProject.iml" afterDir="false" />
+    <list default="true" id="c8f59bdd-e5a4-4338-bd02-6f086981f4ed" name="Changes" comment="Added todo.txt">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/input_data.json" beforeDir="false" afterPath="$PROJECT_DIR$/input_data.json" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/portal_frame_analysis.py" beforeDir="false" afterPath="$PROJECT_DIR$/portal_frame_analysis.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/user_input.py" beforeDir="false" afterPath="$PROJECT_DIR$/user_input.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -94,7 +90,7 @@
     &quot;settings.editor.selected.configurable&quot;: &quot;preferences.keymap&quot;
   }
 }</component>
-  <component name="RunManager" selected="Python.member_strength_checks">
+  <component name="RunManager" selected="Python.portal_frame_analysis">
     <configuration name="member_database" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
       <module name="pythonProject" />
       <option name="ENV_FILES" value="" />
@@ -207,8 +203,8 @@
     </configuration>
     <recent_temporary>
       <list>
-        <item itemvalue="Python.member_strength_checks" />
         <item itemvalue="Python.portal_frame_analysis" />
+        <item itemvalue="Python.member_strength_checks" />
         <item itemvalue="Python.member_database" />
         <item itemvalue="Python.user_input" />
         <item itemvalue="Python.wind_loads" />
@@ -231,6 +227,15 @@
       <option name="presentableId" value="Default" />
       <updated>1728365268444</updated>
     </task>
+    <task id="LOCAL-00001" summary="Added todo.txt">
+      <option name="closed" value="true" />
+      <created>1728398321244</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1728398321244</updated>
+    </task>
+    <option name="localTasksCounter" value="2" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -246,6 +251,7 @@
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="Changed Everything.Now runs with all JSON created from user_input.py" />
-    <option name="LAST_COMMIT_MESSAGE" value="Changed Everything.Now runs with all JSON created from user_input.py" />
+    <MESSAGE value="Added todo.txt" />
+    <option name="LAST_COMMIT_MESSAGE" value="Added todo.txt" />
   </component>
 </project>

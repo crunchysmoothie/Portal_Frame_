@@ -1,4 +1,5 @@
 import json
+
 from PyNite import FEModel3D
 from PyNite.Visualization import Renderer
 import member_database as mdb
@@ -108,18 +109,8 @@ def build_model():
         # Define the support spring using the correct method signature
         frame.def_support_spring(node, dof=dof, stiffness=stiffness, direction=direction)
 
-    # Function to determine the lightest sections
-    def lightest_section():
-        """
-        Determines and returns the section names for rafters and columns.
-        Modify this function based on your selection criteria.
-        """
-        rafter = '254x146x31'  # Example section name for rafters
-        column = '356x171x45'  # Example section name for columns
-        return rafter, column
-
     # Get the lightest sections
-    rafter_section_name, column_section_name = lightest_section()
+    rafter_section_name, column_section_name = '203x133x25', '254x146x31'
 
     # Get member properties from the member database
     rmem_properties = mdb.member_properties(rafter_section_name, member_db)
@@ -195,9 +186,6 @@ def build_model():
     # Add member self weight (optional, adjust as needed)
     frame.add_member_self_weight('FY', -1, 'D')  # Example: Adding self-weight in FY direction
 
-    # Analyze the model
-    frame.analyze(check_statics=True)
-
     # # Render the deformed shape
     # rndr = Renderer(frame)
     # rndr.annotation_size = 140
@@ -207,20 +195,33 @@ def build_model():
     # rndr.combo_name = '1.2 DL + 1.6 LL'
     # rndr.render_model()
 
-    # Print results for specific load cases
-    print("Member M1 Max Mz:", round(frame.members['M1'].max_moment('Mz', '1.2 DL + 1.6 LL') / 1000, 2), "kNm")
-    print("Member M1 Min Mz:", round(frame.members['M1'].min_moment('Mz', '1.2 DL + 1.6 LL') / 1000, 2), "kNm")
-    print("Node N1 FX Reaction:", round(frame.nodes['N1'].RxnFX['1.2 DL + 1.6 LL'], 2), "kN")
-    print("Node N1 FY Reaction:", round(frame.nodes['N1'].RxnFY['1.2 DL + 1.6 LL'], 2), "kN")
-    print("Node N1 MZ Reaction:", round(frame.nodes['N1'].RxnMZ['1.2 DL + 1.6 LL'] / 1000, 2), "kNm")
-    print("Node N9 FX Reaction:", round(frame.nodes['N9'].RxnFX['1.2 DL + 1.6 LL'], 2),  "kN")
-    print("Node N9 FY Reaction:", round(frame.nodes['N9'].RxnFY['1.2 DL + 1.6 LL'], 2), "kN")
-    print("Node N9 MZ Reaction:", round(frame.nodes['N9'].RxnMZ['1.2 DL + 1.6 LL'] / 1000, 2), "kNm")
-    print("Node N5 DX Displacement:", round(frame.nodes['N5'].DX['1.1 DL + 1.0 LL'], 2), "mm")
-    print("Node N5 DY Displacement:", round(frame.nodes['N5'].DY['1.1 DL + 1.0 LL'], 2), "mm")
+    return frame
 
 
-    return
+def SLS_check():
+    """
+    Checks the serviceability limit states of the structure.
+    """
+    # Build the model
+    frame = build_model()
+    data = import_data('input_data.json')
+
+    # Check deflection limits
+    deflection_limit = 20  # mm
+    max_deflection = max([abs(node.DY['1.1 DL + 1.0 LL']) for node in frame.nodes.values()])
+    if max_deflection > deflection_limit:
+        print(f"Deflection limit exceeded: {max_deflection} mm")
+
+    # Check drift limits
+    drift_limit = 0.005  # 0.5%
+    max_drift = max([abs(node.DY['1.1 DL + 1.0 LL']) for node in frame.nodes.values()])
+    if max_drift > drift_limit:
+        print(f"Drift limit exceeded: {max_drift * 100}%")
+
+    # Analyze the model
+    frame.analyze(check_statics=True)
+
+    return frame
 
 
 build_model()
