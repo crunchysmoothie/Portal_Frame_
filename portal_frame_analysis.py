@@ -1,9 +1,10 @@
 import json
+import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from PyNite import FEModel3D
 from PyNite.Visualization import Renderer
 import member_database as mdb
-
 
 def import_data(file):
     """
@@ -12,18 +13,20 @@ def import_data(file):
     with open(file) as f:
         data = json.load(f)
 
+        frame_data = data.get('frame_data', {})
+
         # Initialize dictionaries for the imported data
-        nodes = {node['name']: {'x': node['x'], 'y': node['y'], 'z': node['z']} 
+        nodes = {node['name']: {'x': node['x'], 'y': node['y'], 'z': node['z']}
                  for node in data.get('nodes', [])}
 
         supports = {support['node']: {
-                        'DX': support.get('DX', False), 
-                        'DY': support.get('DY', False), 
+                        'DX': support.get('DX', False),
+                        'DY': support.get('DY', False),
                         'DZ': support.get('DZ', False),
-                        'RX': support.get('RX', False), 
-                        'RY': support.get('RY', False), 
+                        'RX': support.get('RX', False),
+                        'RY': support.get('RY', False),
                         'RZ': support.get('RZ', False)
-                    } 
+                    }
                     for support in data.get('supports', [])}
 
         node_loads = data.get('nodal_loads', [])  # List of nodal load dictionaries
@@ -31,11 +34,11 @@ def import_data(file):
         member_loads = data.get('member_loads', [])  # List of member load dictionaries
 
         materials = {material['name']: {
-                        'E': material['E'], 
+                        'E': material['E'],
                         'G': material['G'],
-                        'nu': material['nu'], 
+                        'nu': material['nu'],
                         'rho': material['rho']
-                    } 
+                    }
                     for material in data.get('materials', [])}
 
         members = data.get('members', [])  # List of member dictionaries
@@ -49,6 +52,7 @@ def import_data(file):
         geometry_parameters = data.get('geometry_parameters', {})  # Geometry parameters dictionary
 
         return {
+            'frame_data': frame_data,
             'nodes': nodes,
             'supports': supports,
             'nodal_loads': node_loads,
@@ -61,19 +65,15 @@ def import_data(file):
             'geometry_parameters': geometry_parameters
         }
 
-
-def build_model():
+def build_model(rmem, cmem):
     """
-    Builds and analyzes the FE model based on the imported JSON data.
+    Builds and returns the FE model based on the imported JSON data.
     """
     # Create a new model
     frame = FEModel3D()
 
     # Import data
     data = import_data('input_data.json')
-
-    # Load the member database
-    member_db = mdb.load_member_database()
 
     # Define materials
     for name, props in data['materials'].items():
@@ -100,33 +100,17 @@ def build_model():
         RZ = support.get('RZ', False)
         frame.def_support(node, DX, DY, DZ, RX, RY, RZ)
 
-    # Define nodal spring supports (if any)
-    for spring in data.get('rotational_springs', []):
-        node = spring['node']
-        dof = spring['dof']  # 'DX', 'DY', 'DZ', 'RX', 'RY', or 'RZ'
-        stiffness = spring['stiffness']
-        direction = spring.get('direction', None)  # '+', '-', or None
-        # Define the support spring using the correct method signature
-        frame.def_support_spring(node, dof=dof, stiffness=stiffness, direction=direction)
-
-    # Get the lightest sections
-    rafter_section_name, column_section_name = '203x133x25', '254x146x31'
-
-    # Get member properties from the member database
-    rmem_properties = mdb.member_properties(rafter_section_name, member_db)
-    cmem_properties = mdb.member_properties(column_section_name, member_db)
-
     # Convert units from cm^2 to mm^2 and cm^4 to mm^4 for rafters
-    RA = rmem_properties['A'] * 1e3       # Cross-sectional area in mm^2
-    RIy = rmem_properties['Iy'] * 1e6     # Moment of inertia about local y-axis in mm^4
-    RIx = rmem_properties['Ix'] * 1e6     # Moment of inertia about local x-axis in mm^4
-    RJ = rmem_properties['J'] * 1e3       # Torsional constant in mm^4
+    RA = rmem['A'] * 1e3       # Cross-sectional area in mm^3
+    RIy = rmem['Iy'] * 1e6     # Moment of inertia about local y-axis in mm^6
+    RIx = rmem['Ix'] * 1e6     # Moment of inertia about local x-axis in mm^6
+    RJ = rmem['J'] * 1e3       # Torsional constant in mm^3
 
     # Convert units from cm^2 to mm^2 and cm^4 to mm^4 for columns
-    CA = cmem_properties['A'] * 1e3       # Cross-sectional area in mm^2
-    CIy = cmem_properties['Iy'] * 1e6     # Moment of inertia about local y-axis in mm^4
-    CIx = cmem_properties['Ix'] * 1e6     # Moment of inertia about local x-axis in mm^4
-    CJ = cmem_properties['J'] * 1e3       # Torsional constant in mm^4
+    CA = cmem['A'] * 1e3        # Cross-sectional area in mm^3
+    CIy = cmem['Iy'] * 1e6     # Moment of inertia about local y-axis in mm^6
+    CIx = cmem['Ix'] * 1e6     # Moment of inertia about local x-axis in mm^6
+    CJ = cmem['J'] * 1e3       # Torsional constant in mm^3
 
     # Define members
     for member in data['members']:
@@ -170,11 +154,28 @@ def build_model():
         case = member_load.get('case', None)  # Optional
         frame.add_member_dist_load(member_name, direction, w1, w2, None, None, case)
 
-    # Add load combinations
-    for ULS_combo in data.get('load_combinations', []):
-        combo_name = ULS_combo['name']
-        factors = ULS_combo['factors']
-        frame.add_load_combo(combo_name, factors=factors)
+    # Add member self weight (optional, adjust as needed)
+    frame.add_member_self_weight('FY', -1, 'D')  # Example: Adding self-weight in FY direction
+
+    return frame
+
+def analyze_combination(args):
+    """
+    Analyzes a single combination of rafter and column sections.
+    """
+    (r_section_type, rafter_section_name, c_section_type, column_section_name,
+     member_db, data, vert_deflection_limit, horiz_deflection_limit) = args
+
+    # Get member properties
+    rmem = mdb.member_properties(r_section_type, rafter_section_name, member_db)
+    cmem = mdb.member_properties(c_section_type, column_section_name, member_db)
+
+    # Check h and b constraints
+    if rmem['h'] > cmem['h'] or rmem['b'] > cmem['b']:
+        return None  # Constraints not satisfied
+
+    # Build the model with current sections
+    frame = build_model(rmem, cmem)
 
     # Add serviceability load combinations
     for SLS_combo in data.get('serviceability_load_combinations', []):
@@ -182,46 +183,155 @@ def build_model():
         factors = SLS_combo['factors']
         frame.add_load_combo(combo_name, factors=factors)
 
-
-    # Add member self weight (optional, adjust as needed)
-    frame.add_member_self_weight('FY', -1, 'D')  # Example: Adding self-weight in FY direction
-
-    # # Render the deformed shape
-    # rndr = Renderer(frame)
-    # rndr.annotation_size = 140
-    # rndr.render_loads = True
-    # rndr.deformed_shape = True
-    # rndr.deformed_scale = 100
-    # rndr.combo_name = '1.2 DL + 1.6 LL'
-    # rndr.render_model()
-
-    return frame
-
-
-def SLS_check():
-    """
-    Checks the serviceability limit states of the structure.
-    """
-    # Build the model
-    frame = build_model()
-    data = import_data('input_data.json')
-
-    # Check deflection limits
-    deflection_limit = 20  # mm
-    max_deflection = max([abs(node.DY['1.1 DL + 1.0 LL']) for node in frame.nodes.values()])
-    if max_deflection > deflection_limit:
-        print(f"Deflection limit exceeded: {max_deflection} mm")
-
-    # Check drift limits
-    drift_limit = 0.005  # 0.5%
-    max_drift = max([abs(node.DY['1.1 DL + 1.0 LL']) for node in frame.nodes.values()])
-    if max_drift > drift_limit:
-        print(f"Drift limit exceeded: {max_drift * 100}%")
-
     # Analyze the model
-    frame.analyze(check_statics=True)
+    try:
+        frame.analyze(check_statics=False)
+    except Exception as e:
+        # Handle analysis failures gracefully
+        return None
 
-    return frame
+    # Initialize worst-case deflections
+    worst_vert_deflection = 0
+    worst_horiz_deflection = 0
+
+    # Check deflections for each combo
+    for combo in data.get('serviceability_load_combinations', []):
+        combo_name = combo['name']
+        for node in frame.nodes.values():
+            dx = abs(node.DX[combo_name])
+            dy = abs(node.DY[combo_name])
+
+            # Update worst-case deflections
+            if dy > worst_vert_deflection:
+                worst_vert_deflection = dy
+            if dx > worst_horiz_deflection:
+                worst_horiz_deflection = dx
+
+    # Check if deflections are within limits
+    if (worst_vert_deflection <= vert_deflection_limit and
+        worst_horiz_deflection <= horiz_deflection_limit):
+        # Return necessary data
+        total_weight = rmem['m'] + cmem['m']
+        return total_weight, rafter_section_name, column_section_name, worst_vert_deflection, worst_horiz_deflection
+    else:
+        return None
+
+def SLS_check(preferred_section ,r_section_type, c_section_type):
+    """
+    Iterates through the member database to find the lightest acceptable sections
+    for rafters and columns that satisfy the serviceability limit state checks.
+    """
+    start_time = time.time()
+
+    # Load the member database
+    member_db = mdb.load_member_database()
+
+    # Verify the section types
+    if r_section_type not in member_db or c_section_type not in member_db:
+        raise ValueError("Invalid section type. Choose either 'I-Sections' or 'H-Sections'.")
+
+    # Extract sorted lists of section names for rafters and columns
+    rafter_sections = [
+        sec for sec in member_db[r_section_type]
+        if member_db[r_section_type][sec].get('Preferred', 'No') == preferred_section
+    ]
+    column_sections = [
+        sec for sec in member_db[c_section_type]
+        if member_db[c_section_type][sec].get('Preferred', 'No') == preferred_section
+    ]
+
+    # Ensure that there are sections to process
+    if not rafter_sections or not column_sections:
+        raise ValueError(f"No sections found with Preferred='{preferred_section}' for the given section types.")
 
 
-build_model()
+    # Get geometry parameters for deflection limits
+    data = import_data('input_data.json')
+    # Check vertical (dy) deflection of rafters
+    vert_deflection_limit = data['frame_data'][0]['rafter_span']/300  # L/300
+    print(f"Vertical deflection limit: {vert_deflection_limit:.2f} mm")
+    horiz_deflection_limit = data['frame_data'][0]['eaves_height']/300  # L/300
+    print(f"Horizontal deflection limit: {horiz_deflection_limit:.2f} mm")
+
+
+    # Prepare arguments for multiprocessing
+    tasks = []
+    for column_section_name in column_sections:
+        for rafter_section_name in rafter_sections:
+            args = (
+                r_section_type, rafter_section_name,
+                c_section_type, column_section_name,
+                member_db, data, vert_deflection_limit, horiz_deflection_limit
+            )
+            tasks.append(args)
+
+    acceptable_sections = []
+
+    # Use ProcessPoolExecutor for multiprocessing
+    with ProcessPoolExecutor() as executor:
+        futures = [executor.submit(analyze_combination, task) for task in tasks]
+
+        for future in as_completed(futures):
+            result = future.result()
+            if result is not None:
+                acceptable_sections.append(result)
+
+    if acceptable_sections:
+        # Sort acceptable sections by total weight
+        acceptable_sections.sort(key=lambda x: x[0])  # x[0] is total_weight
+        best_section = acceptable_sections[0]
+        total_weight, rafter_section_name, column_section_name, worst_vert_deflection, worst_horiz_deflection = best_section
+        print(f"Lightest acceptable rafter section: {rafter_section_name}")
+        print(f"Lightest acceptable column section: {column_section_name}")
+        print(f"Total weight: {total_weight} kg/m")
+        print(f"Worst vertical deflection: {worst_vert_deflection:.2f} mm")
+        print(f"Worst horizontal deflection: {worst_horiz_deflection:.2f} mm")
+
+        end_time = time.time()
+        print(f"Script execution time: {end_time - start_time:.2f} seconds")
+
+        # Rebuild and analyze the frame with the best sections in the main process
+        rmem = member_db[r_section_type][rafter_section_name]
+        cmem = member_db[c_section_type][column_section_name]
+        frame = build_model(rmem, cmem)
+
+        # Add serviceability load combinations
+        for SLS_combo in data.get('serviceability_load_combinations', []):
+            combo_name = SLS_combo['name']
+            factors = SLS_combo['factors']
+            frame.add_load_combo(combo_name, factors=factors)
+
+        # Analyze the frame
+        frame.analyze(check_statics=False)
+
+        return frame, member_db, r_section_type, c_section_type, (rafter_section_name, column_section_name)
+    else:
+        print("No acceptable section found that satisfies the serviceability limit states.")
+        end_time = time.time()
+        print(f"Script execution time: {end_time - start_time:.2f} seconds")
+        return None, None, None, None, None
+
+def render_model(frame):
+    # Render the model
+    rndr = Renderer(frame)
+    rndr.annotation_size = 250
+    rndr.render_loads = True
+    rndr.deformed_shape = True
+    rndr.deformed_scale = 5
+    rndr.combo_name = '1.1 DL + 1.0 LL'  # Adjust as necessary
+    rndr.render_model()
+
+def main():
+    preferred_section = 'Yes'      # or 'No', based on user preference
+    r_section_type = 'I-Sections'  # or 'H-Sections', based on user preference
+    c_section_type = 'I-Sections'  # or 'H-Sections', based on user preference
+
+    frame, member_db, r_section_type, c_section_type, best_section = SLS_check(preferred_section, r_section_type, c_section_type)
+
+    if frame is not None:
+        render_model(frame)
+    else:
+        print("Unable to find acceptable sections.")
+
+if __name__ == "__main__":
+    main()
