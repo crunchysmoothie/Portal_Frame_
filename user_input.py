@@ -91,6 +91,7 @@ def generate_member_loads(members):
 # Function to update nodes and members in the JSON data
 def update_nodes_and_members(json_filename, eaves_height, apex_height, rafter_span):
     # Generate new node and member data based on input dimensions
+    updated_frame = [{"type": "portal", "eaves_height": eaves_height, "apex_height": apex_height, "rafter_span": rafter_span, "bay_spacing": 6000}]
     new_nodes = generate_nodes(eaves_height, apex_height, rafter_span)
     new_members = generate_members(new_nodes)
     new_supports = generate_supports(new_nodes)
@@ -104,6 +105,7 @@ def update_nodes_and_members(json_filename, eaves_height, apex_height, rafter_sp
 
 
     # Update only the "nodes" and "members" sections
+    data["frame_data"] = updated_frame
     data["nodes"] = new_nodes
     data["members"] = new_members
     data["supports"] = new_supports
