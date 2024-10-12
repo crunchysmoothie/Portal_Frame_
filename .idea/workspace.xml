@@ -4,13 +4,15 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="c8f59bdd-e5a4-4338-bd02-6f086981f4ed" name="Changes" comment="Changed Everything.Now runs with all JSON created from user_input.py">
-      <change afterPath="$PROJECT_DIR$/input_data(BU).json" afterDir="false" />
+    <list default="true" id="c8f59bdd-e5a4-4338-bd02-6f086981f4ed" name="Changes" comment="Added todo.txt">
+      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/input_data(BU).json" beforeDir="false" afterPath="$PROJECT_DIR$/input_data(BU).json" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/input_data.json" beforeDir="false" afterPath="$PROJECT_DIR$/input_data.json" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/test.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/member_database.csv" beforeDir="false" afterPath="$PROJECT_DIR$/member_database.csv" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/member_database.py" beforeDir="false" afterPath="$PROJECT_DIR$/member_database.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/portal_frame_analysis.py" beforeDir="false" afterPath="$PROJECT_DIR$/portal_frame_analysis.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/user_input.py" beforeDir="false" afterPath="$PROJECT_DIR$/user_input.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/wind_loads.py" beforeDir="false" afterPath="$PROJECT_DIR$/wind_loads.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -18,11 +20,6 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="Git.Settings">
-    <option name="RECENT_BRANCH_BY_REPOSITORY">
-      <map>
-        <entry key="$PROJECT_DIR$" value="main" />
-      </map>
-    </option>
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
   <component name="GitHubPullRequestSearchHistory">{
@@ -63,6 +60,13 @@
     }
   ]
 }</component>
+  <component name="GithubProjectSettings">
+    <option name="branchProtectionPatterns">
+      <list>
+        <option value="main" />
+      </list>
+    </option>
+  </component>
   <component name="GithubPullRequestsUISettings">{
   &quot;selectedUrlAndAccountId&quot;: {
     &quot;url&quot;: &quot;https://github.com/crunchysmoothie/Portal_Frame_.git&quot;,
@@ -78,27 +82,21 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "Python.member_database.executor": "Run",
-    "Python.member_strength_checks.executor": "Run",
-    "Python.portal_frame_analysis.executor": "Run",
-    "Python.test.executor": "Run",
-    "Python.user_input.executor": "Run",
-    "Python.wind_loads.executor": "Run",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "git-widget-placeholder": "feature/jacques/wind",
-    "ignore.virus.scanning.warn.message": "true",
-    "last_opened_file_path": "C:/Users/jacquesvdw/PycharmProjects/Portal_Frame",
-    "settings.editor.selected.configurable": "preferences.keymap"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;Python.member_database.executor&quot;: &quot;Run&quot;,
+    &quot;Python.member_strength_checks.executor&quot;: &quot;Run&quot;,
+    &quot;Python.portal_frame_analysis.executor&quot;: &quot;Run&quot;,
+    &quot;Python.test.executor&quot;: &quot;Run&quot;,
+    &quot;Python.user_input.executor&quot;: &quot;Run&quot;,
+    &quot;Python.wind_loads.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;feature/ruan/Improve__imports&quot;,
+    &quot;ignore.virus.scanning.warn.message&quot;: &quot;true&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;preferences.keymap&quot;
   }
-}]]></component>
-  <component name="RecentsManager">
-    <key name="CopyFile.RECENT_KEYS">
-      <recent name="C:\Users\jacquesvdw\PycharmProjects\Portal_Frame" />
-    </key>
-  </component>
-  <component name="RunManager" selected="Python.wind_loads">
+}</component>
+  <component name="RunManager" selected="Python.portal_frame_analysis">
     <configuration name="member_database" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
       <module name="pythonProject" />
       <option name="ENV_FILES" value="" />
@@ -211,11 +209,11 @@
     </configuration>
     <recent_temporary>
       <list>
-        <item itemvalue="Python.wind_loads" />
-        <item itemvalue="Python.user_input" />
         <item itemvalue="Python.portal_frame_analysis" />
-        <item itemvalue="Python.member_strength_checks" />
         <item itemvalue="Python.member_database" />
+        <item itemvalue="Python.user_input" />
+        <item itemvalue="Python.member_strength_checks" />
+        <item itemvalue="Python.wind_loads" />
       </list>
     </recent_temporary>
   </component>
@@ -235,6 +233,15 @@
       <option name="presentableId" value="Default" />
       <updated>1728365268444</updated>
     </task>
+    <task id="LOCAL-00001" summary="Added todo.txt">
+      <option name="closed" value="true" />
+      <created>1728398321244</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1728398321244</updated>
+    </task>
+    <option name="localTasksCounter" value="2" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -250,6 +257,7 @@
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="Changed Everything.Now runs with all JSON created from user_input.py" />
-    <option name="LAST_COMMIT_MESSAGE" value="Changed Everything.Now runs with all JSON created from user_input.py" />
+    <MESSAGE value="Added todo.txt" />
+    <option name="LAST_COMMIT_MESSAGE" value="Added todo.txt" />
   </component>
 </project>
