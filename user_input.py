@@ -46,8 +46,8 @@ def generate_nodes(eaves_height, apex_height, rafter_span):
 def generate_supports(nodes):
 
     supports = [
-        {"node": nodes[0]["name"], "DX": True, "DY": True, "DZ": True, "RX": True, "RY": True, "RZ": True},
-        {"node": nodes[-1]["name"], "DX": True, "DY": True, "DZ": True, "RX": True, "RY": True, "RZ": True}
+        {"node": nodes[0]["name"], "DX": True, "DY": True, "DZ": True, "RX": False, "RY": False, "RZ": False},
+        {"node": nodes[-1]["name"], "DX": True, "DY": True, "DZ": True, "RX": False, "RY": False, "RZ": False}
     ]
 
     return supports
@@ -86,6 +86,10 @@ def generate_member_loads(members):
 
     return member_loads
 
+def generate_spring_supports(nodes):
+    rotational_springs = [{"node": nodes[0]["name"], "direction": "RZ", "stiffness": 5E6},
+                          {"node": nodes[-1]["name"], "direction": "RZ", "stiffness": 5E6}]
+    return rotational_springs
 
 
 # Function to update nodes and members in the JSON data
@@ -97,12 +101,11 @@ def update_nodes_and_members(json_filename, eaves_height, apex_height, rafter_sp
     new_supports = generate_supports(new_nodes)
     new_loads = generate_nodal_loads(new_nodes)
     new_member_loads = generate_member_loads(new_members)
+    rotational_springs = generate_spring_supports(new_nodes)
 
     # Load existing JSON data
     with open(json_filename, 'r') as file:
         data = json.load(file)
-
-
 
     # Update only the "nodes" and "members" sections
     data["frame_data"] = updated_frame
@@ -111,7 +114,7 @@ def update_nodes_and_members(json_filename, eaves_height, apex_height, rafter_sp
     data["supports"] = new_supports
     data["nodal_loads"] = new_loads
     data["member_loads"] = new_member_loads
-
+    data["rotational_springs"] = rotational_springs
 
     # Convert data to a compact JSON string
     json_str = json.dumps(data, separators=(',', ':'))
