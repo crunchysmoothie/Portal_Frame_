@@ -13,8 +13,12 @@
   {"name":"N9","x":8000,"y":0.0,"z":0}
 ],
 "supports":[
-  {"node":"N1","DX":true,"DY":true,"DZ":true,"RX":true,"RY":true,"RZ":true},
-  {"node":"N9","DX":true,"DY":true,"DZ":true,"RX":true,"RY":true,"RZ":true}
+  {"node":"N1","DX":true,"DY":true,"DZ":true,"RX":false,"RY":false,"RZ":false},
+  {"node":"N9","DX":true,"DY":true,"DZ":true,"RX":false,"RY":false,"RZ":false}
+],
+"rotational_springs":[
+  {"node":"N1","direction":"RZ","stiffness":5000000.0},
+  {"node":"N9","direction":"RZ","stiffness":5000000.0}
 ],
 "materials":[
   {"name":"Steel_S355","E":200,"G":80,"nu":0.3,"rho":7.85e-08},
@@ -61,7 +65,7 @@
 "wind_data":[
   {"type":"3s gust","fundamental_basic_wind_speed":36,"return_period":50,"terrain_category":"B","altitude":1500,"topographic_factor":1,"apex_height":15,"eaves_height":9,"gable_width":40,"building_length":82,"roof_pitch":16.7}
 ],
-"wind_loads":[
+"wind_zones":[
   {"Zone":"A","cpe":-1.2,"cpi=0.2":-0.9497,"cpi=-0.3":-0.6105},
   {"Zone":"B","cpe":-0.8,"cpi=0.2":-0.6784,"cpi=-0.3":-0.3392},
   {"Zone":"C","cpe":-0.5,"cpi=0.2":-0.4748,"cpi=-0.3":-0.1357},
@@ -73,6 +77,17 @@
   {"Zone":"I","cpe":-0.4,"cpi=0.2":-0.407,"cpi=-0.3":-0.0678},
   {"Zone":"J","cpe":-0.9433,"cpi=0.2":-0.7756,"cpi=-0.3":-0.4364}
 ],
+
+  "wind_loads":[
+    {"member":"M1","direction":"Fy","w1":-0.006,"w2":-0.006,"case":"L"},
+    {"member":"M2","direction":"Fy","w1":-0.006,"w2":-0.006,"case":"L"},
+    {"member":"M3","direction":"Fy","w1":-0.006,"w2":-0.006,"case":"L"},
+    {"member":"M4","direction":"Fy","w1":-0.006,"w2":-0.006,"case":"L"},
+    {"member":"M5","direction":"Fy","w1":-0.006,"w2":-0.006,"case":"L"},
+    {"member":"M6","direction":"Fy","w1":-0.006,"w2":-0.006,"case":"L"},
+    {"member":"M7","direction":"Fy","w1":-0.006,"w2":-0.006,"case":"L"},
+    {"member":"M8","direction":"Fy","w1":-0.006,"w2":-0.006,"case":"L"}
+  ],
 "members":[
   {"name":"M1","i_node":"N1","j_node":"N2","material":"Steel_S355","type":"column"},
   {"name":"M2","i_node":"N2","j_node":"N3","material":"Steel_S355","type":"column"},

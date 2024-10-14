@@ -1,10 +1,10 @@
 import json
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
-
 from PyNite import FEModel3D
 from PyNite.Visualization import Renderer
 import member_database as mdb
+import tabulate
 
 def import_data(file):
     """
@@ -65,7 +65,7 @@ def import_data(file):
             'geometry_parameters': geometry_parameters
         }
 
-def build_model(rmem, cmem):
+def build_model(r_mem, c_mem):
     """
     Builds and returns the FE model based on the imported JSON data.
     """
@@ -101,16 +101,16 @@ def build_model(rmem, cmem):
         frame.def_support(node, DX, DY, DZ, RX, RY, RZ)
 
     # Convert units from cm^2 to mm^2 and cm^4 to mm^4 for rafters
-    RA = rmem['A'] * 1e3       # Cross-sectional area in mm^3
-    RIy = rmem['Iy'] * 1e6     # Moment of inertia about local y-axis in mm^6
-    RIx = rmem['Ix'] * 1e6     # Moment of inertia about local x-axis in mm^6
-    RJ = rmem['J'] * 1e3       # Torsional constant in mm^3
+    RA = r_mem['A'] * 1e3       # Cross-sectional area in mm^3
+    RIy = r_mem['Iy'] * 1e6     # Moment of inertia about local y-axis in mm^6
+    RIx = r_mem['Ix'] * 1e6     # Moment of inertia about local x-axis in mm^6
+    RJ = r_mem['J'] * 1e3       # Torsional constant in mm^3
 
     # Convert units from cm^2 to mm^2 and cm^4 to mm^4 for columns
-    CA = cmem['A'] * 1e3        # Cross-sectional area in mm^3
-    CIy = cmem['Iy'] * 1e6     # Moment of inertia about local y-axis in mm^6
-    CIx = cmem['Ix'] * 1e6     # Moment of inertia about local x-axis in mm^6
-    CJ = cmem['J'] * 1e3       # Torsional constant in mm^3
+    CA = c_mem['A'] * 1e3        # Cross-sectional area in mm^3
+    CIy = c_mem['Iy'] * 1e6     # Moment of inertia about local y-axis in mm^6
+    CIx = c_mem['Ix'] * 1e6     # Moment of inertia about local x-axis in mm^6
+    CJ = c_mem['J'] * 1e3       # Torsional constant in mm^3
 
     # Define members
     for member in data['members']:
@@ -157,6 +157,14 @@ def build_model(rmem, cmem):
     # Add member self weight (optional, adjust as needed)
     frame.add_member_self_weight('FY', -1, 'D')  # Example: Adding self-weight in FY direction
 
+    # Add rotational springs
+    for spring in data['rotational_springs']:
+        node = spring['node']
+        direction = spring['direction']
+        stiffness = spring['stiffness']
+        frame.def_support_spring(node, direction, stiffness, direction=None)
+
+
     return frame
 
 def analyze_combination(args):
@@ -167,15 +175,15 @@ def analyze_combination(args):
      member_db, data, vert_deflection_limit, horiz_deflection_limit) = args
 
     # Get member properties
-    rmem = mdb.member_properties(r_section_type, rafter_section_name, member_db)
-    cmem = mdb.member_properties(c_section_type, column_section_name, member_db)
+    r_mem = mdb.member_properties(r_section_type, rafter_section_name, member_db)
+    c_mem = mdb.member_properties(c_section_type, column_section_name, member_db)
 
     # Check h and b constraints
-    if rmem['h'] > cmem['h'] or rmem['b'] > cmem['b']:
-        return None  # Constraints not satisfied
+    if r_mem['h'] > c_mem['h'] or r_mem['b'] > c_mem['b']:
+        r_mem = c_mem
 
     # Build the model with current sections
-    frame = build_model(rmem, cmem)
+    frame = build_model(r_mem, c_mem)
 
     # Add serviceability load combinations
     for SLS_combo in data.get('serviceability_load_combinations', []):
@@ -186,7 +194,7 @@ def analyze_combination(args):
     # Analyze the model
     try:
         frame.analyze(check_statics=False)
-    except Exception as e:
+    except (ValueError, RuntimeError):
         # Handle analysis failures gracefully
         return None
 
@@ -211,12 +219,12 @@ def analyze_combination(args):
     if (worst_vert_deflection <= vert_deflection_limit and
         worst_horiz_deflection <= horiz_deflection_limit):
         # Return necessary data
-        total_weight = rmem['m'] + cmem['m']
+        total_weight = r_mem['m'] + c_mem['m']
         return total_weight, rafter_section_name, column_section_name, worst_vert_deflection, worst_horiz_deflection
     else:
         return None
 
-def SLS_check(preferred_section ,r_section_type, c_section_type):
+def sls_check(preferred_section ,r_section_type, c_section_type):
     """
     Iterates through the member database to find the lightest acceptable sections
     for rafters and columns that satisfy the serviceability limit state checks.
@@ -268,7 +276,9 @@ def SLS_check(preferred_section ,r_section_type, c_section_type):
     acceptable_sections = []
 
     # Use ProcessPoolExecutor for multiprocessing
-    with ProcessPoolExecutor() as executor:
+    num_cores = 4  # Adjust as necessary
+
+    with ProcessPoolExecutor(max_workers=num_cores) as executor:
         futures = [executor.submit(analyze_combination, task) for task in tasks]
 
         for future in as_completed(futures):
@@ -291,9 +301,9 @@ def SLS_check(preferred_section ,r_section_type, c_section_type):
         print(f"Script execution time: {end_time - start_time:.2f} seconds")
 
         # Rebuild and analyze the frame with the best sections in the main process
-        rmem = member_db[r_section_type][rafter_section_name]
-        cmem = member_db[c_section_type][column_section_name]
-        frame = build_model(rmem, cmem)
+        r_mem = member_db[r_section_type][rafter_section_name]
+        c_mem = member_db[c_section_type][column_section_name]
+        frame = build_model(r_mem, c_mem)
 
         # Add serviceability load combinations
         for SLS_combo in data.get('serviceability_load_combinations', []):
@@ -304,12 +314,63 @@ def SLS_check(preferred_section ,r_section_type, c_section_type):
         # Analyze the frame
         frame.analyze(check_statics=False)
 
+        # print maximum deflection from frame
+        for combo in data.get('serviceability_load_combinations', []):
+            nodal_deflections = []
+            print(f"Combo {combo['name']}: Nodal deflections")
+            for node in frame.nodes.values():
+                dx = abs(node.DX[combo['name']])
+                dy = abs(node.DY[combo['name']])
+                nodal_deflections.append([node.name, round(dx, 3), round(dy, 3)])
+            print(tabulate.tabulate(nodal_deflections, headers=['Node', 'DX (mm)', 'DY (mm)'], tablefmt='pretty'))
+
         return frame, member_db, r_section_type, c_section_type, (rafter_section_name, column_section_name)
     else:
         print("No acceptable section found that satisfies the serviceability limit states.")
         end_time = time.time()
         print(f"Script execution time: {end_time - start_time:.2f} seconds")
         return None, None, None, None, None
+
+def uls_output(sls_check_output):
+
+    # Use sections from SLS check
+    frame_old, member_db, r_section_type, c_section_type, best_section = sls_check_output
+
+    r_mem = member_db[r_section_type][best_section[0]]
+    c_mem = member_db[c_section_type][best_section[1]]
+
+    frame = build_model(r_mem, c_mem)
+
+    # Add load combinations
+    data = import_data('input_data.json')
+    for combo in data.get('load_combinations', []):
+        combo_name = combo['name']
+        factors = combo['factors']
+        frame.add_load_combo(combo_name, factors=factors)
+
+    # Analyze the frame
+    frame.analyze(check_statics=False)
+
+    # # Get the maximum strong-axis moment from member 'M1' for load combination '1.4D'
+    # my_model.members['M1'].max_moment('Mz', '1.4D')
+    #
+    # # Get the minimum weak-axis moment from member 'M3' for load combination '1.2D+1.6L'
+    # my_model.members['M3'].min_moment('My', '1.2D+1.6L')
+
+    # Print maximum and minimum moments for each member
+
+    for combo in data.get('load_combinations', []):
+        member_results = []
+        print(f"Load combination: {combo['name']}")
+        for member in frame.members.values():
+            mz_max = member.max_moment('Mz', combo['name']) / 1000
+            mz_min = member.min_moment('Mz', combo['name']) / 1000
+            n_max = member.max_axial(combo['name'])
+            n_min = member.min_axial(combo['name'])
+            member_results.append([member.name, round(mz_max, 4), round(mz_min, 4), round(n_max, 4), round(n_min, 4)])
+        print(tabulate.tabulate(member_results, headers=['Member', 'Max Mz (kNm)', 'Min Mz (kNm)', 'Axial Max (kN)', 'Axial Min (kN)' ], tablefmt='pretty'))
+
+
 
 def render_model(frame):
     # Render the model
@@ -326,7 +387,11 @@ def main():
     r_section_type = 'I-Sections'  # or 'H-Sections', based on user preference
     c_section_type = 'I-Sections'  # or 'H-Sections', based on user preference
 
-    frame, member_db, r_section_type, c_section_type, best_section = SLS_check(preferred_section, r_section_type, c_section_type)
+    frame, member_db, r_section_type, c_section_type, best_section = sls_check(preferred_section, r_section_type, c_section_type)
+
+    # print(best_section[0])
+    #
+    uls_output((frame, member_db, r_section_type, c_section_type, best_section))
 
     if frame is not None:
         render_model(frame)

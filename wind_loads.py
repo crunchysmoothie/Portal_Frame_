@@ -105,7 +105,7 @@ def wind_data():
 
         print(f"{result['Zone']:<6}{cpe_display:<10}{pressure_cpi_0_2:<15}{pressure_cpi_neg_0_3} kPa")
 
-    data["wind_loads"] = results
+    data["wind_zones"] = results
 
     json_str = json.dumps(data, separators=(',', ':'))
 
