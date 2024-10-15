@@ -5,6 +5,7 @@ from PyNite import FEModel3D
 from PyNite.Visualization import Renderer
 import member_database as mdb
 import tabulate
+import os
 
 def import_data(file):
     """
@@ -276,7 +277,8 @@ def sls_check(preferred_section ,r_section_type, c_section_type):
     acceptable_sections = []
 
     # Use ProcessPoolExecutor for multiprocessing
-    num_cores = 4  # Adjust as necessary
+    num_cores = int(round(os.cpu_count()*0.75, 0)) # Adjust as necessary
+    print(f"Number of Cores = {num_cores}")
 
     with ProcessPoolExecutor(max_workers=num_cores) as executor:
         futures = [executor.submit(analyze_combination, task) for task in tasks]
@@ -315,14 +317,14 @@ def sls_check(preferred_section ,r_section_type, c_section_type):
         frame.analyze(check_statics=False)
 
         # print maximum deflection from frame
-        for combo in data.get('serviceability_load_combinations', []):
-            nodal_deflections = []
-            print(f"Combo {combo['name']}: Nodal deflections")
-            for node in frame.nodes.values():
-                dx = abs(node.DX[combo['name']])
-                dy = abs(node.DY[combo['name']])
-                nodal_deflections.append([node.name, round(dx, 3), round(dy, 3)])
-            print(tabulate.tabulate(nodal_deflections, headers=['Node', 'DX (mm)', 'DY (mm)'], tablefmt='pretty'))
+        # for combo in data.get('serviceability_load_combinations', []):
+        #     nodal_deflections = []
+        #     print(f"Combo {combo['name']}: Nodal deflections")
+        #     for node in frame.nodes.values():
+        #         dx = abs(node.DX[combo['name']])
+        #         dy = abs(node.DY[combo['name']])
+        #         nodal_deflections.append([node.name, round(dx, 3), round(dy, 3)])
+        #     print(tabulate.tabulate(nodal_deflections, headers=['Node', 'DX (mm)', 'DY (mm)'], tablefmt='pretty'))
 
         return frame, member_db, r_section_type, c_section_type, (rafter_section_name, column_section_name)
     else:
@@ -359,18 +361,17 @@ def uls_output(sls_check_output):
 
     # Print maximum and minimum moments for each member
 
-    for combo in data.get('load_combinations', []):
-        member_results = []
-        print(f"Load combination: {combo['name']}")
-        for member in frame.members.values():
-            mz_max = member.max_moment('Mz', combo['name']) / 1000
-            mz_min = member.min_moment('Mz', combo['name']) / 1000
-            n_max = member.max_axial(combo['name'])
-            n_min = member.min_axial(combo['name'])
-            member_results.append([member.name, round(mz_max, 4), round(mz_min, 4), round(n_max, 4), round(n_min, 4)])
-        print(tabulate.tabulate(member_results, headers=['Member', 'Max Mz (kNm)', 'Min Mz (kNm)', 'Axial Max (kN)', 'Axial Min (kN)' ], tablefmt='pretty'))
-
-
+    # for combo in data.get('load_combinations', []):
+    #     member_results = []
+    #     print(f"Load combination: {combo['name']}")
+    #     for member in frame.members.values():
+    #         mz_max = member.max_moment('Mz', combo['name']) / 1000
+    #         mz_min = member.min_moment('Mz', combo['name']) / 1000
+    #         n_max = member.max_axial(combo['name'])
+    #         n_min = member.min_axial(combo['name'])
+    #         member_results.append([member.name, round(mz_max, 4), round(mz_min, 4), round(n_max, 4), round(n_min, 4)])
+    #     print(tabulate.tabulate(member_results, headers=['Member', 'Max Mz (kNm)', 'Min Mz (kNm)', 'Axial Max (kN)',
+    #                                                      'Axial Min (kN)' ], tablefmt='pretty'))
 
 def render_model(frame):
     # Render the model
@@ -385,11 +386,10 @@ def render_model(frame):
 def main():
     preferred_section = 'Yes'      # or 'No', based on user preference
     r_section_type = 'I-Sections'  # or 'H-Sections', based on user preference
-    c_section_type = 'I-Sections'  # or 'H-Sections', based on user preference
+    c_section_type = 'H-Sections'  # or 'H-Sections', based on user preference
 
     frame, member_db, r_section_type, c_section_type, best_section = sls_check(preferred_section, r_section_type, c_section_type)
 
-    # print(best_section[0])
     #
     uls_output((frame, member_db, r_section_type, c_section_type, best_section))
 
