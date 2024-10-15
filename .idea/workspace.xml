@@ -11,7 +11,6 @@
       <change beforePath="$PROJECT_DIR$/input_data.json" beforeDir="false" afterPath="$PROJECT_DIR$/input_data.json" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/portal_frame_analysis.py" beforeDir="false" afterPath="$PROJECT_DIR$/portal_frame_analysis.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/user_input.py" beforeDir="false" afterPath="$PROJECT_DIR$/user_input.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/wind_loads.py" beforeDir="false" afterPath="$PROJECT_DIR$/wind_loads.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -66,12 +65,12 @@
       </list>
     </option>
   </component>
-  <component name="GithubPullRequestsUISettings"><![CDATA[{
-  "selectedUrlAndAccountId": {
-    "url": "https://github.com/crunchysmoothie/Portal_Frame_.git",
-    "accountId": "d3e912a1-3812-42c4-bb19-4e1e45e8abd2"
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;https://github.com/crunchysmoothie/Portal_Frame_.git&quot;,
+    &quot;accountId&quot;: &quot;05540a47-fae0-4cdc-a919-c459ff95e5db&quot;
   }
-}]]></component>
+}</component>
   <component name="ProjectColorInfo">{
   &quot;customColor&quot;: &quot;&quot;,
   &quot;associatedIndex&quot;: 0
@@ -209,10 +208,10 @@
     <recent_temporary>
       <list>
         <item itemvalue="Python.portal_frame_analysis" />
-        <item itemvalue="Python.wind_loads" />
         <item itemvalue="Python.user_input" />
         <item itemvalue="Python.member_database" />
         <item itemvalue="Python.member_strength_checks" />
+        <item itemvalue="Python.wind_loads" />
       </list>
     </recent_temporary>
   </component>
@@ -257,7 +256,6 @@
   <component name="VcsManagerConfiguration">
     <MESSAGE value="Changed Everything.Now runs with all JSON created from user_input.py" />
     <MESSAGE value="Added todo.txt" />
-    <MESSAGE value="Did Alot" />
-    <option name="LAST_COMMIT_MESSAGE" value="Did Alot" />
+    <option name="LAST_COMMIT_MESSAGE" value="Added todo.txt" />
   </component>
 </project>

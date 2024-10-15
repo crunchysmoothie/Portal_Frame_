@@ -2,46 +2,84 @@ import json
 
 
 # Function to generate nodes based on the portal frame structure with static values
-def generate_nodes(eaves_height, apex_height, rafter_span):
+def generate_nodes(building_type, eaves_height, apex_height, rafter_span):
     nodes = []
-
-    # Generate 3 vertical nodes on the left side
     num_vertical = 3
-    for i in range(num_vertical):
-        node = {
-            "name": f"N{i + 1}",
-            "x": 0,
-            "y": round(i * (eaves_height / (num_vertical - 1)), 2),
-            "z": 0
-        }
-        nodes.append(node)
 
-    # Generate 4 diagonal nodes for the rafter section
-    num_diagonal = 4
-    for i in range(1, num_diagonal):
-        x = round(i * (rafter_span / num_diagonal), 2)
-        y = round(
-            eaves_height + ((apex_height - eaves_height) * (1 - abs(i - (num_diagonal / 2)) / (num_diagonal / 2))),
-            2)
-        node = {
-            "name": f"N{num_vertical + i}",
-            "x": x,
-            "y": y,
-            "z": 0
-        }
-        nodes.append(node)
+    # Generate nodes for Duo Pitched type
+    if building_type == "Duo Pitched":
+        # Generate 3 vertical nodes on the left side
+        for i in range(num_vertical):
+            node = {
+                "name": f"N{i + 1}",
+                "x": 0,
+                "y": round(i * (eaves_height / (num_vertical - 1)), 2),
+                "z": 0
+            }
+            nodes.append(node)
 
-    # Generate 3 vertical nodes on the right side
-    for i in range(num_vertical):
-        node = {
-            "name": f"N{num_vertical + num_diagonal + i}",
-            "x": rafter_span,
-            "y": round(eaves_height - i * (eaves_height / (num_vertical - 1)), 2),
-            "z": 0
-        }
-        nodes.append(node)
+        # Generate 4 diagonal nodes for the rafter section
+        num_diagonal = 4
+        for i in range(1, num_diagonal):
+            x = round(i * (rafter_span / num_diagonal), 2)
+            y = round(
+                eaves_height + ((apex_height - eaves_height) * (1 - abs(i - (num_diagonal / 2)) / (num_diagonal / 2))),
+                2)
+            node = {
+                "name": f"N{num_vertical + i}",
+                "x": x,
+                "y": y,
+                "z": 0
+            }
+            nodes.append(node)
+
+        # Generate 3 vertical nodes on the right side
+        for i in range(num_vertical):
+            node = {
+                "name": f"N{num_vertical + num_diagonal + i}",
+                "x": rafter_span,
+                "y": round(eaves_height - i * (eaves_height / (num_vertical - 1)), 2),
+                "z": 0
+            }
+            nodes.append(node)
+
+    # Generate nodes for Mono Pitched type
+    elif building_type == "Mono Pitched":
+        # Generate 3 vertical nodes on the left side
+        for i in range(num_vertical):
+            node = {
+                "name": f"N{i + 1}",
+                "x": 0,
+                "y": round(i * (eaves_height / (num_vertical - 1)), 2),
+                "z": 0
+            }
+            nodes.append(node)
+
+        # Generate 4 diagonal nodes for the rafter section for a single slope
+        num_diagonal = 4
+        for i in range(1, num_diagonal + 1):
+            x = round(i * (rafter_span / num_diagonal), 2)
+            y = round(eaves_height + (apex_height - eaves_height) * (i / num_diagonal), 2)
+            node = {
+                "name": f"N{num_vertical + i}",
+                "x": x,
+                "y": y,
+                "z": 0
+            }
+            nodes.append(node)
+
+        # Generate 3 vertical nodes on the right side
+        for i in range(1, num_vertical):
+            node = {
+                "name": f"N{num_vertical + num_diagonal + i}",
+                "x": rafter_span,
+                "y": round(apex_height - i * (apex_height / (num_vertical - 1)), 2),
+                "z": 0
+            }
+            nodes.append(node)
 
     return nodes
+
 
 def generate_supports(nodes):
 
@@ -82,7 +120,7 @@ def generate_member_loads(members):
 
     for member in members[0: len(members) // 2]:
         if member["type"] == "column":
-            member_loads.append({"member": member["name"], "direction":"Fy","w1":-0.006,"w2":-0.006,"case":"L"})
+            member_loads.append({"member": member["name"], "direction":"Fy","w1":-0.0036,"w2":-0.0036,"case":"L"})
 
     return member_loads
 
@@ -91,12 +129,30 @@ def generate_spring_supports(nodes):
                           {"node": nodes[-1]["name"], "direction": "RZ", "stiffness": 5E6}]
     return rotational_springs
 
+def input_wind_data(eaves_height, apex_height, rafter_span):
+    # Static values for the wind data
+    wind_data = [
+        {
+            "fundamental_basic_wind_speed": 36,
+            "return_period": 50,
+            "topographic_factor": 1.0,
+            "altitude": 1800,
+            "terrain_category": "B",
+            "eaves_height": eaves_height,
+            "gable_width": rafter_span,
+            "apex_height": apex_height,
+            "roof_pitch": 30
+        }
+    ]
+    return wind_data
+
+
 
 # Function to update nodes and members in the JSON data
-def update_nodes_and_members(json_filename, eaves_height, apex_height, rafter_span):
+def update_json_file(json_filename, building_type, eaves_height, apex_height, rafter_span):
     # Generate new node and member data based on input dimensions
-    updated_frame = [{"type": "portal", "eaves_height": eaves_height, "apex_height": apex_height, "rafter_span": rafter_span, "bay_spacing": 6000}]
-    new_nodes = generate_nodes(eaves_height, apex_height, rafter_span)
+    updated_frame = [{"type": building_type, "eaves_height": eaves_height, "apex_height": apex_height, "rafter_span": rafter_span, "bay_spacing": 6000}]
+    new_nodes = generate_nodes(building_type,eaves_height, apex_height, rafter_span)
     new_members = generate_members(new_nodes)
     new_supports = generate_supports(new_nodes)
     new_loads = generate_nodal_loads(new_nodes)
@@ -133,6 +189,7 @@ def update_nodes_and_members(json_filename, eaves_height, apex_height, rafter_sp
     print(f"Portal frame data saved to {json_filename}")
 
 # Static inputs for eaves, apex, and rafter span (converted to mm)
+building_type = "Mono Pitched" # "Mono Pitched" or "Duo Pitched"
 eaves_height = 5 * 1000  # Convert to mm
 apex_height = 7 * 1000  # Convert to mm
 rafter_span = 8 * 1000  # Convert to mm
@@ -142,4 +199,4 @@ rafter_spacing = 5 * 1000 # Convert to mm
 json_filename = 'input_data.json'
 
 # Call the function to update the nodes and members in the JSON file
-update_nodes_and_members(json_filename, eaves_height, apex_height, rafter_span)
+update_json_file(json_filename,building_type, eaves_height, apex_height, rafter_span)
