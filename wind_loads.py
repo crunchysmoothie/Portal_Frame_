@@ -8,13 +8,11 @@ def import_data(file):
         data = json.load(f)
         return data
 
-
 def calculate_basic_wind_speed(fbs, return_period):
     if return_period == 0: return 0
     numerator = 1 - 0.2 * math.log(-math.log(1 - (1 / return_period)))
     denominator = 1 - 0.2 * math.log(-math.log(0.98))
     return (numerator / denominator) ** 0.5 * fbs
-
 
 def calculate_terrain_roughness(apex_height, terrain_category):
     categories = {'A': (1, 0, 250, 0.07), 'B': (2, 0, 300, 0.095),
@@ -22,16 +20,13 @@ def calculate_terrain_roughness(apex_height, terrain_category):
     zc, z0, zg, alpha = categories.get(terrain_category, (1, 0, 250, 0.07))
     return 1.36 * ((max(apex_height, zc) - z0) / (zg - z0)) ** alpha
 
-
 def calculate_air_density(altitude):
     return 1.2 if altitude == 0 else 0.94 + (2000 - altitude) * 0.06 / 500
-
 
 def calculate_peak_wind_pressure(topography_factor, basic_speed, roughness, altitude):
     peak_speed = topography_factor * basic_speed * roughness
     air_density = calculate_air_density(altitude)
     return 0.5 * air_density * peak_speed ** 2 / 1000
-
 
 def interpolate_cpe(h_d, h_d_data, cpe_data):
     if h_d < h_d_data[0]:
@@ -40,14 +35,11 @@ def interpolate_cpe(h_d, h_d_data, cpe_data):
         h_d = h_d_data[-1]
     return np.interp(h_d, h_d_data, cpe_data)
 
-
 def interpolate_cpe_roof(roof_angle, angles, data):
     return np.array([np.interp(roof_angle, angles, data[:, col]) for col in range(data.shape[1])])
 
-
 def calculate_pressure(peak_wind_pressure, cpe, cpi):
     return (peak_wind_pressure * cpe) - (peak_wind_pressure * cpi)
-
 
 def wind_data():
     angles = np.array([5, 15, 30, 45])
