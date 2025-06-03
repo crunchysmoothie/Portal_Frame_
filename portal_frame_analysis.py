@@ -5,6 +5,7 @@ from PyNite import FEModel3D
 from PyNite.Visualization import Renderer
 import member_database as mdb
 import tabulate
+import math
 import os
 
 def import_data(file):
@@ -180,7 +181,7 @@ def analyze_combination(args):
     c_mem = mdb.member_properties(c_section_type, column_section_name, member_db)
 
     # Check h and b constraints
-    if r_mem['h'] > c_mem['h'] or r_mem['b'] > c_mem['b']:
+    if r_mem['b'] > c_mem['b']:
         r_mem = c_mem
 
     # Build the model with current sections
@@ -201,7 +202,9 @@ def analyze_combination(args):
 
     # Initialize worst-case deflections
     worst_vert_deflection = 0
+    vert_combo = ''
     worst_horiz_deflection = 0
+    hor_combo = ''
 
     # Check deflections for each combo
     for combo in data.get('serviceability_load_combinations', []):
@@ -213,125 +216,133 @@ def analyze_combination(args):
             # Update worst-case deflections
             if dy > worst_vert_deflection:
                 worst_vert_deflection = dy
+                vert_combo = combo_name
             if dx > worst_horiz_deflection:
                 worst_horiz_deflection = dx
+                hor_combo = combo_name
 
     # Check if deflections are within limits
     if (worst_vert_deflection <= vert_deflection_limit and
         worst_horiz_deflection <= horiz_deflection_limit):
         # Return necessary data
-        total_weight = r_mem['m'] + c_mem['m']
-        return total_weight, rafter_section_name, column_section_name, worst_vert_deflection, worst_horiz_deflection
+        total_weight = 2 * r_mem['m'] + 2 * c_mem['m']
+        return total_weight, rafter_section_name, column_section_name, worst_vert_deflection, vert_combo, worst_horiz_deflection, hor_combo
     else:
         return None
 
-def sls_check(preferred_section ,r_section_type, c_section_type):
-    """
-    Iterates through the member database to find the lightest acceptable sections
-    for rafters and columns that satisfy the serviceability limit state checks.
-    """
-    start_time = time.time()
+def get_member_lengths(data):
+    """Return (Σ rafter_len [m], Σ column_len [m]) from input_data.json."""
+    xyz = {n: (nd['x'], nd['y'], nd['z']) for n, nd in data['nodes'].items()}
+    r_len = c_len = 0.0
+    for m in data['members']:
+        xi, yi, zi = xyz[m['i_node']]
+        xj, yj, zj = xyz[m['j_node']]
+        L = math.sqrt((xj - xi)**2 + (yj - yi)**2 + (zj - zi)**2) / 1_000  # mm → m
+        if m['type'].lower() == 'rafter':
+            r_len += L
+        else:
+            c_len += L
+    return r_len, c_len
 
-    # Load the member database
+def directional_search(primary, r_list, c_list, r_section_type, c_section_type, member_db, data, r_total_m, c_total_m, vert_limit, horiz_limit):
+    """If primary=='rafter': outer=rafters, inner=columns; if primary=='column': outer=columns, inner=rafters."""
+    if primary == 'column':
+        outer_list, inner_list = c_list, r_list
+        outer_type, inner_type = c_section_type, r_section_type
+    else:
+        outer_list, inner_list = r_list, c_list
+        outer_type, inner_type = r_section_type, c_section_type
+
+    best = None
+    for o_name in outer_list:
+        o_mem = member_db[outer_type][o_name]
+        if best:
+            key_m_outer = 'c_m' if primary == 'column' else 'r_m'
+            key_h_outer = 'c_h' if primary == 'column' else 'r_h'
+            if not (o_mem['m'] < best[key_m_outer] and o_mem['h'] > best[key_h_outer]):
+                continue
+
+        for i_name in inner_list:
+            i_mem = member_db[inner_type][i_name]
+            if best:
+                key_m_inner = 'r_m' if primary == 'column' else 'c_m'
+                key_h_inner = 'r_h' if primary == 'column' else 'c_h'
+                if not (i_mem['m'] < best[key_m_inner] and i_mem['h'] > best[key_h_inner]):
+                    continue
+
+            if primary == 'column':
+                c_name, r_name = o_name, i_name
+                c_mem,  r_mem  = o_mem,  i_mem
+            else:
+                r_name, c_name = o_name, i_name
+                r_mem,  c_mem  = o_mem,  i_mem
+
+            if r_mem['b'] > c_mem['b']:
+                continue
+
+            frame = build_model(r_mem, c_mem)
+            for combo in data['serviceability_load_combinations']:
+                frame.add_load_combo(combo['name'], factors=combo['factors'])
+            try:
+                frame.analyze(check_statics=False)
+            except (ValueError, RuntimeError):
+                continue
+
+            worst_v = worst_h = 0.0
+            for combo in data['serviceability_load_combinations']:
+                cn = combo['name']
+                for node in frame.nodes.values():
+                    worst_v = max(worst_v, abs(node.DY[cn]))
+                    worst_h = max(worst_h, abs(node.DX[cn]))
+            if worst_v > vert_limit or worst_h > horiz_limit:
+                continue
+
+            weight = r_mem['m'] * r_total_m + c_mem['m'] * c_total_m
+            if (best is None) or (weight < best['weight']):
+                best = {'weight': weight, 'frame': frame, 'r_name': r_name, 'c_name': c_name,
+                        'r_m': r_mem['m'], 'r_h': r_mem['h'], 'c_m': c_mem['m'], 'c_h': c_mem['h'],
+                        'dy': worst_v, 'dx': worst_h}
+
+        if best:
+            key_m_outer = 'c_m' if primary == 'column' else 'r_m'
+            if o_mem['m'] >= best[key_m_outer]:
+                break
+
+    return best
+
+def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
+    """Runs 'rafter-first' and 'column-first' searches, then returns the single lightest solution."""
+    start = time.time()
     member_db = mdb.load_member_database()
 
-    # Verify the section types
-    if r_section_type not in member_db or c_section_type not in member_db:
-        raise ValueError("Invalid section type. Choose either 'I-Sections' or 'H-Sections'.")
+    r_list = [sec for sec in member_db[r_section_type] if member_db[r_section_type][sec].get('Preferred','No') == preferred_section]
+    c_list = [sec for sec in member_db[c_section_type] if member_db[c_section_type][sec].get('Preferred','No') == preferred_section]
+    if not r_list or not c_list:
+        raise ValueError(f"No sections flagged as Preferred='{preferred_section}' found.")
 
-    # Extract sorted lists of section names for rafters and columns
-    rafter_sections = [
-        sec for sec in member_db[r_section_type]
-        if member_db[r_section_type][sec].get('Preferred', 'No') == preferred_section
-    ]
-    column_sections = [
-        sec for sec in member_db[c_section_type]
-        if member_db[c_section_type][sec].get('Preferred', 'No') == preferred_section
-    ]
-
-    # Ensure that there are sections to process
-    if not rafter_sections or not column_sections:
-        raise ValueError(f"No sections found with Preferred='{preferred_section}' for the given section types.")
-
-
-    # Get geometry parameters for deflection limits
     data = import_data('input_data.json')
-    # Check vertical (dy) deflection of rafters
-    vert_deflection_limit = data['frame_data'][0]['rafter_span']/300  # L/300
-    print(f"Vertical deflection limit: {vert_deflection_limit:.2f} mm")
-    horiz_deflection_limit = data['frame_data'][0]['eaves_height']/300  # L/300
-    print(f"Horizontal deflection limit: {horiz_deflection_limit:.2f} mm")
+    r_total_m, c_total_m = get_member_lengths(data)
+    vert_limit  = data['frame_data'][0]['rafter_span'] / 300
+    horiz_limit = data['frame_data'][0]['eaves_height'] / 300
 
+    best_r = directional_search('rafter', r_list, c_list, r_section_type, c_section_type, member_db, data, r_total_m, c_total_m, vert_limit, horiz_limit)
+    best_c = directional_search('column', r_list, c_list, r_section_type, c_section_type, member_db, data, r_total_m, c_total_m, vert_limit, horiz_limit)
 
-    # Prepare arguments for multiprocessing
-    tasks = []
-    for column_section_name in column_sections:
-        for rafter_section_name in rafter_sections:
-            args = (
-                r_section_type, rafter_section_name,
-                c_section_type, column_section_name,
-                member_db, data, vert_deflection_limit, horiz_deflection_limit
-            )
-            tasks.append(args)
-
-    acceptable_sections = []
-
-    # Use ProcessPoolExecutor for multiprocessing
-    num_cores = int(round(os.cpu_count()*0.75, 0)) # Adjust as necessary
-    print(f"Number of Cores = {num_cores}")
-
-    with ProcessPoolExecutor(max_workers=num_cores) as executor:
-        futures = [executor.submit(analyze_combination, task) for task in tasks]
-
-        for future in as_completed(futures):
-            result = future.result()
-            if result is not None:
-                acceptable_sections.append(result)
-
-    if acceptable_sections:
-        # Sort acceptable sections by total weight
-        acceptable_sections.sort(key=lambda x: x[0])  # x[0] is total_weight
-        best_section = acceptable_sections[0]
-        total_weight, rafter_section_name, column_section_name, worst_vert_deflection, worst_horiz_deflection = best_section
-        print(f"Lightest acceptable rafter section: {rafter_section_name}")
-        print(f"Lightest acceptable column section: {column_section_name}")
-        print(f"Total weight: {total_weight} kg/m")
-        print(f"Worst vertical deflection: {worst_vert_deflection:.2f} mm")
-        print(f"Worst horizontal deflection: {worst_horiz_deflection:.2f} mm")
-
-        end_time = time.time()
-        print(f"Script execution time: {end_time - start_time:.2f} seconds")
-
-        # Rebuild and analyze the frame with the best sections in the main process
-        r_mem = member_db[r_section_type][rafter_section_name]
-        c_mem = member_db[c_section_type][column_section_name]
-        frame = build_model(r_mem, c_mem)
-
-        # Add serviceability load combinations
-        for SLS_combo in data.get('serviceability_load_combinations', []):
-            combo_name = SLS_combo['name']
-            factors = SLS_combo['factors']
-            frame.add_load_combo(combo_name, factors=factors)
-
-        # Analyze the frame
-        frame.analyze(check_statics=False)
-
-        # print maximum deflection from frame
-        # for combo in data.get('serviceability_load_combinations', []):
-        #     nodal_deflections = []
-        #     print(f"Combo {combo['name']}: Nodal deflections")
-        #     for node in frame.nodes.values():
-        #         dx = abs(node.DX[combo['name']])
-        #         dy = abs(node.DY[combo['name']])
-        #         nodal_deflections.append([node.name, round(dx, 3), round(dy, 3)])
-        #     print(tabulate.tabulate(nodal_deflections, headers=['Node', 'DX (mm)', 'DY (mm)'], tablefmt='pretty'))
-
-        return frame, member_db, r_section_type, c_section_type, (rafter_section_name, column_section_name)
-    else:
-        print("No acceptable section found that satisfies the serviceability limit states.")
-        end_time = time.time()
-        print(f"Script execution time: {end_time - start_time:.2f} seconds")
+    candidates = [b for b in (best_r, best_c) if b]
+    if not candidates:
+        print("No acceptable section found that satisfies the serviceability limits.")
         return None, None, None, None, None
+
+    best = min(candidates, key=lambda d: d['weight'])
+    print(f"► Lightest combination:")
+    print(f"   Rafter: {best['r_name']}")
+    print(f"   Column: {best['c_name']}")
+    print(f"   Total steel: {best['weight']:.1f} kg")
+    print(f"   Max Δy: {best['dy']:.2f} mm   (limit {vert_limit:.2f})")
+    print(f"   Max Δx: {best['dx']:.2f} mm   (limit {horiz_limit:.2f})")
+    print(f"   Search time: {time.time() - start:.3f} s")
+
+    return best['frame'], member_db, r_section_type, c_section_type, (best['r_name'], best['c_name'])
 
 def uls_output(sls_check_output):
 
