@@ -1,5 +1,5 @@
 {"frame_data":[
-  {"type":"Duo Pitched","eaves_height":5000,"apex_height":7000,"rafter_span":8000,"bay_spacing":6000}
+  {"type":"Duo Pitched","eaves_height":5000,"apex_height":7000,"rafter_span":8000,"bay_spacing":5000,"col_bracing_spacing":1,"rafter_bracing_spacing":4}
 ],
 "nodes":[
   {"name":"N1","x":0,"y":0.0,"z":0},
@@ -36,11 +36,12 @@
   {"name":"W90_0.3","type":"wind"}
 ],
 "nodal_loads":[
-  {"node":"N5","direction":"FY","magnitude":-50,"case":"L"}
+  {"node":"N5","direction":"FY","magnitude":-50,"case":"L"},
+  {"node":"N3","direction":"FX","magnitude":50,"case":"D"}
 ],
 "member_loads":[
-  {"member":"M1","direction":"Fy","w1":-0.0036,"w2":-0.0036,"case":"L"},
-  {"member":"M2","direction":"Fy","w1":-0.0036,"w2":-0.0036,"case":"L"}
+  {"member":"M1","direction":"Fy","w1":-0.003,"w2":-0.003,"case":"D"},
+  {"member":"M2","direction":"Fy","w1":-0.003,"w2":-0.003,"case":"D"}
 ],
 "serviceability_load_combinations":[
   {"name":"1.1 DL","factors":{"D":1.1}},
