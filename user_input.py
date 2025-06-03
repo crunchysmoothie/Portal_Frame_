@@ -80,7 +80,6 @@ def generate_nodes(building_type, eaves_height, apex_height, rafter_span):
 
     return nodes
 
-
 def generate_supports(nodes):
 
     supports = [
@@ -90,8 +89,6 @@ def generate_supports(nodes):
 
     return supports
 
-
-# Function to generate members based on the nodes
 def generate_members(nodes):
     members = []
     num_nodes = len(nodes)
@@ -146,9 +143,6 @@ def input_wind_data(eaves_height, apex_height, rafter_span):
     ]
     return wind_data
 
-
-
-# Function to update nodes and members in the JSON data
 def update_json_file(json_filename, building_type, eaves_height, apex_height, rafter_span):
     # Generate new node and member data based on input dimensions
     updated_frame = [{"type": building_type, "eaves_height": eaves_height, "apex_height": apex_height, "rafter_span": rafter_span, "bay_spacing": 6000}]
@@ -189,7 +183,7 @@ def update_json_file(json_filename, building_type, eaves_height, apex_height, ra
     print(f"Portal frame data saved to {json_filename}")
 
 # Static inputs for eaves, apex, and rafter span (converted to mm)
-building_type = "Mono Pitched" # "Mono Pitched" or "Duo Pitched"
+building_type = "Duo Pitched" # "Mono Pitched" or "Duo Pitched"
 eaves_height = 5 * 1000  # Convert to mm
 apex_height = 7 * 1000  # Convert to mm
 rafter_span = 8 * 1000  # Convert to mm
