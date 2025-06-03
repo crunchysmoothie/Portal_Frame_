@@ -5,12 +5,10 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="c8f59bdd-e5a4-4338-bd02-6f086981f4ed" name="Changes" comment="Added Mono-pitched script and changed wind inputs">
-      <change beforePath="$PROJECT_DIR$/.idea/vcs.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/input_data.json" beforeDir="false" afterPath="$PROJECT_DIR$/input_data.json" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/portal_frame_analysis.py" beforeDir="false" afterPath="$PROJECT_DIR$/portal_frame_analysis.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/user_input.py" beforeDir="false" afterPath="$PROJECT_DIR$/user_input.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/wind_loads.py" beforeDir="false" afterPath="$PROJECT_DIR$/wind_loads.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -245,7 +243,7 @@
       <option name="presentableId" value="Default" />
       <updated>1728365268444</updated>
       <workItem from="1748865041767" duration="6674000" />
-      <workItem from="1748934678471" duration="208000" />
+      <workItem from="1748934678471" duration="8625000" />
     </task>
     <task id="LOCAL-00001" summary="Added todo.txt">
       <option name="closed" value="true" />
@@ -287,7 +285,7 @@
     <option name="LAST_COMMIT_MESSAGE" value="Added Mono-pitched script and changed wind inputs" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
-    <SUITE FILE_PATH="coverage/pythonProject$portal_frame_analysis.coverage" NAME="portal_frame_analysis Coverage Results" MODIFIED="1748875082008" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
-    <SUITE FILE_PATH="coverage/pythonProject$user_input.coverage" NAME="user_input Coverage Results" MODIFIED="1748873491921" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/pythonProject$portal_frame_analysis.coverage" NAME="portal_frame_analysis Coverage Results" MODIFIED="1748943375337" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/pythonProject$user_input.coverage" NAME="user_input Coverage Results" MODIFIED="1748943371918" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
   </component>
 </project>

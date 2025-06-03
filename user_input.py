@@ -108,7 +108,9 @@ def generate_members(nodes):
 
 def generate_nodal_loads(nodes):
     apex_node = nodes[len(nodes) // 2]
-    nodal_loads = [{"node": apex_node["name"], "direction": "FY", "magnitude": -50, "case": "L"}]
+    eaves_node = nodes[2]
+    nodal_loads = [{"node": apex_node["name"], "direction": "FY", "magnitude": -50, "case": "L"},
+                   {"node": eaves_node["name"], "direction": "FX", "magnitude": 50, "case": "D"},]
 
     return nodal_loads
 
@@ -117,7 +119,7 @@ def generate_member_loads(members):
 
     for member in members[0: len(members) // 2]:
         if member["type"] == "column":
-            member_loads.append({"member": member["name"], "direction":"Fy","w1":-0.0036,"w2":-0.0036,"case":"L"})
+            member_loads.append({"member": member["name"], "direction":"Fy","w1":-0.003,"w2":-0.003,"case":"D"})
 
     return member_loads
 
@@ -143,9 +145,16 @@ def input_wind_data(eaves_height, apex_height, rafter_span):
     ]
     return wind_data
 
-def update_json_file(json_filename, building_type, eaves_height, apex_height, rafter_span):
+def update_json_file(json_filename, building_type, eaves_height, apex_height, rafter_span, rafter_spacing, col_bracing_spacing, rafter_bracing_spacing):
     # Generate new node and member data based on input dimensions
-    updated_frame = [{"type": building_type, "eaves_height": eaves_height, "apex_height": apex_height, "rafter_span": rafter_span, "bay_spacing": 6000}]
+    updated_frame = [{"type": building_type,
+                      "eaves_height": eaves_height,
+                      "apex_height": apex_height,
+                      "rafter_span": rafter_span,
+                      "bay_spacing": rafter_spacing,
+                      "col_bracing_spacing": col_bracing_spacing,
+                      "rafter_bracing_spacing": rafter_bracing_spacing
+                      }]
     new_nodes = generate_nodes(building_type,eaves_height, apex_height, rafter_span)
     new_members = generate_members(new_nodes)
     new_supports = generate_supports(new_nodes)
@@ -184,13 +193,15 @@ def update_json_file(json_filename, building_type, eaves_height, apex_height, ra
 
 # Static inputs for eaves, apex, and rafter span (converted to mm)
 building_type = "Duo Pitched" # "Mono Pitched" or "Duo Pitched"
-eaves_height = 5 * 1000  # Convert to mm
-apex_height = 7 * 1000  # Convert to mm
-rafter_span = 8 * 1000  # Convert to mm
-rafter_spacing = 5 * 1000 # Convert to mm
+eaves_height = 5 * 1000     # Convert to mm
+apex_height = 7 * 1000      # Convert to mm
+rafter_span = 8 * 1000      # Convert to mm
+rafter_spacing = 5 * 1000   # Convert to mm
+col_bracing_spacing = 1     # number of braced points per column (1: Lx=Ly = L)
+rafter_bracing_spacing = 4  # number of braced points per rafter (1: Lx=Ly = L)
 
 # Filename of the existing JSON file
 json_filename = 'input_data.json'
 
 # Call the function to update the nodes and members in the JSON file
-update_json_file(json_filename,building_type, eaves_height, apex_height, rafter_span)
+update_json_file(json_filename,building_type, eaves_height, apex_height, rafter_span, rafter_spacing, col_bracing_spacing, rafter_bracing_spacing)
