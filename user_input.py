@@ -1,4 +1,5 @@
 import json
+import math
 
 
 # Function to generate nodes based on the portal frame structure with static values
@@ -128,24 +129,24 @@ def generate_spring_supports(nodes):
                           {"node": nodes[-1]["name"], "direction": "RZ", "stiffness": 5E6}]
     return rotational_springs
 
-def input_wind_data(eaves_height, apex_height, rafter_span):
+def input_wind_data(args):
     # Static values for the wind data
     wind_data = [
-        {
-            "fundamental_basic_wind_speed": 36,
-            "return_period": 50,
-            "topographic_factor": 1.0,
-            "altitude": 1800,
-            "terrain_category": "B",
-            "eaves_height": eaves_height,
-            "gable_width": rafter_span,
-            "apex_height": apex_height,
-            "roof_pitch": 30
+        {   "type": args["type"],
+            "fundamental_basic_wind_speed": args["fundamental_basic_wind_speed"],
+            "return_period": args["return_period"],
+            "terrain_category": args["terrain_category"],
+            "topographic_factor": args["topographic_factor"],
+            "altitude": args["altitude"],
+            "eaves_height": eaves_height/1000,
+            "gable_width": rafter_span/1000,
+            "apex_height": apex_height/1000,
+            "roof_pitch": round(math.degrees(math.atan((apex_height-eaves_height)/(rafter_span/2))), 1)
         }
     ]
     return wind_data
 
-def update_json_file(json_filename, building_type, eaves_height, apex_height, rafter_span, rafter_spacing, col_bracing_spacing, rafter_bracing_spacing):
+def update_json_file(json_filename, building_type, eaves_height, apex_height, rafter_span, rafter_spacing, col_bracing_spacing, rafter_bracing_spacing, wind_data):
     # Generate new node and member data based on input dimensions
     updated_frame = [{"type": building_type,
                       "eaves_height": eaves_height,
@@ -161,6 +162,7 @@ def update_json_file(json_filename, building_type, eaves_height, apex_height, ra
     new_loads = generate_nodal_loads(new_nodes)
     new_member_loads = generate_member_loads(new_members)
     rotational_springs = generate_spring_supports(new_nodes)
+    wind_input = input_wind_data(wind_data)
 
     # Load existing JSON data
     with open(json_filename, 'r') as file:
@@ -174,6 +176,7 @@ def update_json_file(json_filename, building_type, eaves_height, apex_height, ra
     data["nodal_loads"] = new_loads
     data["member_loads"] = new_member_loads
     data["rotational_springs"] = rotational_springs
+    data["wind_data"] = wind_input
 
     # Convert data to a compact JSON string
     json_str = json.dumps(data, separators=(',', ':'))
@@ -199,9 +202,17 @@ rafter_span = 8 * 1000      # Convert to mm
 rafter_spacing = 5 * 1000   # Convert to mm
 col_bracing_spacing = 1     # number of braced points per column (1: Lx=Ly = L)
 rafter_bracing_spacing = 4  # number of braced points per rafter (1: Lx=Ly = L)
+wind_data = {
+    "type": "3s gust",
+    "fundamental_basic_wind_speed": 36,
+    "return_period": 50,
+    "terrain_category": "B",
+    "topographic_factor": 1.0,
+    "altitude": 1450
+}
 
 # Filename of the existing JSON file
 json_filename = 'input_data.json'
 
 # Call the function to update the nodes and members in the JSON file
-update_json_file(json_filename,building_type, eaves_height, apex_height, rafter_span, rafter_spacing, col_bracing_spacing, rafter_bracing_spacing)
+update_json_file(json_filename,building_type, eaves_height, apex_height, rafter_span, rafter_spacing, col_bracing_spacing, rafter_bracing_spacing, wind_data)
