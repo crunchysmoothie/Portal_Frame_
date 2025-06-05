@@ -26,7 +26,7 @@ def calculate_air_density(altitude):
 def calculate_peak_wind_pressure(topography_factor, basic_speed, roughness, altitude):
     peak_speed = topography_factor * basic_speed * roughness
     air_density = calculate_air_density(altitude)
-    return 0.5 * air_density * peak_speed ** 2 / 1000
+    return 0.5 * air_density * (peak_speed ** 2) / 1000
 
 def interpolate_cpe(h_d, h_d_data, cpe_data):
     if h_d < h_d_data[0]:
@@ -65,8 +65,11 @@ def wind_data():
         h_d_zone_d = wind['eaves_height'] / wind['gable_width']
         h_d_zone_e = wind['apex_height'] / wind['gable_width']
 
-        cpe_value_d = interpolate_cpe(h_d_zone_d, h_d_data, cpe_d)
-        cpe_value_e = interpolate_cpe(h_d_zone_e, h_d_data, cpe_e)
+        cpe_d_coeff = min([max([0.85+((1-0.85)/(5-1)*(h_d_zone_d-1)), 0.85]), 1])
+        cpe_e_coeff = min([max([0.85+((1-0.85)/(5-1)*(h_d_zone_e-1)), 0.85]), 1])
+
+        cpe_value_d = interpolate_cpe(h_d_zone_d, h_d_data, cpe_d) * cpe_d_coeff
+        cpe_value_e = interpolate_cpe(h_d_zone_e, h_d_data, cpe_e) * cpe_e_coeff
         cpe_negative = np.array([np.interp(wind['roof_pitch'], angles, negative_pressure_data[:, i]) for i in
                                  range(negative_pressure_data.shape[1])])
 
@@ -90,12 +93,10 @@ def wind_data():
     for result in results:
 
         cpe_display = f"+{result['cpe']:.2f}" if result['cpe'] > 0 else f"{result['cpe']:.2f}"
-        pressure_cpi_0_2 = f"+{result['cpi=0.2']:.2f}" if result[
-                                                                     'cpi=0.2'] > 0 else f"{result['cpi=0.2']:.2f}"
-        pressure_cpi_neg_0_3 = f"+{result['cpi=-0.3']:.2f}" if result[
-                                                                          'cpi=-0.3'] > 0 else f"{result['cpi=-0.3']:.2f}"
+        pressure_cpi_0_2 = f"+{result['cpi=0.2']:.2f}" if result['cpi=0.2'] > 0 else f"{result['cpi=0.2']:.2f}"
+        pressure_cpi_neg_0_3 = f"+{result['cpi=-0.3']:.2f}" if result['cpi=-0.3'] > 0 else f"{result['cpi=-0.3']:.2f}"
 
-        print(f"{result['Zone']:<6}{cpe_display:<10}{pressure_cpi_0_2:<15}{pressure_cpi_neg_0_3} kPa")
+        print(f"{result['Zone']:<6}{cpe_display:<10}{pressure_cpi_0_2 + ' kpa' :<15} {pressure_cpi_neg_0_3} kPa")
 
     data["wind_zones"] = results
 
