@@ -61,7 +61,17 @@
   {"name":"0.9 DL + 0.6 W90_0.3","factors":{"D":1.1,"W90_0.3":0.6}}
 ],
 "wind_data":[
-  {"type":"3s gust","fundamental_basic_wind_speed":36,"return_period":50,"terrain_category":"B","altitude":1500,"topographic_factor":1,"apex_height":15,"eaves_height":9,"gable_width":40,"building_length":82,"roof_pitch":16.7}
+  {"type":"3s gust",
+    "fundamental_basic_wind_speed":36,
+    "return_period":50,
+    "terrain_category":"B",
+    "altitude":1500,
+    "topographic_factor":1,
+    "apex_height":15,
+    "eaves_height":9,
+    "gable_width":40,
+    "building_length":82,
+    "roof_pitch":16.7}
 ],
 "wind_loads":[
   {"Zone":"A","cpe":-1.2,"cpi=0.2":-0.9497,"cpi=-0.3":-0.6105},
