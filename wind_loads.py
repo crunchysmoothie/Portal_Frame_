@@ -43,11 +43,29 @@ def calculate_pressure(peak_wind_pressure, cpe, cpi):
 
 def wind_data():
     angles = np.array([5, 15, 30, 45])
-    negative_pressure_data = np.array([
+
+    # Wind 0 Upward
+    negative_pressure_data_w0 = np.array([
         [-1.7, -1.2, -0.6, -0.6, -0.6],
         [-0.9, -0.8, -0.3, -0.4, -1.0],
         [-0.5, -0.5, -0.2, -0.4, -0.5],
         [0, 0, 0, -0.2, -0.3]
+    ])
+
+    # Wind 0 Downward
+    positive_pressure_data_w0 = np.array([
+        [0, 0, 0, -0.6, 0.2],
+        [0.2, 0.2, 0.2, 0, 0],
+        [0.7, 0.7, 0.4, 0, 0],
+        [0.7, 0.7, 0.6, 0, 0]
+    ])
+
+    # Wind 90 Upward
+    negative_pressure_data_w90 = np.array([
+        [-1.6, -1.3, -0.7, -0.6],
+        [-1.3, -1.3, -0.6, -0.5],
+        [-1.1, -1.4, -0.8, -0.5],
+        [-1.1, -1.4, -0.9, -0.5]
     ])
 
     data = import_data("input_data.json")
@@ -70,8 +88,8 @@ def wind_data():
 
         cpe_value_d = interpolate_cpe(h_d_zone_d, h_d_data, cpe_d) * cpe_d_coeff
         cpe_value_e = interpolate_cpe(h_d_zone_e, h_d_data, cpe_e) * cpe_e_coeff
-        cpe_negative = np.array([np.interp(wind['roof_pitch'], angles, negative_pressure_data[:, i]) for i in
-                                 range(negative_pressure_data.shape[1])])
+        cpe_negative = np.array([np.interp(wind['roof_pitch'], angles, negative_pressure_data_w0[:, i]) for i in
+                                 range(negative_pressure_data_w0.shape[1])])
 
         zones = {
             "A": -1.2, "B": -0.8, "C": -0.5, "D": cpe_value_d,
