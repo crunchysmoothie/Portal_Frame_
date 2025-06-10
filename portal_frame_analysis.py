@@ -246,7 +246,7 @@ def get_member_lengths(data):
             c_len += L
     return r_len, c_len
 
-def directional_search(primary, r_list, c_list,r_section_type, c_section_type,member_db, data,r_total_m, c_total_m,vert_limit, horiz_limit, num_core):
+def directional_search(primary, r_list, c_list, r_section_type, c_section_type,member_db, data,r_total_m, c_total_m, vert_limit, horiz_limit, num_core):
 
     # Decide which list is the outer loop
     if primary == 'column':
@@ -275,7 +275,7 @@ def directional_search(primary, r_list, c_list,r_section_type, c_section_type,me
 
 
     acceptable = []
-    with ProcessPoolExecutor(max_workers=(num_core-2)) as ex:
+    with ProcessPoolExecutor(max_workers=(num_core-4)) as ex:
         futures = [ex.submit(analyze_combination, t) for t in tasks]
         for fut in as_completed(futures):
             result = fut.result()
