@@ -41,6 +41,26 @@ def interpolate_cpe_roof(roof_angle, angles, data):
 def calculate_pressure(peak_wind_pressure, cpe, cpi):
     return (peak_wind_pressure * cpe) - (peak_wind_pressure * cpi)
 
+def zone_determination():
+    data = import_data('input_data.json')['wind_data']
+    if data['building_type'] in ['normal']:
+        e_0 = min(data['building_length'], data['apex_height'])
+        e_90 = min(data['rafter_span'], data['apex_height'])
+
+    zones = {
+        "A": {"0_deg": e_0, "90_deg": e_90},
+        "B": {"0_deg": e_0, "90_deg": e_90},
+        "C": {"0_deg": e_0, "90_deg": e_90},
+        "D": {"0_deg": e_0, "90_deg": e_90},
+        "E": {"0_deg": e_0, "90_deg": e_90},
+        "F": {"0_deg": e_0, "90_deg": e_90},
+        "G": {"0_deg": e_0, "90_deg": e_90},
+        "H": {"0_deg": e_0, "90_deg": e_90},
+        "I": {"0_deg": e_0, "90_deg": e_90},
+        "J": {"0_deg": e_0, "90_deg": e_90},
+    }
+    return print(e_0, e_90)
+
 def wind_data():
     angles = np.array([5, 15, 30, 45])
 
@@ -186,4 +206,4 @@ def wind_data():
     return
 
 if __name__ == "__main__":
-    wind_data()
+    zone_determination()
