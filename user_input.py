@@ -132,7 +132,6 @@ def generate_spring_supports(nodes):
                           {"node": nodes[-1]["name"], "direction": "RZ", "stiffness": 5E6}]
     return rotational_springs
 
-
 def update_json_file(json_filename, b_data, wind_data):
     # Generate new node and member data based on input dimensions
     new_nodes = generate_nodes(b_data)

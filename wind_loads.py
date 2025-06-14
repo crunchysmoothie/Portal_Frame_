@@ -48,17 +48,68 @@ def zone_determination():
         e_0 = min(data['building_length'], data['apex_height'])
         e_90 = min(data['rafter_span'], data['apex_height'])
 
+        if e_0 < data['rafter_span']:
+            A_l0 = e_0/5
+            B_l0 = e_0*4/5
+            C_l0 = data['rafter_span'] - e_0
+
+        elif e_0 >= data['rafter_span']:
+            A_l0 = e_0/5
+            B_l0 = data['rafter_span'] - e_0/5
+            C_l0 = 0
+
+        else:
+            A_l0 = data['rafter_span'] - e_0
+            B_l0 = 0
+            C_l0 = 0
+
+        if e_90 < data['building_length']:
+            A_l90 = e_0/5
+            B_l90 = e_0*4/5
+            C_l90 = data['building_length'] - e_0
+
+        elif e_90 >= data['building_length']:
+            A_l90 = e_0/5
+            B_l90 = data['building_length'] - e_0/5
+            C_l90 = 0
+
+        else:
+            A_l90 = data['building_length']
+            B_l90 = 0
+            C_l90 = 0
+
+        D_l0 = data['building_length']
+        E_l0 = data['building_length']
+        D_l90 = data['rafter_span']
+        E_l90 = data['rafter_span']
+
+    elif data['building_type'] in ['Canopy']:
+
+        A_l0 = 0
+        B_l0 = 0
+        C_l0 = 0
+        D_l0 = 0
+        E_l0 = 0
+        A_l90 = 0
+        B_l90 = 0
+        C_l90 = 0
+        D_l90 = 0
+        E_l90 = 0
+
+    if data['building_roof'] in ['Duo_pitched'] and data['building_type'] in ['Normal']:
+
+
     zones = {
-        "A": {"0_deg": e_0, "90_deg": e_90},
-        "B": {"0_deg": e_0, "90_deg": e_90},
-        "C": {"0_deg": e_0, "90_deg": e_90},
-        "D": {"0_deg": e_0, "90_deg": e_90},
-        "E": {"0_deg": e_0, "90_deg": e_90},
-        "F": {"0_deg": e_0, "90_deg": e_90},
-        "G": {"0_deg": e_0, "90_deg": e_90},
-        "H": {"0_deg": e_0, "90_deg": e_90},
-        "I": {"0_deg": e_0, "90_deg": e_90},
-        "J": {"0_deg": e_0, "90_deg": e_90},
+        "A": {"0_deg": A_l0, "90_deg": A_l90},
+        "B": {"0_deg": B_l0, "90_deg": B_l90},
+        "C": {"0_deg": C_l0, "90_deg": C_l90},
+        "D": {"0_deg": D_l0, "90_deg": D_l90},
+        "E": {"0_deg": E_l0, "90_deg": E_l90},
+        "F": {"0_deg": F_l0, "90_deg": F_l90},
+        "G": {"0_deg": G_l0, "90_deg": G_l90},
+        "H": {"0_deg": H_l0, "90_deg": H_l90},
+        "I": {"0_deg": I_l0, "90_deg": I_l90},
+        "J": {"0_deg": J_l0, "90_deg": J_l90},
     }
     return print(e_0, e_90)
 
