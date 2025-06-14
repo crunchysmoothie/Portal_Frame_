@@ -6,6 +6,10 @@
   <component name="ChangeListManager">
     <list default="true" id="c8f59bdd-e5a4-4338-bd02-6f086981f4ed" name="Changes" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+<<<<<<< HEAD
+=======
+      <change beforePath="$PROJECT_DIR$/portal_frame_analysis.py" beforeDir="false" afterPath="$PROJECT_DIR$/portal_frame_analysis.py" afterDir="false" />
+>>>>>>> 0be72b1f28868f5750a3434a50a8b0388f435633
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -15,7 +19,11 @@
   <component name="Git.Settings">
     <option name="RECENT_BRANCH_BY_REPOSITORY">
       <map>
+<<<<<<< HEAD
         <entry key="$PROJECT_DIR$" value="feature/ruan/uls-refactor" />
+=======
+        <entry key="$PROJECT_DIR$" value="main" />
+>>>>>>> 0be72b1f28868f5750a3434a50a8b0388f435633
       </map>
     </option>
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
@@ -56,7 +64,11 @@
     "Python.user_input.executor": "Run",
     "RunOnceActivity.ShowReadmeOnStart": "true",
     "RunOnceActivity.git.unshallow": "true",
+<<<<<<< HEAD
     "git-widget-placeholder": "main",
+=======
+    "git-widget-placeholder": "feature/ruan/uls-refactor",
+>>>>>>> 0be72b1f28868f5750a3434a50a8b0388f435633
     "ignore.virus.scanning.warn.message": "true",
     "node.js.detected.package.eslint": "true",
     "node.js.selected.package.eslint": "(autodetect)",
@@ -203,7 +215,11 @@
                   <entry key="branch">
                     <value>
                       <list>
+<<<<<<< HEAD
                         <option value="main" />
+=======
+                        <option value="origin/feature/ruan/uls-refactor" />
+>>>>>>> 0be72b1f28868f5750a3434a50a8b0388f435633
                       </list>
                     </value>
                   </entry>

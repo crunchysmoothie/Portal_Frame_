@@ -1,0 +1,25 @@
+portal_frame_analysis.py
+
+    Seperate load combos for ULS and SLS. Create function to calculate deflection for SLS load combinations.
+    Add function to calculate member forces for ULS load combinations.
+    Export member sizes and forces to member_strength_checks.py
+    Check member sizes and forces against member_strength_checks.py after analysis.
+
+member_strength_checks.py
+
+    Import member sizes and forces from portal_frame_analysis.py to check member strength.
+    Create function to determine the lightest member that passes OMS, CSS, LTB and Add checks.
+    Create check for member factors (w1, w2, etc)
+
+wind_loads.py
+
+    Create function to calculate wind loads.Wind loading to be set up for multiple structures:
+        - Duo Pitched Portal Frame - Canopy and enclosed building
+        - Mono pitched Portal Frame - Canopy and enclosed building
+    Export wind loads to portal_frame_analysis.py
+    0 deg, 90 deg and 180 deg wind loads to be calculated for each structure.
+
+user_input.py
+
+    Add structure type to user input. Find effective way to export user input to other modules.
+    Add wind inputs to user input.
