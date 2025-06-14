@@ -2,8 +2,8 @@ import json
 import time
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from PyNite import FEModel3D
-from PyNite.Visualization import Renderer
+from Pynite import FEModel3D
+from Pynite.Visualization import Renderer
 import member_database as mdb
 import tabulate
 import math
@@ -77,6 +77,17 @@ def build_model(r_mem, c_mem):
     # Create a new model
     frame = FEModel3D()
 
+    # Add Sections to Frame
+    try:
+        frame.add_section(r_mem["Designation"], r_mem["A"] * 1e3, r_mem["Iy"] * 1e6, r_mem["Ix"] * 1e6, r_mem["J"] * 1e3)
+    except (NameError, AttributeError):
+        pass
+
+    try:
+        frame.add_section(c_mem["Designation"], c_mem["A"] * 1e3, c_mem["Iy"] * 1e6, c_mem["Ix"] * 1e6, c_mem["J"] * 1e3)
+    except (NameError, AttributeError):
+        pass
+
     # Import data
     data = import_data('input_data.json')
 
@@ -105,18 +116,6 @@ def build_model(r_mem, c_mem):
         RZ = support.get('RZ', False)
         frame.def_support(node, DX, DY, DZ, RX, RY, RZ)
 
-    # Convert units from cm^2 to mm^2 and cm^4 to mm^4 for rafters
-    RA = r_mem['A'] * 1e3       # Cross-sectional area in mm^3
-    RIy = r_mem['Iy'] * 1e6     # Moment of inertia about local y-axis in mm^6
-    RIx = r_mem['Ix'] * 1e6     # Moment of inertia about local x-axis in mm^6
-    RJ = r_mem['J'] * 1e3       # Torsional constant in mm^3
-
-    # Convert units from cm^2 to mm^2 and cm^4 to mm^4 for columns
-    CA = c_mem['A'] * 1e3        # Cross-sectional area in mm^3
-    CIy = c_mem['Iy'] * 1e6     # Moment of inertia about local y-axis in mm^6
-    CIx = c_mem['Ix'] * 1e6     # Moment of inertia about local x-axis in mm^6
-    CJ = c_mem['J'] * 1e3       # Torsional constant in mm^3
-
     # Define members
     for member in data['members']:
         name = member['name']
@@ -127,20 +126,12 @@ def build_model(r_mem, c_mem):
 
         # Select properties based on member type
         if member_type == 'rafter':
-            Iy = RIy
-            Iz = RIx
-            J = RJ
-            A = RA
+            frame.add_member(name, i_node, j_node, material, r_mem["Designation"])
+
         elif member_type == 'column':
-            Iy = CIy
-            Iz = CIx
-            J = CJ
-            A = CA
+            frame.add_member(name, i_node, j_node, material, c_mem["Designation"])
         else:
             raise ValueError(f"Invalid member type '{member['type']}' for member '{name}'")
-
-        # Add the member to the model
-        frame.add_member(name, i_node, j_node, material, Iy, Iz, J, A)
 
     # Add nodal loads
     for node_load in data['nodal_loads']:
@@ -275,7 +266,7 @@ def directional_search(primary, r_list, c_list, r_section_type, c_section_type,m
 
 
     acceptable = []
-    with ProcessPoolExecutor(max_workers=(num_core-4)) as ex:
+    with ProcessPoolExecutor(max_workers=(num_core-8)) as ex:
         futures = [ex.submit(analyze_combination, t) for t in tasks]
         for fut in as_completed(futures):
             result = fut.result()
@@ -430,7 +421,7 @@ def main():
     frame, member_db, r_section_typ, c_section_typ, best_section = sls_check(preferred_section, r_section_type, c_section_type)
 
     #
-    uls_output((frame, member_db, r_section_typ, c_section_typ, best_section))
+    # uls_output((frame, member_db, r_section_typ, c_section_typ, best_section))
 
     if frame is not None:
         print("Pass")
