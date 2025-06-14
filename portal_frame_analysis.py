@@ -188,7 +188,7 @@ def analyze_combination(args):
     c_mem = mdb.member_properties(c_type, c_name, member_db)
 
     # ❶ Reject combos where the rafter flange is wider than the column flange
-    if r_mem['b'] > c_mem['b']:
+    if r_mem['b'] > c_mem['b'] + 10:
         return None
 
     # --- build and analyse FE model ----------------------------------------
@@ -279,6 +279,7 @@ def directional_search(primary, r_list, c_list, r_section_type, c_section_type,m
         futures = [ex.submit(analyze_combination, t) for t in tasks]
         for fut in as_completed(futures):
             result = fut.result()
+            print(result)
             if result is not None:
                 acceptable.append(result)
 
@@ -426,13 +427,14 @@ def main():
     r_section_type = 'I-Sections'  # or 'H-Sections', based on user preference
     c_section_type = 'I-Sections'  # or 'H-Sections', based on user preference
 
-    frame, member_db, r_section_type, c_section_type, best_section = sls_check(preferred_section, r_section_type, c_section_type)
+    frame, member_db, r_section_typ, c_section_typ, best_section = sls_check(preferred_section, r_section_type, c_section_type)
 
     #
-    uls_output((frame, member_db, r_section_type, c_section_type, best_section))
+    uls_output((frame, member_db, r_section_typ, c_section_typ, best_section))
 
     if frame is not None:
-        render_model(frame)
+        print("Pass")
+        # render_model(frame)
     else:
         print("Unable to find acceptable sections.")
 

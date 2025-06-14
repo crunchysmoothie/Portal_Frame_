@@ -113,8 +113,8 @@ def generate_members(nodes):
 def generate_nodal_loads(nodes):
     apex_node = nodes[len(nodes) // 2]
     eaves_node = nodes[2]
-    nodal_loads = [{"node": apex_node["name"], "direction": "FY", "magnitude": -50, "case": "L"},
-                   {"node": apex_node["name"], "direction": "FY", "magnitude": -50, "case": "D"},]
+    nodal_loads = [{"node": eaves_node["name"], "direction": "FX", "magnitude": 10, "case": "L"},
+                   {"node": apex_node["name"], "direction": "FY", "magnitude": 10, "case": "L"},]
 
     return nodal_loads
 
@@ -186,8 +186,8 @@ apex_height = 7 * 1000      # Convert to mm
 rafter_span = 8 * 1000      # Convert to mm
 rafter_spacing = 5 * 1000   # Convert to mm
 building_length = 50 * 1000 # Convert to mm
-col_bracing_spacing = 1     # number of braced points per column (1: Lx=Ly = L)
-rafter_bracing_spacing = 4  # number of braced points per rafter (1: Lx=Ly = L)
+col_bracing_spacing = 1     # number of braced points per column (1: Lx=Ly = 1.0 L, 2: Lx = L, Ly = 0.5L, etc)
+rafter_bracing_spacing = 4  # number of braced points per rafter (1: Lx=Ly = 1.0 L, 2: Lx = L, Ly = 0.5L, etc)
 
 building_data = {
     "building_type": building_type,

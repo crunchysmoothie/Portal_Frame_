@@ -44,8 +44,8 @@
   {"name":"W90_0.3","type":"wind"}
 ],
 "nodal_loads":[
-  {"node":"N9","direction":"FY","magnitude":-50,"case":"L"},
-  {"node":"N9","direction":"FY","magnitude":-50,"case":"D"}
+  {"node":"N3","direction":"FX","magnitude":10,"case":"L"},
+  {"node":"N9","direction":"FY","magnitude":10,"case":"L"}
 ],
 "member_loads":[
   {"member":"M1","direction":"Fy","w1":-0.003,"w2":-0.003,"case":"D"},
