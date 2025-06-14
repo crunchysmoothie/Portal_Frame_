@@ -43,7 +43,8 @@ def calculate_pressure(peak_wind_pressure, cpe, cpi):
 
 def zone_determination():
     data = import_data('input_data.json')['wind_data']
-    if data['building_type'] in ['normal']:
+    print(data['building_type'])
+    if data['building_type'] in ['Normal']:
         e_0 = min(data['building_length'], data['apex_height'])
         e_90 = min(data['rafter_span'], data['apex_height'])
 
