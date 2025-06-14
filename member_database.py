@@ -16,7 +16,7 @@ def load_member_database(filename='member_database.csv'):
                         pass
 
             # Check the row index to determine section type
-            if index < 45:
+            if index < 44:
                 member_db['I-Sections'][section_name] = row
             else:
                 member_db['H-Sections'][section_name] = row
