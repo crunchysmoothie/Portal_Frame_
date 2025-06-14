@@ -420,7 +420,6 @@ def main():
 
     frame, member_db, r_section_typ, c_section_typ, best_section = sls_check(preferred_section, r_section_type, c_section_type)
 
-    #
     # uls_output((frame, member_db, r_section_typ, c_section_typ, best_section))
 
     if frame is not None:
