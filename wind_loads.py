@@ -44,44 +44,51 @@ def calculate_pressure(peak_wind_pressure, cpe, cpi):
 def zone_determination():
     data = import_data('input_data.json')['wind_data']
     print(data['building_type'])
-    if data['building_type'] in ['Normal']:
-        e_0 = min(data['building_length'], data['apex_height'])
-        e_90 = min(data['rafter_span'], data['apex_height'])
+    print(data['building_roof'])
 
-        if e_0 < data['rafter_span']:
+    b_0 = data['building_length']
+    b_90 = data['rafter_span']
+    d_0 = data['rafter_span']
+    d_90 = data['building_length']
+
+    e_0 = min(b_0, data['apex_height'] * 2)
+    e_90 = min(b_90, data['apex_height'] * 2)
+    if data['building_type'] in ['Normal']:
+
+        if e_0 < d_0:
             A_l0 = e_0/5
             B_l0 = e_0*4/5
-            C_l0 = data['rafter_span'] - e_0
+            C_l0 = d_0 - e_0
 
-        elif e_0 >= data['rafter_span']:
+        elif e_0 >= d_0:
             A_l0 = e_0/5
-            B_l0 = data['rafter_span'] - e_0/5
+            B_l0 = d_0 - e_0/5
             C_l0 = 0
 
         else:
-            A_l0 = data['rafter_span'] - e_0
+            A_l0 = d_0 - e_0
             B_l0 = 0
             C_l0 = 0
 
-        if e_90 < data['building_length']:
+        if e_90 < d_90:
             A_l90 = e_0/5
             B_l90 = e_0*4/5
-            C_l90 = data['building_length'] - e_0
+            C_l90 = d_90 - e_0
 
-        elif e_90 >= data['building_length']:
+        elif e_90 >= d_90:
             A_l90 = e_0/5
-            B_l90 = data['building_length'] - e_0/5
+            B_l90 = d_90 - e_0/5
             C_l90 = 0
 
         else:
-            A_l90 = data['building_length']
+            A_l90 = d_90
             B_l90 = 0
             C_l90 = 0
 
-        D_l0 = data['building_length']
-        E_l0 = data['building_length']
-        D_l90 = data['rafter_span']
-        E_l90 = data['rafter_span']
+        D_l0 = b_0
+        E_l0 = b_0
+        D_l90 = b_90
+        E_l90 = b_90
 
     elif data['building_type'] in ['Canopy']:
 
@@ -96,8 +103,28 @@ def zone_determination():
         D_l90 = 0
         E_l90 = 0
 
-    if data['building_roof'] in ['Duo_pitched'] and data['building_type'] in ['Normal']:
+    if data['building_roof'] in ['Duo Pitched'] and data['building_type'] in ['Normal']:
+        F_l0x = e_0/10
+        F_l0y = e_0/4
+        G_l0x = e_0/10
+        G_l0y = b_0 - e_0/2
+        H_l0x = d_0/2 - e_0/10
+        H_l0y = b_0
+        I_l0x = d_0/2 - e_0/10
+        I_l0y = d_0
+        J_l0x = e_0/10
+        J_l0y = b_0
 
+        F_l90x = e_90/10
+        F_l90y = e_90/4
+        G_l90x = e_90/10
+        G_l90y = b_90 - e_90/2
+        H_l90x = d_90/2 - e_90/10
+        H_l90y = b_90
+        I_l90x = d_90/2 - e_90/10
+        I_l90y = d_90
+        J_l90x = e_90/10
+        J_l90y = b_90
 
     zones = {
         "A": {"0_deg": A_l0, "90_deg": A_l90},
@@ -105,13 +132,14 @@ def zone_determination():
         "C": {"0_deg": C_l0, "90_deg": C_l90},
         "D": {"0_deg": D_l0, "90_deg": D_l90},
         "E": {"0_deg": E_l0, "90_deg": E_l90},
-        "F": {"0_deg": F_l0, "90_deg": F_l90},
-        "G": {"0_deg": G_l0, "90_deg": G_l90},
-        "H": {"0_deg": H_l0, "90_deg": H_l90},
-        "I": {"0_deg": I_l0, "90_deg": I_l90},
-        "J": {"0_deg": J_l0, "90_deg": J_l90},
+        "F": {"0_deg": (F_l0x, F_l0y), "90_deg": (F_l90x, F_l90y)},
+        "G": {"0_deg": (G_l0x, G_l0y), "90_deg": (G_l90x, G_l90y)},
+        "H": {"0_deg": (H_l0x, H_l0y), "90_deg": (H_l90x, H_l90y)},
+        "I": {"0_deg": (I_l0x, I_l0y), "90_deg": (I_l90x, I_l90y)},
+        "J": {"0_deg": (J_l0x, J_l0y), "90_deg": (J_l90x, J_l90y)},
+
     }
-    return print(e_0, e_90)
+    return zones
 
 def wind_data():
     angles = np.array([5, 15, 30, 45])
@@ -257,5 +285,26 @@ def wind_data():
 
     return
 
+def print_zones(zones):
+    print(f"{'Zone':<5} {'0_deg':<20} {'90_deg':<20}")
+    print("-" * 50)
+
+    def fmt(val):
+        # scalar (int or float)
+        if isinstance(val, (int, float)):
+            return f"({val:.2f})"
+        # 2-component tuple / list
+        elif isinstance(val, (tuple, list)) and len(val) == 2:
+            return f"({val[0]:.2f}, {val[1]:.2f})"
+        # fallback – show whatever it is
+        return str(val)
+
+    for zone, v in zones.items():
+        print(f"{zone:<5} {fmt(v['0_deg']):<20} {fmt(v['90_deg']):<20}")
+
+
 if __name__ == "__main__":
-    zone_determination()
+    zones = zone_determination()
+    print("\nZone Load Mapping:")
+    print_zones(zones)
+
