@@ -179,7 +179,7 @@ def analyze_combination(args):
     c_mem = mdb.member_properties(c_type, c_name, member_db)
 
     # ❶ Reject combos where the rafter flange is wider than the column flange
-    if r_mem['b'] > c_mem['b'] + 10:
+    if r_mem['b'] > c_mem['b'] + 3.5:
         return None
 
     # --- build and analyse FE model ----------------------------------------
@@ -213,7 +213,7 @@ def analyze_combination(args):
         return None   # fails serviceability
 
     # --- weight (kN) --------------------------------------------------------
-    weight = r_mem['m'] * r_total_m + c_mem['m'] * c_total_m
+    weight = round(r_mem['m'] * r_total_m + c_mem['m'] * c_total_m, 1)
 
     return (weight,          # 0  – used for min()
             r_name,          # 1
@@ -225,16 +225,14 @@ def analyze_combination(args):
 
 def get_member_lengths(data):
     """Return (Σ rafter_len [m], Σ column_len [m]) from input_data.json."""
-    xyz = {n: (nd['x'], nd['y'], nd['z']) for n, nd in data['nodes'].items()}
-    r_len = c_len = 0.0
-    for m in data['members']:
-        xi, yi, zi = xyz[m['i_node']]
-        xj, yj, zj = xyz[m['j_node']]
-        L = math.sqrt((xj - xi)**2 + (yj - yi)**2 + (zj - zi)**2) / 1_000  # mm → m
-        if m['type'].lower() == 'rafter':
-            r_len += L
-        else:
-            c_len += L
+    r_len = 0
+    c_len = 0
+    for member in data['members']:
+        if member['type'] == 'rafter':
+            r_len += member['length']
+        if member['type'] == 'column':
+            c_len += member['length']
+
     return r_len, c_len
 
 def directional_search(primary, r_list, c_list, r_section_type, c_section_type,member_db, data,r_total_m, c_total_m, vert_limit, horiz_limit, num_core):
@@ -320,7 +318,7 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
 
     data = import_data('input_data.json')
     r_total_m, c_total_m = get_member_lengths(data)
-    vert_limit  = data['frame_data'][0]['rafter_span'] / 300
+    vert_limit  = data['frame_data'][0]['gable_width'] / 300
     horiz_limit = data['frame_data'][0]['eaves_height'] / 300
 
     # ❶ Search by fixing rafters first, then columns
@@ -424,7 +422,7 @@ def main():
 
     if frame is not None:
         print("Pass")
-        # render_model(frame)
+        render_model(frame)
     else:
         print("Unable to find acceptable sections.")
 

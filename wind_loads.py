@@ -2,6 +2,8 @@ import json
 import math
 import numpy as np
 
+from user_input import rafter_spacing
+
 
 def import_data(file):
     with open(file) as f:
@@ -45,8 +47,8 @@ def zone_determination():
     data = import_data('input_data.json')['wind_data']
 
     b_0 = data['building_length']
-    b_90 = data['rafter_span']
-    d_0 = data['rafter_span']
+    b_90 = data['gable_width']
+    d_0 = data['gable_width']
     d_90 = data['building_length']
 
     e_0 = min(b_0, data['apex_height'] * 2)
@@ -54,7 +56,7 @@ def zone_determination():
 
     print(e_0, e_90)
 
-    if data['building_type'] in ['Normal']:
+    if data['building_type'] == ['Normal']:
 
         if e_0 < d_0:
             A_l0 = e_0/5
@@ -151,7 +153,6 @@ def zone_determination():
         "H": {"0_deg": (H_l0x, H_l0y), "90_deg": (H_l90x, H_l90y)},
         "I": {"0_deg": (I_l0x, I_l0y), "90_deg": (I_l90x, I_l90y)},
         "J": {"0_deg": (J_l0x, J_l0y), "90_deg": (J_l90x, J_l90y)},
-
     }
     return zones
 
@@ -189,6 +190,7 @@ def wind_data_duo_n():
 
     results_up = []
     results_down = []
+    results_90 = []
 
     wind = data['wind_data']
     bs = calculate_basic_wind_speed(wind['fundamental_basic_wind_speed'], wind['return_period'])
@@ -212,6 +214,11 @@ def wind_data_duo_n():
     cpe_positive = np.array([
         np.interp(wind['roof_pitch'], angles, pos_w0[:, i])
         for i in range(pos_w0.shape[1])
+    ])
+
+    cpe_wind_90 = np.array([
+        np.interp(wind['roof_pitch'], angles, neg_w90[:, i])
+        for i in range(neg_w90.shape[1])
     ])
 
     zones_up = {
@@ -240,45 +247,87 @@ def wind_data_duo_n():
         "J": cpe_positive[4]
     }
 
+    zones_90 = {
+        "A": -1.2,
+        "B": -0.8,
+        "C": -0.5,
+        "D": cpe_value_d,
+        "E": cpe_value_e,
+        "F": cpe_wind_90[0],
+        "G": cpe_wind_90[1],
+        "H": cpe_wind_90[2],
+        "I": cpe_wind_90[3]
+    }
+
+    zones = zones_normal()
+    r_spacing = wind['rafter_spacing']
+
     for zone, cpe in zones_up.items():
+        print(zones[zone]["0_deg"])
         results_up.append({
             "Zone": zone,
             "cpe": round(cpe, 4),
-            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2), 4),
-            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3), 4)
+            "Length": zones[zone]["0_deg"],
+            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2), 4) * r_spacing,
+            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3), 4) * r_spacing
         })
 
     for zone, cpe in zones_down.items():
+        print(zones[zone]["0_deg"])
         results_down.append({
             "Zone": zone,
             "cpe": round(cpe, 4),
-            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2), 4),
-            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3), 4)
+            "Length": zones[zone]["0_deg"],
+            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2), 4) * r_spacing,
+            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3), 4) * r_spacing
+        })
+
+    for zone, cpe in zones_90.items():
+        print(zones[zone]["90_deg"])
+        results_90.append({
+            "Zone": zone,
+            "cpe": round(cpe, 4),
+            "Length": zones[zone]["90_deg"],
+            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2), 4) * r_spacing,
+            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3), 4) * r_spacing
         })
 
     print("Wind Upward Pressures")
-    print(f"{'Zone':<6}{'cpe':<10}{'Press. cpi=0.2':<15}{'Press. cpi=-0.3'}")
+    print(f"{'Zone':<6}{'cpe':<10}{'Length':<10}{'Load. cpi=0.2':<18}{'Load. cpi=-0.3'}")
     print("-" * 56)
     for result in results_up:
-
         cpe_display = f"+{result['cpe']:.2f}" if result['cpe'] > 0 else f"{result['cpe']:.2f}"
+        length_display = f"{result['Length']:.2f}"
         pressure_cpi_0_2 = f"+{result['cpi=0.2']:.2f}" if result['cpi=0.2'] > 0 else f"{result['cpi=0.2']:.2f}"
         pressure_cpi_neg_0_3 = f"+{result['cpi=-0.3']:.2f}" if result['cpi=-0.3'] > 0 else f"{result['cpi=-0.3']:.2f}"
 
-        print(f"{result['Zone']:<6}{cpe_display:<10}{pressure_cpi_0_2 + ' kpa' :<15} {pressure_cpi_neg_0_3} kPa")
+        print(f"{result['Zone']:<6}{cpe_display:<10}{length_display + ' m':<10}{pressure_cpi_0_2 + ' kN/m' :<18} {pressure_cpi_neg_0_3} kN/m")
 
     print("\nWind Downward Pressures")
-    print(f"{'Zone':<6}{'cpe':<10}{'Press. cpi=0.2':<15}{'Press. cpi=-0.3'}")
+    print(f"{'Zone':<6}{'cpe':<10}{'Length':<10}{'Load cpi=0.2':<18}{'Load cpi=-0.3'}")
     print("-" * 56)
     for result in results_down:
         cpe_display = f"+{result['cpe']:.2f}" if result['cpe'] > 0 else f"{result['cpe']:.2f}"
+        length_display = f"{result['Length']:.2f}"
         pressure_cpi_0_2 = (f"+{result['cpi=0.2']:.2f}" if result['cpi=0.2'] > 0 else f"{result['cpi=0.2']:.2f}")
         pressure_cpi_neg_0_3 = (f"+{result['cpi=-0.3']:.2f}" if result['cpi=-0.3'] > 0 else f"{result['cpi=-0.3']:.2f}")
 
-        print(f"{result['Zone']:<6}{cpe_display:<10}{pressure_cpi_0_2 + ' kpa':<15} {pressure_cpi_neg_0_3} kPa")
+        print(f"{result['Zone']:<6}{cpe_display:<10}{length_display + ' m':<10}{pressure_cpi_0_2 + ' kN/m':<18} {pressure_cpi_neg_0_3} kN/m")
+
+    print("\nWind 90 Pressures")
+    print(f"{'Zone':<6}{'cpe':<10}{'Length':<10}{'Load cpi=0.2':<18}{'Load cpi=-0.3'}")
+    print("-" * 56)
+    for result in results_90:
+        cpe_display = f"+{result['cpe']:.2f}" if result['cpe'] > 0 else f"{result['cpe']:.2f}"
+        length_display = f"{result['Length']:.2f}"
+        pressure_cpi_0_2 = (f"+{result['cpi=0.2']:.2f}" if result['cpi=0.2'] > 0 else f"{result['cpi=0.2']:.2f}")
+        pressure_cpi_neg_0_3 = (f"+{result['cpi=-0.3']:.2f}" if result['cpi=-0.3'] > 0 else f"{result['cpi=-0.3']:.2f}")
+
+        print(f"{result['Zone']:<6}{cpe_display:<10}{length_display + ' m':<10}{pressure_cpi_0_2 + ' kN/m':<18} {pressure_cpi_neg_0_3} kN/m")
 
     data["wind_zones_0U"] = results_up
     data["wind_zones_0D"] = results_down
+    data["wind_zones_90"] = results_90
 
     json_str = json.dumps(data, separators=(',', ':'))
 
@@ -461,6 +510,85 @@ def print_zones(zones):
     for zone, v in zones.items():
         print(f"{zone:<5} {fmt(v['0_deg']):<20} {fmt(v['90_deg']):<20}")
 
+def zones_normal():
+    data = import_data('input_data.json')['wind_data']
+
+    b_0 = data['building_length']
+    b_90 = data['gable_width']
+    d_0 = data['gable_width']
+    d_90 = data['building_length']
+
+    e_0 = min(b_0, data['apex_height'] * 2)
+    e_90 = min(b_90, data['apex_height'] * 2)
+
+    if e_0 < d_0:
+        A_l0 = e_0 / 5
+        B_l0 = e_0 * 4 / 5
+        C_l0 = d_0 - e_0
+
+    elif e_0 >= d_0:
+        A_l0 = e_0 / 5
+        B_l0 = d_0 - e_0 / 5
+        C_l0 = 0
+
+    else:
+        A_l0 = d_0 - e_0
+        B_l0 = 0
+        C_l0 = 0
+
+    if e_90 < d_90:
+        A_l90 = e_90 / 5
+        B_l90 = e_90 * 4 / 5
+        C_l90 = d_90 - e_90
+
+    elif e_90 >= d_90:
+        A_l90 = e_90 / 5
+        B_l90 = d_90 - e_90 / 5
+        C_l90 = 0
+
+    else:
+        A_l90 = d_90
+        B_l90 = 0
+        C_l90 = 0
+
+    D_l0 = b_0
+    E_l0 = b_0
+    D_l90 = b_90
+    E_l90 = b_90
+    F_l0 = e_0 / 10
+    G_l0 = e_0 / 10
+    F_l90 = e_90 / 10
+    G_l90 = e_90 / 10
+    H_l90 = e_90 / 2 - b_90 / 10
+    I_l90 = d_90 - e_90 / 2
+    J_l90 = 0
+
+    if data['building_roof'] == 'Duo Pitched':
+
+        H_l0 = d_0 / 2 - e_0 / 10
+        I_l0 = d_0 / 2 - e_0 / 10
+        J_l0 = e_0 / 10
+
+    else:
+        H_l0 = d_0 - e_0 / 10
+        I_l0 = 0
+        J_l0 = 0
+
+
+    zones = {
+        "A": {"0_deg": A_l0, "90_deg": A_l90},
+        "B": {"0_deg": B_l0, "90_deg": B_l90},
+        "C": {"0_deg": C_l0, "90_deg": C_l90},
+        "D": {"0_deg": D_l0, "90_deg": D_l90},
+        "E": {"0_deg": E_l0, "90_deg": E_l90},
+        "F": {"0_deg": F_l0, "90_deg": F_l90},
+        "G": {"0_deg": G_l0, "90_deg": G_l90},
+        "H": {"0_deg": H_l0, "90_deg": H_l90},
+        "I": {"0_deg": I_l0, "90_deg": I_l90},
+        "J": {"0_deg": J_l0, "90_deg": J_l90},
+    }
+    return zones
+
 def wind_out():
     data = import_data('input_data.json')['wind_data']
     if data['building_type'] == 'Normal':
@@ -476,5 +604,5 @@ def wind_out():
             return wind_data_mono_c()
 
 if __name__ == "__main__":
-    wind_out()
-
+    wind_data_duo_n()
+    # print_zones(zones_normal())
