@@ -8,7 +8,8 @@ def generate_nodes(b_data):
     gable_width = b_data['gable_width']
 
     nodes = []
-    num_vertical = 5
+    num_vertical = b_data['col_bracing_spacing'] + 2
+    print('num_vertical', num_vertical)
 
     # Generate nodes for Duo Pitched type
     if b_data["building_roof"] == "Duo Pitched":
@@ -23,7 +24,7 @@ def generate_nodes(b_data):
             nodes.append(node)
 
         # Generate 4 diagonal nodes for the rafter section
-        num_diagonal = 8
+        num_diagonal = b_data['rafter_bracing_spacing'] * 2
         for i in range(1, num_diagonal):
             x = round(i * (gable_width / num_diagonal), 2)
             y = round(
@@ -99,22 +100,29 @@ def generate_members(nodes):
 
     # Create members between consecutive nodes
     for i in range(1, num_nodes):
+        xi = nodes[i - 1]['x']
+        yi = nodes[i - 1]['y']
+        xj = nodes[i]['x']
+        yj = nodes[i]['y']
         member = {
             "name": f"M{i}",
             "i_node": nodes[i - 1]["name"],
             "j_node": nodes[i]["name"],
             "material": "Steel_S355",
-            "type": "rafter" if i in range(3, num_nodes - 2) else "column"
+            "type": "rafter" if xi != xj else "column",
+            "length": round(math.sqrt((xj-xi)**2 + (yj-yi)**2) / 1_000, 3)
         }
         members.append(member)
 
     return members
 
-def generate_nodal_loads(nodes):
+def generate_nodal_loads(nodes, b_data):
     apex_node = nodes[len(nodes) // 2]
-    eaves_node = nodes[2]
+    for i in nodes:
+        if i['x'] == 0 and i['y'] == b_data['eaves_height']:
+            eaves_node = i
     nodal_loads = [{"node": eaves_node["name"], "direction": "FX", "magnitude": 10, "case": "L"},
-                   {"node": apex_node["name"], "direction": "FY", "magnitude": 10, "case": "L"},]
+                   {"node": apex_node["name"], "direction": "FY", "magnitude": -10, "case": "L"},]
 
     return nodal_loads
 
@@ -137,7 +145,7 @@ def update_json_file(json_filename, b_data, wind_data):
     new_nodes = generate_nodes(b_data)
     new_members = generate_members(new_nodes)
     new_supports = generate_supports(new_nodes)
-    new_loads = generate_nodal_loads(new_nodes)
+    new_loads = generate_nodal_loads(new_nodes, b_data)
     new_member_loads = generate_member_loads(new_members)
     rotational_springs = generate_spring_supports(new_nodes)
     wind_input = wind_data
@@ -185,7 +193,7 @@ apex_height = 7 * 1000      # Convert to mm
 gable_width = 8 * 1000      # Convert to mm
 rafter_spacing = 5 * 1000   # Convert to mm
 building_length = 50 * 1000 # Convert to mm
-col_bracing_spacing = 1     # number of braced points per column (1: Lx=Ly = 1.0 L, 2: Lx = L, Ly = 0.5L, etc)
+col_bracing_spacing = 2     # number of braced points per column (1: Lx=Ly = 1.0 L, 2: Lx = L, Ly = 0.5L, etc)
 rafter_bracing_spacing = 4  # number of braced points per rafter (1: Lx=Ly = 1.0 L, 2: Lx = L, Ly = 0.5L, etc)
 
 building_data = {
