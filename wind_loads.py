@@ -43,8 +43,6 @@ def calculate_pressure(peak_wind_pressure, cpe, cpi):
 
 def zone_determination():
     data = import_data('input_data.json')['wind_data']
-    print(data['building_type'])
-    print(data['building_roof'])
 
     b_0 = data['building_length']
     b_90 = data['rafter_span']
@@ -53,6 +51,9 @@ def zone_determination():
 
     e_0 = min(b_0, data['apex_height'] * 2)
     e_90 = min(b_90, data['apex_height'] * 2)
+
+    print(e_0, e_90)
+
     if data['building_type'] in ['Normal']:
 
         if e_0 < d_0:
@@ -71,13 +72,13 @@ def zone_determination():
             C_l0 = 0
 
         if e_90 < d_90:
-            A_l90 = e_0/5
-            B_l90 = e_0*4/5
-            C_l90 = d_90 - e_0
+            A_l90 = e_90/5
+            B_l90 = e_90*4/5
+            C_l90 = d_90 - e_90
 
         elif e_90 >= d_90:
-            A_l90 = e_0/5
-            B_l90 = d_90 - e_0/5
+            A_l90 = e_90/5
+            B_l90 = d_90 - e_90/5
             C_l90 = 0
 
         else:
@@ -103,28 +104,41 @@ def zone_determination():
         D_l90 = 0
         E_l90 = 0
 
-    if data['building_roof'] in ['Duo Pitched'] and data['building_type'] in ['Normal']:
-        F_l0x = e_0/10
-        F_l0y = e_0/4
-        G_l0x = e_0/10
-        G_l0y = b_0 - e_0/2
-        H_l0x = d_0/2 - e_0/10
-        H_l0y = b_0
-        I_l0x = d_0/2 - e_0/10
-        I_l0y = d_0
-        J_l0x = e_0/10
-        J_l0y = b_0
-
-        F_l90x = e_90/10
-        F_l90y = e_90/4
-        G_l90x = e_90/10
-        G_l90y = b_90 - e_90/2
-        H_l90x = d_90/2 - e_90/10
+    if data['building_type'] in ['Normal']:
+        F_l0x = e_0 / 10
+        F_l0y = e_0 / 4
+        G_l0x = e_0 / 10
+        G_l0y = b_0 - e_0 / 2
+        F_l90x = e_90 / 10
+        F_l90y = e_90 / 4
+        G_l90x = e_90 / 10
+        G_l90y = b_90 - e_90 / 2
+        H_l90x = e_90 / 2 - b_90 / 10
         H_l90y = b_90
-        I_l90x = d_90/2 - e_90/10
-        I_l90y = d_90
-        J_l90x = e_90/10
-        J_l90y = b_90
+        I_l90x = d_90 - e_90 / 2
+        I_l90y = b_90
+        J_l90x = 0
+        J_l90y = 0
+
+        if data['building_roof'] in ['Duo Pitched']:
+
+            H_l0x = d_0/2 - e_0/10
+            H_l0y = b_0
+            I_l0x = d_0/2 - e_0/10
+            I_l0y = b_0
+            J_l0x = e_0/10
+            J_l0y = b_0
+
+        else:
+            H_l0x = d_0 - e_0/10
+            H_l0y = b_0
+            I_l0x = 0
+            I_l0y = 0
+            J_l0x = 0
+            J_l0y = 0
+
+    if data['building_type'] in ['Canopy']:
+        pass
 
     zones = {
         "A": {"0_deg": A_l0, "90_deg": A_l90},
@@ -284,6 +298,15 @@ def wind_data():
         json_file.write(formatted_json_str)
 
     return
+
+def wind_data_mono():
+    return None
+
+def wind_data_duo():
+    return None
+
+def wind_data_canopy():
+    return None
 
 def print_zones(zones):
     print(f"{'Zone':<5} {'0_deg':<20} {'90_deg':<20}")
