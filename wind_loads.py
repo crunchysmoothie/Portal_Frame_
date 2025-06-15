@@ -155,11 +155,11 @@ def zone_determination():
     }
     return zones
 
-def wind_data():
+def wind_data_duo_n():
     angles = np.array([5, 15, 30, 45])
 
     # Wind 0 Upward
-    negative_pressure_data_w0 = np.array([
+    neg_w0 = np.array([
         [-1.7, -1.2, -0.6, -0.6, -0.6],
         [-0.9, -0.8, -0.3, -0.4, -1.0],
         [-0.5, -0.5, -0.2, -0.4, -0.5],
@@ -167,7 +167,7 @@ def wind_data():
     ])
 
     # Wind 0 Downward
-    positive_pressure_data_w0 = np.array([
+    pos_w0 = np.array([
         [0, 0, 0, -0.6, 0.2],
         [0.2, 0.2, 0.2, 0, 0],
         [0.7, 0.7, 0.4, 0, 0],
@@ -175,7 +175,7 @@ def wind_data():
     ])
 
     # Wind 90 Upward
-    negative_pressure_data_w90 = np.array([
+    neg_w90 = np.array([
         [-1.6, -1.3, -0.7, -0.6],
         [-1.3, -1.3, -0.6, -0.5],
         [-1.1, -1.4, -0.8, -0.5],
@@ -190,77 +190,216 @@ def wind_data():
     results_up = []
     results_down = []
 
-    for wind in data['wind_data']:
-        bs = calculate_basic_wind_speed(wind['fundamental_basic_wind_speed'], wind['return_period'])
-        roughness = calculate_terrain_roughness(wind['apex_height'], wind['terrain_category'])
-        peak_pressure = calculate_peak_wind_pressure(wind['topographic_factor'], bs, roughness, wind['altitude'])
+    wind = data['wind_data']
+    bs = calculate_basic_wind_speed(wind['fundamental_basic_wind_speed'], wind['return_period'])
+    roughness = calculate_terrain_roughness(wind['apex_height'], wind['terrain_category'])
+    peak_pressure = calculate_peak_wind_pressure(wind['topographic_factor'], bs, roughness, wind['altitude'])
 
-        h_d_zone_d = wind['eaves_height'] / wind['gable_width']
-        h_d_zone_e = wind['apex_height'] / wind['gable_width']
+    h_d_zone_d = wind['apex_height'] / wind['gable_width']
+    h_d_zone_e = wind['apex_height'] / wind['gable_width']
 
-        cpe_d_coeff = min([max([0.85+((1-0.85)/(5-1)*(h_d_zone_d-1)), 0.85]), 1])
-        cpe_e_coeff = min([max([0.85+((1-0.85)/(5-1)*(h_d_zone_e-1)), 0.85]), 1])
+    cpe_d_coeff = min([max([0.85+((1-0.85)/(5-1)*(h_d_zone_d-1)), 0.85]), 1])
+    cpe_e_coeff = min([max([0.85+((1-0.85)/(5-1)*(h_d_zone_e-1)), 0.85]), 1])
 
-        cpe_value_d = interpolate_cpe(h_d_zone_d, h_d_data, cpe_d) * cpe_d_coeff
-        cpe_value_e = interpolate_cpe(h_d_zone_e, h_d_data, cpe_e) * cpe_e_coeff
+    cpe_value_d = interpolate_cpe(h_d_zone_d, h_d_data, cpe_d) * cpe_d_coeff
+    cpe_value_e = interpolate_cpe(h_d_zone_e, h_d_data, cpe_e) * cpe_e_coeff
 
-        cpe_negative = np.array([
-            np.interp(wind['roof_pitch'], angles, negative_pressure_data_w0[:, i])
-            for i in range(negative_pressure_data_w0.shape[1])
-        ])
+    cpe_negative = np.array([
+        np.interp(wind['roof_pitch'], angles, neg_w0[:, i])
+        for i in range(neg_w0.shape[1])
+    ])
 
-        cpe_positive = np.array([
-            np.interp(wind['roof_pitch'], angles, positive_pressure_data_w0[:, i])
-            for i in range(positive_pressure_data_w0.shape[1])
-        ])
+    cpe_positive = np.array([
+        np.interp(wind['roof_pitch'], angles, pos_w0[:, i])
+        for i in range(pos_w0.shape[1])
+    ])
 
-        zones_up = {
-            "A": -1.2,
-            "B": -0.8,
-            "C": -0.5,
-            "D": cpe_value_d,
-            "E": cpe_value_e,
-            "F": cpe_negative[0],
-            "G": cpe_negative[1],
-            "H": cpe_negative[2],
-            "I": cpe_negative[3],
-            "J": cpe_negative[4]
-        }
+    zones_up = {
+        "A": -1.2,
+        "B": -0.8,
+        "C": -0.5,
+        "D": cpe_value_d,
+        "E": cpe_value_e,
+        "F": cpe_negative[0],
+        "G": cpe_negative[1],
+        "H": cpe_negative[2],
+        "I": cpe_negative[3],
+        "J": cpe_negative[4]
+    }
 
-        zones_down = {
-            "A": -1.2,
-            "B": -0.8,
-            "C": -0.5,
-            "D": cpe_value_d,
-            "E": cpe_value_e,
-            "F": cpe_positive[0],
-            "G": cpe_positive[1],
-            "H": cpe_positive[2],
-            "I": cpe_positive[3],
-            "J": cpe_positive[4]
-        }
+    zones_down = {
+        "A": -1.2,
+        "B": -0.8,
+        "C": -0.5,
+        "D": cpe_value_d,
+        "E": cpe_value_e,
+        "F": cpe_positive[0],
+        "G": cpe_positive[1],
+        "H": cpe_positive[2],
+        "I": cpe_positive[3],
+        "J": cpe_positive[4]
+    }
 
-        for zone, cpe in zones_up.items():
-            results_up.append({
-                "Zone": zone,
-                "cpe": round(cpe, 4),
-                "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2), 4),
-                "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3), 4)
-            })
+    for zone, cpe in zones_up.items():
+        results_up.append({
+            "Zone": zone,
+            "cpe": round(cpe, 4),
+            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2), 4),
+            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3), 4)
+        })
 
-        for zone, cpe in zones_down.items():
-            results_down.append({
-                "Zone": zone,
-                "cpe": round(cpe, 4),
-                "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2), 4),
-                "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3), 4)
-            })
+    for zone, cpe in zones_down.items():
+        results_down.append({
+            "Zone": zone,
+            "cpe": round(cpe, 4),
+            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2), 4),
+            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3), 4)
+        })
 
     print("Wind Upward Pressures")
     print(f"{'Zone':<6}{'cpe':<10}{'Press. cpi=0.2':<15}{'Press. cpi=-0.3'}")
     print("-" * 56)
     for result in results_up:
 
+        cpe_display = f"+{result['cpe']:.2f}" if result['cpe'] > 0 else f"{result['cpe']:.2f}"
+        pressure_cpi_0_2 = f"+{result['cpi=0.2']:.2f}" if result['cpi=0.2'] > 0 else f"{result['cpi=0.2']:.2f}"
+        pressure_cpi_neg_0_3 = f"+{result['cpi=-0.3']:.2f}" if result['cpi=-0.3'] > 0 else f"{result['cpi=-0.3']:.2f}"
+
+        print(f"{result['Zone']:<6}{cpe_display:<10}{pressure_cpi_0_2 + ' kpa' :<15} {pressure_cpi_neg_0_3} kPa")
+
+    print("\nWind Downward Pressures")
+    print(f"{'Zone':<6}{'cpe':<10}{'Press. cpi=0.2':<15}{'Press. cpi=-0.3'}")
+    print("-" * 56)
+    for result in results_down:
+        cpe_display = f"+{result['cpe']:.2f}" if result['cpe'] > 0 else f"{result['cpe']:.2f}"
+        pressure_cpi_0_2 = (f"+{result['cpi=0.2']:.2f}" if result['cpi=0.2'] > 0 else f"{result['cpi=0.2']:.2f}")
+        pressure_cpi_neg_0_3 = (f"+{result['cpi=-0.3']:.2f}" if result['cpi=-0.3'] > 0 else f"{result['cpi=-0.3']:.2f}")
+
+        print(f"{result['Zone']:<6}{cpe_display:<10}{pressure_cpi_0_2 + ' kpa':<15} {pressure_cpi_neg_0_3} kPa")
+
+    data["wind_zones_0U"] = results_up
+    data["wind_zones_0D"] = results_down
+
+    json_str = json.dumps(data, separators=(',', ':'))
+
+    # Insert line breaks between JSON objects
+    formatted_json_str = json_str.replace('},{', '},\n  {')
+    formatted_json_str = formatted_json_str.replace('[{', '[\n  {')
+    formatted_json_str = formatted_json_str.replace('}]', '}\n]')
+    formatted_json_str = formatted_json_str.replace('],', '],\n')
+    formatted_json_str = formatted_json_str.replace(']}', ']\n}')
+
+    # Save the formatted JSON string to a file
+    with open("input_data.json", 'w') as json_file:
+        json_file.write(formatted_json_str)
+
+    return
+
+def wind_data_mono_n():
+    angles = np.array([5, 15, 30, 45])
+
+    # Wind 0 Upward
+    neg_w0 = np.array([
+        [-1.7, -1.2, -0.6, -0.6, -0.6],
+        [-0.9, -0.8, -0.3, -0.4, -1.0],
+        [-0.5, -0.5, -0.2, -0.4, -0.5],
+        [0, 0, 0, -0.2, -0.3]
+    ])
+
+    # Wind 0 Downward
+    pos_w0 = np.array([
+        [0, 0, 0, -0.6, 0.2],
+        [0.2, 0.2, 0.2, 0, 0],
+        [0.7, 0.7, 0.4, 0, 0],
+        [0.7, 0.7, 0.6, 0, 0]
+    ])
+
+    # Wind 90 Upward
+    neg_w90 = np.array([
+        [-1.6, -1.3, -0.7, -0.6],
+        [-1.3, -1.3, -0.6, -0.5],
+        [-1.1, -1.4, -0.8, -0.5],
+        [-1.1, -1.4, -0.9, -0.5]
+    ])
+
+    data = import_data("input_data.json")
+    h_d_data = [0.25, 1.0]
+    cpe_d = [0.70, 0.80]
+    cpe_e = [-0.3, -0.50]
+
+    results_up = []
+    results_down = []
+
+    wind = data['wind_data']
+    bs = calculate_basic_wind_speed(wind['fundamental_basic_wind_speed'], wind['return_period'])
+    roughness = calculate_terrain_roughness(wind['apex_height'], wind['terrain_category'])
+    peak_pressure = calculate_peak_wind_pressure(wind['topographic_factor'], bs, roughness, wind['altitude'])
+
+    h_d_zone_d = wind['eaves_height'] / wind['gable_width']
+    h_d_zone_e = wind['apex_height'] / wind['gable_width']
+
+    cpe_d_coeff = min([max([0.85 + ((1 - 0.85) / (5 - 1) * (h_d_zone_d - 1)), 0.85]), 1])
+    cpe_e_coeff = min([max([0.85 + ((1 - 0.85) / (5 - 1) * (h_d_zone_e - 1)), 0.85]), 1])
+
+    cpe_value_d = interpolate_cpe(h_d_zone_d, h_d_data, cpe_d) * cpe_d_coeff
+    cpe_value_e = interpolate_cpe(h_d_zone_e, h_d_data, cpe_e) * cpe_e_coeff
+
+    cpe_negative = np.array([
+        np.interp(wind['roof_pitch'], angles, neg_w0[:, i])
+        for i in range(neg_w0.shape[1])
+    ])
+
+    cpe_positive = np.array([
+        np.interp(wind['roof_pitch'], angles, pos_w0[:, i])
+        for i in range(pos_w0.shape[1])
+    ])
+
+    zones_up = {
+        "A": -1.2,
+        "B": -0.8,
+        "C": -0.5,
+        "D": cpe_value_d,
+        "E": cpe_value_e,
+        "F": cpe_negative[0],
+        "G": cpe_negative[1],
+        "H": cpe_negative[2],
+        "I": cpe_negative[3],
+        "J": cpe_negative[4]
+    }
+
+    zones_down = {
+        "A": -1.2,
+        "B": -0.8,
+        "C": -0.5,
+        "D": cpe_value_d,
+        "E": cpe_value_e,
+        "F": cpe_positive[0],
+        "G": cpe_positive[1],
+        "H": cpe_positive[2],
+        "I": cpe_positive[3],
+        "J": cpe_positive[4]
+    }
+
+    for zone, cpe in zones_up.items():
+        results_up.append({
+            "Zone": zone,
+            "cpe": round(cpe, 4),
+            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2), 4),
+            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3), 4)
+        })
+
+    for zone, cpe in zones_down.items():
+        results_down.append({
+            "Zone": zone,
+            "cpe": round(cpe, 4),
+            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2), 4),
+            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3), 4)
+        })
+
+    print("Wind Upward Pressures")
+    print(f"{'Zone':<6}{'cpe':<10}{'Press. cpi=0.2':<15}{'Press. cpi=-0.3'}")
+    print("-" * 56)
+    for result in results_up:
         cpe_display = f"+{result['cpe']:.2f}" if result['cpe'] > 0 else f"{result['cpe']:.2f}"
         pressure_cpi_0_2 = f"+{result['cpi=0.2']:.2f}" if result['cpi=0.2'] > 0 else f"{result['cpi=0.2']:.2f}"
         pressure_cpi_neg_0_3 = f"+{result['cpi=-0.3']:.2f}" if result['cpi=-0.3'] > 0 else f"{result['cpi=-0.3']:.2f}"
@@ -299,13 +438,10 @@ def wind_data():
 
     return
 
-def wind_data_mono():
+def wind_data_duo_c():
     return None
 
-def wind_data_duo():
-    return None
-
-def wind_data_canopy():
+def wind_data_mono_c():
     return None
 
 def print_zones(zones):
@@ -325,9 +461,20 @@ def print_zones(zones):
     for zone, v in zones.items():
         print(f"{zone:<5} {fmt(v['0_deg']):<20} {fmt(v['90_deg']):<20}")
 
+def wind_out():
+    data = import_data('input_data.json')['wind_data']
+    if data['building_type'] == 'Normal':
+        if data['building_roof'] == 'Duo Pitched':
+            return wind_data_duo_n()
+        elif data['building_roof'] == 'Mono Pitched':
+            return wind_data_mono_n()
+
+    elif data['building_type'] == 'Canopy':
+        if data['building_roof'] == 'Duo Pitched':
+            return wind_data_duo_c()
+        elif data['building_roof'] == 'Mono Pitched':
+            return wind_data_mono_c()
 
 if __name__ == "__main__":
-    zones = zone_determination()
-    print("\nZone Load Mapping:")
-    print_zones(zones)
+    wind_out()
 
