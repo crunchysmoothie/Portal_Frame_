@@ -5,7 +5,7 @@ import math
 def generate_nodes(b_data):
     eaves_height = b_data['eaves_height']
     apex_height = b_data['apex_height']
-    rafter_span = b_data['rafter_span']
+    gable_width = b_data['gable_width']
 
     nodes = []
     num_vertical = 5
@@ -25,7 +25,7 @@ def generate_nodes(b_data):
         # Generate 4 diagonal nodes for the rafter section
         num_diagonal = 8
         for i in range(1, num_diagonal):
-            x = round(i * (rafter_span / num_diagonal), 2)
+            x = round(i * (gable_width / num_diagonal), 2)
             y = round(
                 eaves_height + ((apex_height - eaves_height) * (1 - abs(i - (num_diagonal / 2)) / (num_diagonal / 2))),
                 2)
@@ -41,7 +41,7 @@ def generate_nodes(b_data):
         for i in range(num_vertical):
             node = {
                 "name": f"N{num_vertical + num_diagonal + i}",
-                "x": rafter_span,
+                "x": gable_width,
                 "y": round(eaves_height - i * (eaves_height / (num_vertical - 1)), 2),
                 "z": 0
             }
@@ -62,7 +62,7 @@ def generate_nodes(b_data):
         # Generate 4 diagonal nodes for the rafter section for a single slope
         num_diagonal = 4
         for i in range(1, num_diagonal + 1):
-            x = round(i * (rafter_span / num_diagonal), 2)
+            x = round(i * (gable_width / num_diagonal), 2)
             y = round(eaves_height + (apex_height - eaves_height) * (i / num_diagonal), 2)
             node = {
                 "name": f"N{num_vertical + i}",
@@ -76,7 +76,7 @@ def generate_nodes(b_data):
         for i in range(1, num_vertical):
             node = {
                 "name": f"N{num_vertical + num_diagonal + i}",
-                "x": rafter_span,
+                "x": gable_width,
                 "y": round(apex_height - i * (apex_height / (num_vertical - 1)), 2),
                 "z": 0
             }
@@ -142,7 +142,7 @@ def update_json_file(json_filename, b_data, wind_data):
     rotational_springs = generate_spring_supports(new_nodes)
     wind_input = wind_data
     for i in b_data:
-        if i in ["eaves_height", "apex_height", "rafter_span", "rafter_spacing", "building_length"]:
+        if i in ["eaves_height", "apex_height", "gable_width", "rafter_spacing", "building_length", "roof_pitch"]:
             wind_input[i] = b_data[i]/1000
         else:
             wind_input[i] = b_data[i]
@@ -182,7 +182,7 @@ building_roof = "Duo Pitched" # "Mono Pitched" or "Duo Pitched"
 building_type = "Normal"    # "Normal" or "Canopy"
 eaves_height = 5 * 1000     # Convert to mm
 apex_height = 7 * 1000      # Convert to mm
-rafter_span = 8 * 1000      # Convert to mm
+gable_width = 8 * 1000      # Convert to mm
 rafter_spacing = 5 * 1000   # Convert to mm
 building_length = 50 * 1000 # Convert to mm
 col_bracing_spacing = 1     # number of braced points per column (1: Lx=Ly = 1.0 L, 2: Lx = L, Ly = 0.5L, etc)
@@ -193,11 +193,12 @@ building_data = {
     "building_roof": building_roof,
     "eaves_height": eaves_height,
     "apex_height": apex_height,
-    "rafter_span": rafter_span,
+    "gable_width": gable_width,
     "rafter_spacing": rafter_spacing,
     "building_length": building_length,
     "col_bracing_spacing": col_bracing_spacing,
     "rafter_bracing_spacing": rafter_bracing_spacing,
+    "roof_pitch": math.degrees(math.atan((apex_height - eaves_height) / (gable_width / 2)))*1000
 }
 wind_data = {
     "wind": "3s gust",

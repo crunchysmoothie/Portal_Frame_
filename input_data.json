@@ -1,5 +1,5 @@
 {"frame_data":[
-  {"building_type":"Normal","building_roof":"Duo Pitched","eaves_height":5000,"apex_height":7000,"rafter_span":8000,"rafter_spacing":5000,"building_length":50000,"col_bracing_spacing":1,"rafter_bracing_spacing":4}
+  {"building_type":"Normal","building_roof":"Duo Pitched","eaves_height":5000,"apex_height":7000,"gable_width":8000,"rafter_spacing":5000,"building_length":50000,"col_bracing_spacing":1,"rafter_bracing_spacing":4,"roof_pitch":26565.05117707799}
 ],
 "nodes":[
   {"name":"N1","x":0,"y":0.0,"z":0},
@@ -71,7 +71,7 @@
   {"name":"0.9 DL + 0.6 W90_0.2","factors":{"D":1.1,"W90_0.2":0.6}},
   {"name":"0.9 DL + 0.6 W90_0.3","factors":{"D":1.1,"W90_0.3":0.6}}
 ],
-"wind_data":{"wind":"3s gust","fundamental_basic_wind_speed":36,"return_period":50,"terrain_category":"B","topographic_factor":1.0,"altitude":1450,"building_type":"Normal","building_roof":"Duo Pitched","eaves_height":5.0,"apex_height":7.0,"rafter_span":8.0,"rafter_spacing":5.0,"building_length":50.0,"col_bracing_spacing":1,"rafter_bracing_spacing":4},"wind_zones":[
+"wind_data":{"wind":"3s gust","fundamental_basic_wind_speed":36,"return_period":50,"terrain_category":"B","topographic_factor":1.0,"altitude":1450,"building_type":"Normal","building_roof":"Duo Pitched","eaves_height":5.0,"apex_height":7.0,"gable_width":8.0,"rafter_spacing":5.0,"building_length":50.0,"col_bracing_spacing":1,"rafter_bracing_spacing":4,"roof_pitch":26.56505117707799},"wind_zones":[
   {"Zone":"A","cpe":-1.2,"cpi=0.2":-0.8266,"cpi=-0.3":-0.5314},
   {"Zone":"B","cpe":-0.8,"cpi=0.2":-0.5904,"cpi=-0.3":-0.2952},
   {"Zone":"C","cpe":-0.5,"cpi=0.2":-0.4133,"cpi=-0.3":-0.1181},
@@ -115,23 +115,23 @@
   {"Zone":"A","cpe":-1.2,"cpi=0.2":-0.8266,"cpi=-0.3":-0.5314},
   {"Zone":"B","cpe":-0.8,"cpi=0.2":-0.5904,"cpi=-0.3":-0.2952},
   {"Zone":"C","cpe":-0.5,"cpi=0.2":-0.4133,"cpi=-0.3":-0.1181},
-  {"Zone":"D","cpe":0.6375,"cpi=0.2":0.2583,"cpi=-0.3":0.5535},
+  {"Zone":"D","cpe":0.6658,"cpi=0.2":0.275,"cpi=-0.3":0.5703},
   {"Zone":"E","cpe":-0.3967,"cpi=0.2":-0.3523,"cpi=-0.3":-0.0571},
-  {"Zone":"F","cpe":-0.5907,"cpi=0.2":-0.4668,"cpi=-0.3":-0.1716},
-  {"Zone":"G","cpe":-0.568,"cpi=0.2":-0.4534,"cpi=-0.3":-0.1582},
-  {"Zone":"H","cpe":-0.2227,"cpi=0.2":-0.2496,"cpi=-0.3":0.0457},
+  {"Zone":"F","cpe":-0.5916,"cpi=0.2":-0.4674,"cpi=-0.3":-0.1722},
+  {"Zone":"G","cpe":-0.5687,"cpi=0.2":-0.4539,"cpi=-0.3":-0.1586},
+  {"Zone":"H","cpe":-0.2229,"cpi=0.2":-0.2497,"cpi=-0.3":0.0455},
   {"Zone":"I","cpe":-0.4,"cpi=0.2":-0.3543,"cpi=-0.3":-0.059},
-  {"Zone":"J","cpe":-0.6133,"cpi=0.2":-0.4802,"cpi=-0.3":-0.185}
+  {"Zone":"J","cpe":-0.6145,"cpi=0.2":-0.4809,"cpi=-0.3":-0.1857}
 ],
 "wind_zones_0D":[
   {"Zone":"A","cpe":-1.2,"cpi=0.2":-0.8266,"cpi=-0.3":-0.5314},
   {"Zone":"B","cpe":-0.8,"cpi=0.2":-0.5904,"cpi=-0.3":-0.2952},
   {"Zone":"C","cpe":-0.5,"cpi=0.2":-0.4133,"cpi=-0.3":-0.1181},
-  {"Zone":"D","cpe":0.6375,"cpi=0.2":0.2583,"cpi=-0.3":0.5535},
+  {"Zone":"D","cpe":0.6658,"cpi=0.2":0.275,"cpi=-0.3":0.5703},
   {"Zone":"E","cpe":-0.3967,"cpi=0.2":-0.3523,"cpi=-0.3":-0.0571},
-  {"Zone":"F","cpe":0.5867,"cpi=0.2":0.2283,"cpi=-0.3":0.5235},
-  {"Zone":"G","cpe":0.5867,"cpi=0.2":0.2283,"cpi=-0.3":0.5235},
-  {"Zone":"H","cpe":0.3547,"cpi=0.2":0.0913,"cpi=-0.3":0.3865},
+  {"Zone":"F","cpe":0.5855,"cpi=0.2":0.2276,"cpi=-0.3":0.5228},
+  {"Zone":"G","cpe":0.5855,"cpi=0.2":0.2276,"cpi=-0.3":0.5228},
+  {"Zone":"H","cpe":0.3542,"cpi=0.2":0.091,"cpi=-0.3":0.3863},
   {"Zone":"I","cpe":0.0,"cpi=0.2":-0.1181,"cpi=-0.3":0.1771},
   {"Zone":"J","cpe":0.0,"cpi=0.2":-0.1181,"cpi=-0.3":0.1771}
 ]
