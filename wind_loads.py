@@ -369,12 +369,6 @@ def wind_data_mono_n():
 
     return
 
-def wind_data_duo_c():
-    return None
-
-def wind_data_mono_c():
-    return None
-
 def print_zones(zones):
     print(f"{'Zone':<5} {'0_deg':<20} {'90_deg':<20}")
     print("-" * 50)
@@ -481,11 +475,11 @@ def wind_out():
         elif data['building_roof'] == 'Mono Pitched':
             return wind_data_mono_n()
 
-    elif data['building_type'] == 'Canopy':
-        if data['building_roof'] == 'Duo Pitched':
-            return wind_data_duo_c()
-        elif data['building_roof'] == 'Mono Pitched':
-            return wind_data_mono_c()
+    # elif data['building_type'] == 'Canopy':
+    #     if data['building_roof'] == 'Duo Pitched':
+    #         return wind_data_duo_c()
+    #     elif data['building_roof'] == 'Mono Pitched':
+    #         return wind_data_mono_c()
 
 if __name__ == "__main__":
     wind_out()
