@@ -147,11 +147,17 @@ def build_model(r_mem, c_mem):
         direction = member_load['direction']
         w1 = member_load['w1']
         w2 = member_load['w2']
+        x1 = None
+        x2 = None
+        if 'x1' in member_load:
+            x1 = member_load['x1']
+        if 'x2' in member_load:
+            x2 = member_load['x2']
         case = member_load.get('case', None)  # Optional
-        frame.add_member_dist_load(member_name, direction, w1, w2, None, None, case)
+        frame.add_member_dist_load(member_name, direction, w1, w2, x1, x2, case)
 
     # Add member self weight (optional, adjust as needed)
-    frame.add_member_self_weight('FY', -1, 'D')  # Example: Adding self-weight in FY direction
+    # frame.add_member_self_weight('FY', -1, 'D')  # Example: Adding self-weight in FY direction
 
     # Add rotational springs
     for spring in data['rotational_springs']:
@@ -410,7 +416,7 @@ def render_model(frame, combo):
     rndr.render_loads = True
     rndr.deformed_shape = True
     rndr.deformed_scale = 5
-    rndr.combo_name = combo  # Adjust as necessary
+    rndr.combo_name = "1.1 DL + 0.3 LL + 0.6 W0_0.2D"  # Adjust as necessary
     rndr.render_model()
 
 def main():

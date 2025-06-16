@@ -263,7 +263,6 @@ def wind_data_duo_n():
     r_spacing = wind['rafter_spacing']
 
     for zone, cpe in zones_up.items():
-        print(zones[zone]["0_deg"])
         results_up.append({
             "Zone": zone,
             "cpe": round(cpe, 4),
@@ -273,7 +272,6 @@ def wind_data_duo_n():
         })
 
     for zone, cpe in zones_down.items():
-        print(zones[zone]["0_deg"])
         results_down.append({
             "Zone": zone,
             "cpe": round(cpe, 4),
@@ -283,7 +281,6 @@ def wind_data_duo_n():
         })
 
     for zone, cpe in zones_90.items():
-        print(zones[zone]["90_deg"])
         results_90.append({
             "Zone": zone,
             "cpe": round(cpe, 4),
