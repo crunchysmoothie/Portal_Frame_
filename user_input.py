@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import math
 from typing import List, Dict
-
 from models import BuildingData, WindData
 
 
@@ -63,7 +62,26 @@ def generate_nodes(b: BuildingData) -> List[Dict[str, float]]:
     else:
         raise NotImplementedError(f"Roof type '{b.building_roof}' not handled")
 
+
+def _duo_rafter_nodes(start_idx: int, num: int, gable_width: float, eaves_height: float, apex_height: float) -> List[Dict[str, float]]:
+    nodes = []
+    for i in range(1, num):
+        x = round(i * (gable_width / num), 2)
+        y = round(eaves_height + (apex_height - eaves_height) * (1 - abs(i - (num / 2)) / (num / 2)), 2)
+        nodes.append({"name": f"N{start_idx}", "x": x, "y": y, "z": 0})
+        start_idx += 1
     return nodes
+
+
+def _mono_rafter_nodes(start_idx: int, num: int, gable_width: float, eaves_height: float, apex_height: float) -> List[Dict[str, float]]:
+    nodes = []
+    for i in range(1, num + 1):
+        x = round(i * (gable_width / num), 2)
+        y = round(eaves_height + (apex_height - eaves_height) * (i / num), 2)
+        nodes.append({"name": f"N{start_idx}", "x": x, "y": y, "z": 0})
+        start_idx += 1
+    return nodes
+
 
 
 def generate_supports(nodes: List[Dict[str, float]]) -> List[Dict[str, bool | str | float]]:
