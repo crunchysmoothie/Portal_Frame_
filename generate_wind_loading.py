@@ -1,4 +1,5 @@
 import json
+import math
 from typing import List, Dict, Any, Optional
 
 
@@ -37,14 +38,19 @@ def _add_load(loads: List[Dict[str, Any]], member: str, intensity: float, case: 
 
 
 def _distribute(length: float, members: List[Dict[str, Any]], intensity: float,
-                case: str, loads: List[Dict[str, Any]]) -> None:
-    idx = 0
-    pos = 0.0
+                case: str, loads: List[Dict[str, Any]], idx: int = 0,
+                pos: float = 0.0) -> (int, float):
+    """Distribute a load sequentially along ``members`` starting from ``(idx, pos)``.
+
+    ``length`` and ``pos`` are given in **mm**. Member lengths are converted to
+    mm before processing. The returned ``(idx, pos)`` is also in mm.
+    """
+
     remaining = length
 
     while remaining > 0 and idx < len(members):
         m = members[idx]
-        m_len = m["length"] - pos
+        m_len = m["length"] * 1000 - pos  # convert member length to mm
         seg = min(m_len, remaining)
 
         if seg <= 0:
@@ -52,41 +58,48 @@ def _distribute(length: float, members: List[Dict[str, Any]], intensity: float,
             pos = 0.0
             continue
 
-        start = pos if pos > 0 else None
-        end = pos + seg if seg < m["length"] or start is not None else None
+        start = pos / 1000 if pos > 0 else None
+        end = (pos + seg) / 1000 if seg < m["length"] * 1000 or start is not None else None
         _add_load(loads, m["name"], intensity, case, start, end)
 
         remaining -= seg
         pos += seg
-        if pos >= m["length"]:
+        if pos >= m["length"] * 1000:
             idx += 1
             pos = 0.0
+
+    return idx, pos
 
 
 def _process_0deg(zones: List[Dict[str, Any]], left_cols: List[Dict[str, Any]],
                   rafters: List[Dict[str, Any]], right_cols: List[Dict[str, Any]],
-                  case_02: str, case_03: str, loads: List[Dict[str, Any]]) -> None:
+                  pitch: float, case_02: str, case_03: str, loads: List[Dict[str, Any]]) -> None:
     zd = _zone_dict(zones)
     for key, case in [("cpi=0.2", case_02), ("cpi=-0.3", case_03)]:
-        # Left columns - Zone D
-        _distribute(zd["D"]["Length"], left_cols, zd["D"][key], case, loads)
+        # Left columns - Zone D (lengths converted to mm)
+        _distribute(zd["D"]["Length"] * 1000, left_cols, zd["D"][key], case, loads)
         # Roof zones along slope
         r_seq = ["G", "H", "J", "I"]
+        idx, pos = 0, 0.0
         for z in r_seq:
-            _distribute(zd[z]["Length"], rafters, zd[z][key], case, loads)
-        # Right columns - Zone E
-        _distribute(zd["E"]["Length"], right_cols, zd["E"][key], case, loads)
+            # lay out zones sequentially along rafters
+            # convert horizontal zone length to mm of inclined rafter
+            length = zd[z]["Length"] * 1000 / math.cos(pitch)
+            idx, pos = _distribute(length, rafters, zd[z][key], case,
+                                   loads, idx, pos)
+        # Right columns - Zone E (lengths converted to mm)
+        _distribute(zd["E"]["Length"] * 1000, right_cols, zd["E"][key], case, loads)
 
 
 def _process_90deg(zones: List[Dict[str, Any]], left_cols: List[Dict[str, Any]],
                    rafters: List[Dict[str, Any]], right_cols: List[Dict[str, Any]],
                    case_02: str, case_03: str, loads: List[Dict[str, Any]]) -> None:
     zd = _zone_dict(zones)
-    roof_len = sum(m["length"] for m in rafters)
+    roof_len = sum(m["length"] for m in rafters) * 1000  # total rafter length in mm
     for key, case in [("cpi=0.2", case_02), ("cpi=-0.3", case_03)]:
-        _distribute(zd["A"]["Length"], left_cols, zd["A"][key], case, loads)
+        _distribute(zd["A"]["Length"] * 1000, left_cols, zd["A"][key], case, loads)
         _distribute(roof_len, rafters, zd["H"][key], case, loads)
-        _distribute(zd["A"]["Length"], right_cols, zd["A"][key], case, loads)
+        _distribute(zd["A"]["Length"] * 1000, right_cols, zd["A"][key], case, loads)
  
 def wind_loads(data: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     if data is None:
@@ -105,10 +118,17 @@ def wind_loads(data: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     right_cols = _sort_columns(members, nodes, gable_width)
     rafters = _sort_rafters(members, nodes)
 
+    # Rafter pitch for converting roof zone lengths to the inclined length
+    dy = nodes[rafters[0]["j_node"]]["y"] - nodes[rafters[0]["i_node"]]["y"]
+    dx = nodes[rafters[0]["j_node"]]["x"] - nodes[rafters[0]["i_node"]]["x"]
+    pitch = math.atan2(dy, dx)
+
     loads: List[Dict[str, Any]] = []
 
-    _process_0deg(data["wind_zones_0U"], left_cols, rafters, right_cols,"W0_0.2U", "W0_0.3U", loads)
-    _process_0deg(data["wind_zones_0D"], left_cols, rafters, right_cols,"W0_0.2D", "W0_0.3D", loads)
+    _process_0deg(data["wind_zones_0U"], left_cols, rafters, right_cols, pitch,
+                  "W0_0.2U", "W0_0.3U", loads)
+    _process_0deg(data["wind_zones_0D"], left_cols, rafters, right_cols, pitch,
+                  "W0_0.2D", "W0_0.3D", loads)
     _process_90deg(data["wind_zones_90"], left_cols, rafters, right_cols,"W90_0.2", "W90_0.3", loads)
 
     return loads
