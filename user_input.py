@@ -9,7 +9,6 @@ def generate_nodes(b_data):
 
     nodes = []
     num_vertical = b_data['col_bracing_spacing'] + 2
-    print('num_vertical', num_vertical)
 
     # Generate nodes for Duo Pitched type
     if b_data["building_roof"] == "Duo Pitched":
@@ -174,15 +173,12 @@ def update_json_file(json_filename, b_data, wind_data):
 
 def add_wind_member_loads(json_filename):
     """Generate wind loads and append them to the member loads list."""
-    from wind_loads import wind_out
-    from generate_wind_loading import wind_loads
-
-    wind_out()
+    from generate_wind_loading import wind_loading
 
     with open(json_filename, 'r') as file:
         data = json.load(file)
 
-    loads = wind_loads(data)
+    loads = wind_loading(data)
     data.pop("wind_loads", None)
     data.setdefault("member_loads", [])
     data["member_loads"] = loads

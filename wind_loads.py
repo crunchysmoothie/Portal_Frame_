@@ -2,6 +2,9 @@ import json
 import math
 import numpy as np
 
+from user_input import eaves_height
+
+
 def import_data(file):
     with open(file) as f:
         data = json.load(f)
@@ -265,8 +268,8 @@ def wind_data_duo_n():
             "Zone": zone,
             "cpe": round(cpe, 4),
             "Length": zones[zone]["0_deg"],
-            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2) * r_spacing / 1000, 5),
-            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3) * r_spacing / 1000, 5)
+            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2) * r_spacing / -1000, 5),
+            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3) * r_spacing / -1000, 5)
         })
 
     for zone, cpe in zones_down.items():
@@ -275,8 +278,8 @@ def wind_data_duo_n():
             "Zone": zone,
             "cpe": round(cpe, 4),
             "Length": zones[zone]["0_deg"],
-            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2) * r_spacing / 1000, 5),
-            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3) * r_spacing / 1000, 5)
+            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2) * r_spacing / -1000, 5),
+            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3) * r_spacing / -1000, 5)
         })
 
     for zone, cpe in zones_90.items():
@@ -285,8 +288,8 @@ def wind_data_duo_n():
             "Zone": zone,
             "cpe": round(cpe, 4),
             "Length": zones[zone]["90_deg"],
-            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2) * r_spacing / 1000, 5),
-            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3) * r_spacing / 1000, 5)
+            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2) * r_spacing / -1000, 5),
+            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3) * r_spacing / -1000, 5)
         })
 
     print("Wind Upward Pressures")
@@ -514,9 +517,11 @@ def zones_normal():
     b_90 = data['gable_width']
     d_0 = data['gable_width']
     d_90 = data['building_length']
+    e_height = data['eaves_height']
+    a_height = data['apex_height']
 
-    e_0 = min(b_0, data['apex_height'] * 2)
-    e_90 = min(b_90, data['apex_height'] * 2)
+    e_0 = min(b_0, a_height * 2)
+    e_90 = min(b_90, a_height * 2)
 
     if e_0 < d_0:
         A_l0 = e_0 / 5
@@ -548,10 +553,10 @@ def zones_normal():
         B_l90 = 0
         C_l90 = 0
 
-    D_l0 = b_0
-    E_l0 = b_0
-    D_l90 = b_90
-    E_l90 = b_90
+    D_l0 = e_height
+    E_l0 = e_height
+    D_l90 = a_height
+    E_l90 = a_height
     F_l0 = e_0 / 10
     G_l0 = e_0 / 10
     F_l90 = e_90 / 10
@@ -601,5 +606,5 @@ def wind_out():
             return wind_data_mono_c()
 
 if __name__ == "__main__":
-    wind_data_duo_n()
+    wind_out()
     # print_zones(zones_normal())
