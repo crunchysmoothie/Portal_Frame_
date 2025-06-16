@@ -157,7 +157,7 @@ def build_model(r_mem, c_mem):
         frame.add_member_dist_load(member_name, direction, w1, w2, x1, x2, case)
 
     # Add member self weight (optional, adjust as needed)
-    # frame.add_member_self_weight('FY', -1, 'D')  # Example: Adding self-weight in FY direction
+    frame.add_member_self_weight('FY', -1, 'D')  # Example: Adding self-weight in FY direction
 
     # Add rotational springs
     for spring in data['rotational_springs']:
@@ -274,7 +274,6 @@ def directional_search(primary, r_list, c_list, r_section_type, c_section_type,m
         futures = [ex.submit(analyze_combination, t) for t in tasks]
         for fut in as_completed(futures):
             result = fut.result()
-            print(result)
             if result is not None:
                 acceptable.append(result)
 
@@ -338,6 +337,8 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
         num_cores
     )
 
+    print("Rafter-first Done")
+
     # ❷ Search by fixing columns first, then rafters
     best_c = directional_search(
         'column',
@@ -348,6 +349,8 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
         vert_limit, horiz_limit,
         num_cores
     )
+
+    print("Column-first Done")
 
     candidates = [b for b in (best_r, best_c) if b]
     if not candidates:
@@ -365,7 +368,6 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
     print(f"   Δx Load Combination: {best['dx_comb']}")
     print(f"   Search time: {time.time() - start:.3f} s")
 
-    print(best['frame'])
 
     return best['frame'], best['dx_comb'], member_db, r_section_type, c_section_type, (best['r_name'], best['c_name'])
 
@@ -416,7 +418,7 @@ def render_model(frame, combo):
     rndr.render_loads = True
     rndr.deformed_shape = True
     rndr.deformed_scale = 5
-    rndr.combo_name = "1.1 DL + 0.3 LL + 0.6 W0_0.2D"  # Adjust as necessary
+    rndr.combo_name = combo  # Adjust as necessary
     rndr.render_model()
 
 def main():
@@ -429,7 +431,6 @@ def main():
     # uls_output((frame, member_db, r_section_typ, c_section_typ, best_section))
 
     if frame is not None:
-        print("Pass")
         render_model(frame, combo)
     else:
         print("Unable to find acceptable sections.")
