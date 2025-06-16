@@ -145,8 +145,7 @@ def update_json_file(json_filename, b_data, wind_data):
     new_nodes = generate_nodes(b_data)
     new_members = generate_members(new_nodes)
     new_supports = generate_supports(new_nodes)
-    # new_loads = generate_nodal_loads(new_nodes, b_data)
-    # new_member_loads = generate_member_loads(new_members)
+    new_member_loads = generate_member_loads(new_members)
     rotational_springs = generate_spring_supports(new_nodes)
     wind_input = wind_data
     for i in b_data:
@@ -164,8 +163,7 @@ def update_json_file(json_filename, b_data, wind_data):
     data["nodes"] = new_nodes
     data["members"] = new_members
     data["supports"] = new_supports
-    # data["nodal_loads"] = new_loads
-    # data["member_loads"] = new_member_loads
+    data["member_loads"] = new_member_loads
     data["rotational_springs"] = rotational_springs
     data["wind_data"] = wind_input
 
