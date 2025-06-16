@@ -2,6 +2,8 @@ import json
 import math
 from typing import List, Dict, Any, Optional, Tuple
 
+from models import WindData
+
 
 def _get_nodes(data: Dict[str, Any]) -> Dict[str, Dict[str, float]]:
     return {n["name"]: n for n in data["nodes"]}
@@ -101,12 +103,13 @@ def _process_90deg(zones: List[Dict[str, Any]], left_cols: List[Dict[str, Any]],
         _distribute(zd["A"]["Length"] * 1000, right_cols, zd["A"][key], case, loads)
  
 def wind_loading(data: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """Return member loads generated from wind zones."""
     if data is None:
         data = json.load(open("input_data.json"))
 
-    wd = data["wind_data"]
+    wind = WindData(**data["wind_data"])
 
-    if wd.get("building_type") != "Normal" or wd.get("building_roof") != "Duo Pitched":
+    if wind.building_type != "Normal" or wind.building_roof != "Duo Pitched":
         raise NotImplementedError("Only Normal Duo Pitched buildings are handled")
 
     nodes = _get_nodes(data)

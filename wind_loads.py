@@ -2,52 +2,24 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass, asdict
-from typing import List, Dict, Tuple
 
+from typing import List, Dict, Tuple
+from models import WindData
 import numpy as np
 
 
-@dataclass
-class WindInput:
-    """Parameters describing the building and environment for wind loading."""
-
-    wind: str = "3s gust"
-    fundamental_basic_wind_speed: float = 36
-    return_period: int = 50
-    terrain_category: str = "B"
-    topographic_factor: float = 1.0
-    altitude: float = 0.0
-    building_type: str = "Normal"
-    building_roof: str = "Duo Pitched"
-    eaves_height: float = 0.0
-    apex_height: float = 0.0
-    gable_width: float = 0.0
-    rafter_spacing: float = 0.0
-    building_length: float = 0.0
-    col_bracing_spacing: int = 0
-    rafter_bracing_spacing: int = 0
-    roof_pitch: float = 0.0
-
-    @classmethod
-    def from_dict(cls, d: Dict[str, float | str | int]) -> "WindInput":
-        return cls(**d)
-
-    def to_dict(self) -> Dict[str, float | str | int]:
-        return asdict(self)
 
 
 def write_json(filename: str, data: dict) -> None:
     with open(filename, "w") as f:
         json.dump(data, f, indent=2)
 
-
-def load_data(filename: str) -> Tuple[dict, WindInput]:
-    """Return raw json data and a :class:`WindInput` instance."""
+def load_data(filename: str) -> Tuple[dict, WindData]:
+    """Return raw json data and a :class:`WindData` instance."""
     with open(filename) as f:
         data = json.load(f)
-    wind = WindInput.from_dict(data["wind_data"])
-    return data, wind
+    wind = WindData(**data["wind_data"])
+
 
 def calculate_basic_wind_speed(fbs, return_period):
     if return_period == 0: return 0
@@ -82,7 +54,8 @@ def interpolate_cpe_roof(roof_angle, angles, data):
 def calculate_pressure(peak_wind_pressure, cpe, cpi):
     return (peak_wind_pressure * cpe) - (peak_wind_pressure * cpi)
 
-def wind_data_duo_n(wind: WindInput) -> Tuple[List[Dict[str, float]], List[Dict[str, float]], List[Dict[str, float]]]:
+def wind_data_duo_n(wind: WindData) -> Tuple[List[Dict[str, float]], List[Dict[str, float]], List[Dict[str, float]]]:
+
     angles = np.array([5, 15, 30, 45])
 
     # Wind 0 Upward
@@ -215,7 +188,8 @@ def wind_data_duo_n(wind: WindInput) -> Tuple[List[Dict[str, float]], List[Dict[
 
     return results_up, results_down, results_90
 
-def wind_data_mono_n(wind: WindInput) -> Tuple[List[Dict[str, float]], List[Dict[str, float]]]:
+def wind_data_mono_n(wind: WindData) -> Tuple[List[Dict[str, float]], List[Dict[str, float]]]:
+
     angles = np.array([5, 15, 30, 45])
 
     # Wind 0 Upward
@@ -333,7 +307,9 @@ def print_zones(zones):
     for zone, v in zones.items():
         print(f"{zone:<5} {fmt(v['0_deg']):<20} {fmt(v['90_deg']):<20}")
 
-def zones_normal(wind: WindInput) -> Dict[str, Dict[str, float]]:
+
+def zones_normal(wind: WindData) -> Dict[str, Dict[str, float]]:
+
 
     b_0 = wind.building_length
     b_90 = wind.gable_width
