@@ -5,20 +5,16 @@ from typing import List, Dict, Any, Optional
 def _get_nodes(data: Dict[str, Any]) -> Dict[str, Dict[str, float]]:
     return {n["name"]: n for n in data["nodes"]}
 
-
 def _sort_columns(members: List[Dict[str, Any]], nodes: Dict[str, Dict[str, float]], x_pos: float) -> List[Dict[str, Any]]:
     cols = [m for m in members if m["type"] == "column" and nodes[m["i_node"]]["x"] == x_pos]
     return sorted(cols, key=lambda m: nodes[m["i_node"]]["y"])
-
 
 def _sort_rafters(members: List[Dict[str, Any]], nodes: Dict[str, Dict[str, float]]) -> List[Dict[str, Any]]:
     raf = [m for m in members if m["type"] == "rafter"]
     return sorted(raf, key=lambda m: nodes[m["i_node"]]["x"])
 
-
 def _zone_dict(zones: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     return {z["Zone"]: z for z in zones}
-
 
 def _add_load(loads: List[Dict[str, Any]], member: str, intensity: float, case: str,
               start: float = None, end: float = None) -> None:
@@ -34,7 +30,6 @@ def _add_load(loads: List[Dict[str, Any]], member: str, intensity: float, case: 
     if end is not None:
         load["x2"] = round(end, 3)
     loads.append(load)
-
 
 def _distribute(length: float, members: List[Dict[str, Any]], intensity: float,
                 case: str, loads: List[Dict[str, Any]], idx: int = 0,
@@ -67,7 +62,6 @@ def _distribute(length: float, members: List[Dict[str, Any]], intensity: float,
 
     return idx, pos
 
-
 def _process_0deg(zones: List[Dict[str, Any]], left_cols: List[Dict[str, Any]],
                   rafters: List[Dict[str, Any]], right_cols: List[Dict[str, Any]],
                   case_02: str, case_03: str, loads: List[Dict[str, Any]]) -> None:
@@ -84,7 +78,6 @@ def _process_0deg(zones: List[Dict[str, Any]], left_cols: List[Dict[str, Any]],
                                    loads, idx, pos)
         # Right columns - Zone E
         _distribute(zd["E"]["Length"], right_cols, zd["E"][key], case, loads)
-
 
 def _process_90deg(zones: List[Dict[str, Any]], left_cols: List[Dict[str, Any]],
                    rafters: List[Dict[str, Any]], right_cols: List[Dict[str, Any]],
