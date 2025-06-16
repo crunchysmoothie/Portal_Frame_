@@ -2,8 +2,6 @@ import json
 import math
 import numpy as np
 
-from user_input import eaves_height
-
 
 def import_data(file):
     with open(file) as f:

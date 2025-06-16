@@ -179,7 +179,6 @@ def add_wind_member_loads(json_filename):
         data = json.load(file)
 
     loads = wind_loading(data)
-    data.pop("wind_loads", None)
     data.setdefault("member_loads", [])
     data["member_loads"] = loads
     json_str = json.dumps(data, separators=(',', ':'))
