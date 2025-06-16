@@ -147,8 +147,14 @@ def build_model(r_mem, c_mem):
         direction = member_load['direction']
         w1 = member_load['w1']
         w2 = member_load['w2']
+        x1 = None
+        x2 = None
+        if 'x1' in member_load:
+            x1 = member_load['x1']
+        if 'x2' in member_load:
+            x2 = member_load['x2']
         case = member_load.get('case', None)  # Optional
-        frame.add_member_dist_load(member_name, direction, w1, w2, None, None, case)
+        frame.add_member_dist_load(member_name, direction, w1, w2, x1, x2, case)
 
     # Add member self weight (optional, adjust as needed)
     frame.add_member_self_weight('FY', -1, 'D')  # Example: Adding self-weight in FY direction
@@ -179,7 +185,7 @@ def analyze_combination(args):
     c_mem = mdb.member_properties(c_type, c_name, member_db)
 
     # ❶ Reject combos where the rafter flange is wider than the column flange
-    if r_mem['b'] > c_mem['b'] + 10:
+    if r_mem['b'] > c_mem['b'] + 3.5:
         return None
 
     # --- build and analyse FE model ----------------------------------------
@@ -213,7 +219,7 @@ def analyze_combination(args):
         return None   # fails serviceability
 
     # --- weight (kN) --------------------------------------------------------
-    weight = r_mem['m'] * r_total_m + c_mem['m'] * c_total_m
+    weight = round(r_mem['m'] * r_total_m + c_mem['m'] * c_total_m, 1)
 
     return (weight,          # 0  – used for min()
             r_name,          # 1
@@ -225,16 +231,14 @@ def analyze_combination(args):
 
 def get_member_lengths(data):
     """Return (Σ rafter_len [m], Σ column_len [m]) from input_data.json."""
-    xyz = {n: (nd['x'], nd['y'], nd['z']) for n, nd in data['nodes'].items()}
-    r_len = c_len = 0.0
-    for m in data['members']:
-        xi, yi, zi = xyz[m['i_node']]
-        xj, yj, zj = xyz[m['j_node']]
-        L = math.sqrt((xj - xi)**2 + (yj - yi)**2 + (zj - zi)**2) / 1_000  # mm → m
-        if m['type'].lower() == 'rafter':
-            r_len += L
-        else:
-            c_len += L
+    r_len = 0
+    c_len = 0
+    for member in data['members']:
+        if member['type'] == 'rafter':
+            r_len += member['length']
+        if member['type'] == 'column':
+            c_len += member['length']
+
     return r_len, c_len
 
 def directional_search(primary, r_list, c_list, r_section_type, c_section_type,member_db, data,r_total_m, c_total_m, vert_limit, horiz_limit, num_core):
@@ -270,7 +274,6 @@ def directional_search(primary, r_list, c_list, r_section_type, c_section_type,m
         futures = [ex.submit(analyze_combination, t) for t in tasks]
         for fut in as_completed(futures):
             result = fut.result()
-            print(result)
             if result is not None:
                 acceptable.append(result)
 
@@ -320,7 +323,7 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
 
     data = import_data('input_data.json')
     r_total_m, c_total_m = get_member_lengths(data)
-    vert_limit  = data['frame_data'][0]['rafter_span'] / 300
+    vert_limit  = data['frame_data'][0]['gable_width'] / 300
     horiz_limit = data['frame_data'][0]['eaves_height'] / 300
 
     # ❶ Search by fixing rafters first, then columns
@@ -334,6 +337,8 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
         num_cores
     )
 
+    print("Rafter-first Done")
+
     # ❷ Search by fixing columns first, then rafters
     best_c = directional_search(
         'column',
@@ -344,6 +349,8 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
         vert_limit, horiz_limit,
         num_cores
     )
+
+    print("Column-first Done")
 
     candidates = [b for b in (best_r, best_c) if b]
     if not candidates:
@@ -361,7 +368,8 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
     print(f"   Δx Load Combination: {best['dx_comb']}")
     print(f"   Search time: {time.time() - start:.3f} s")
 
-    return best['frame'], member_db, r_section_type, c_section_type, (best['r_name'], best['c_name'])
+
+    return best['frame'], best['dx_comb'], member_db, r_section_type, c_section_type, (best['r_name'], best['c_name'])
 
 def uls_output(sls_check_output):
 
@@ -403,14 +411,14 @@ def uls_output(sls_check_output):
     #     print(tabulate.tabulate(member_results, headers=['Member', 'Max Mz (kNm)', 'Min Mz (kNm)', 'Axial Max (kN)',
     #                                                      'Axial Min (kN)' ], tablefmt='pretty'))
 
-def render_model(frame):
+def render_model(frame, combo):
     # Render the model
     rndr = Renderer(frame)
-    rndr.annotation_size = 250
+    rndr.annotation_size = 125
     rndr.render_loads = True
     rndr.deformed_shape = True
     rndr.deformed_scale = 5
-    rndr.combo_name = '1.1 DL + 1.0 LL'  # Adjust as necessary
+    rndr.combo_name = combo  # Adjust as necessary
     rndr.render_model()
 
 def main():
@@ -418,14 +426,12 @@ def main():
     r_section_type = 'I-Sections'  # or 'H-Sections', based on user preference
     c_section_type = 'I-Sections'  # or 'H-Sections', based on user preference
 
-    frame, member_db, r_section_typ, c_section_typ, best_section = sls_check(preferred_section, r_section_type, c_section_type)
+    frame, combo, member_db, r_section_typ, c_section_typ, best_section = sls_check(preferred_section, r_section_type, c_section_type)
 
-    #
     # uls_output((frame, member_db, r_section_typ, c_section_typ, best_section))
 
     if frame is not None:
-        print("Pass")
-        # render_model(frame)
+        render_model(frame, combo)
     else:
         print("Unable to find acceptable sections.")
 
