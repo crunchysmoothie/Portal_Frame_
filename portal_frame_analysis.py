@@ -408,7 +408,7 @@ def render_model(frame):
     rndr.render_loads = True
     rndr.deformed_shape = True
     rndr.deformed_scale = 5
-    rndr.combo_name = '1.1 DL + 1.0 LL'  # Adjust as necessary
+    rndr.combo_name = '1.1 DL + 0.3 LL + 0.6 W0_0.2D'  # Adjust as necessary
     rndr.render_model()
 
 def main():
