@@ -87,11 +87,11 @@ def _process_90deg(zones: List[Dict[str, Any]], left_cols: List[Dict[str, Any]],
         _distribute(zd["A"]["Length"], left_cols, zd["A"][key], case, loads)
         _distribute(roof_len, rafters, zd["H"][key], case, loads)
         _distribute(zd["A"]["Length"], right_cols, zd["A"][key], case, loads)
-
-
+ 
 def wind_loads(data: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     if data is None:
         data = json.load(open("input_data.json"))
+
     wd = data["wind_data"]
 
     if wd.get("building_type") != "Normal" or wd.get("building_roof") != "Duo Pitched":
@@ -114,9 +114,8 @@ def wind_loads(data: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     _process_90deg(data["wind_zones_90"], left_cols, rafters, right_cols,
                    "W90_0.2", "W90_0.3", loads)
 
-    return loads
-
 
 if __name__ == "__main__":
     loads = wind_loads()
     print(json.dumps(loads, indent=2))
+
