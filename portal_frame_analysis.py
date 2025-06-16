@@ -9,6 +9,19 @@ import tabulate
 import math
 import os
 
+from models import BuildingData, WindData
+import user_input
+import wind_loads
+
+
+def regenerate_input_data(filename: str = "input_data.json") -> None:
+    """Regenerate ``filename`` using the latest geometry and wind data."""
+    building = BuildingData()
+    wind = WindData()
+    user_input.update_json_file(filename, building, wind)
+    wind_loads.wind_out(filename)
+    user_input.add_wind_member_loads(filename)
+
 num_cores = multiprocessing.cpu_count()
 
 def import_data(file):
@@ -422,6 +435,7 @@ def render_model(frame, combo):
     rndr.render_model()
 
 def main():
+    regenerate_input_data()
     preferred_section = 'Yes'      # or 'No', based on user preference
     r_section_type = 'I-Sections'  # or 'H-Sections', based on user preference
     c_section_type = 'I-Sections'  # or 'H-Sections', based on user preference
