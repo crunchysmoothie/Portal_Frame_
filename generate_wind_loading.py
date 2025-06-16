@@ -37,9 +37,12 @@ def _add_load(loads: List[Dict[str, Any]], member: str, intensity: float, case: 
 
 
 def _distribute(length: float, members: List[Dict[str, Any]], intensity: float,
-                case: str, loads: List[Dict[str, Any]]) -> None:
-    idx = 0
-    pos = 0.0
+                case: str, loads: List[Dict[str, Any]], idx: int = 0,
+                pos: float = 0.0) -> (int, float):
+    """Distribute a load sequentially along ``members`` starting from (idx, pos).
+
+    Returns the new ``(idx, pos)`` after ``length`` of load has been applied.
+    """
     remaining = length
 
     while remaining > 0 and idx < len(members):
@@ -62,6 +65,8 @@ def _distribute(length: float, members: List[Dict[str, Any]], intensity: float,
             idx += 1
             pos = 0.0
 
+    return idx, pos
+
 
 def _process_0deg(zones: List[Dict[str, Any]], left_cols: List[Dict[str, Any]],
                   rafters: List[Dict[str, Any]], right_cols: List[Dict[str, Any]],
@@ -72,8 +77,11 @@ def _process_0deg(zones: List[Dict[str, Any]], left_cols: List[Dict[str, Any]],
         _distribute(zd["D"]["Length"], left_cols, zd["D"][key], case, loads)
         # Roof zones along slope
         r_seq = ["G", "H", "J", "I"]
+        idx, pos = 0, 0.0
         for z in r_seq:
-            _distribute(zd[z]["Length"], rafters, zd[z][key], case, loads)
+            # lay out zones sequentially along rafters
+            idx, pos = _distribute(zd[z]["Length"], rafters, zd[z][key], case,
+                                   loads, idx, pos)
         # Right columns - Zone E
         _distribute(zd["E"]["Length"], right_cols, zd["E"][key], case, loads)
 
