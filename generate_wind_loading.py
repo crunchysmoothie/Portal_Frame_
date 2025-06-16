@@ -88,7 +88,7 @@ def _process_90deg(zones: List[Dict[str, Any]], left_cols: List[Dict[str, Any]],
         _distribute(roof_len, rafters, zd["H"][key], case, loads)
         _distribute(zd["A"]["Length"], right_cols, zd["A"][key], case, loads)
  
-def wind_loads(data: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+def wind_loading(data: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     if data is None:
         data = json.load(open("input_data.json"))
 
@@ -114,5 +114,5 @@ def wind_loads(data: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     return loads
 
 if __name__ == "__main__":
-    wind_loads()
+    wind_loading()
 
