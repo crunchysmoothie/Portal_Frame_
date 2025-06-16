@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 import math
 from typing import List, Dict
-
 from models import BuildingData, WindData
+
 
 
 # ---------------------------------------------------------------------------
@@ -17,7 +17,6 @@ def _column_nodes(start_idx: int, count: int, x: float, y_start: float, y_end: f
     for i in range(count):
         nodes.append({"name": f"N{start_idx + i}", "x": x, "y": round(y_start + i * step, 2), "z": 0})
     return nodes
-
 
 def _duo_rafter_nodes(start_idx: int, num: int, gable_width: float, eaves_height: float, apex_height: float) -> List[Dict[str, float]]:
     nodes = []
