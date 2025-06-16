@@ -2,9 +2,6 @@ import json
 import math
 import numpy as np
 
-from user_input import rafter_spacing
-
-
 def import_data(file):
     with open(file) as f:
         data = json.load(f)
@@ -268,8 +265,8 @@ def wind_data_duo_n():
             "Zone": zone,
             "cpe": round(cpe, 4),
             "Length": zones[zone]["0_deg"],
-            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2), 4) * r_spacing,
-            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3), 4) * r_spacing
+            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2) * r_spacing / 1000, 5),
+            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3) * r_spacing / 1000, 5)
         })
 
     for zone, cpe in zones_down.items():
@@ -278,8 +275,8 @@ def wind_data_duo_n():
             "Zone": zone,
             "cpe": round(cpe, 4),
             "Length": zones[zone]["0_deg"],
-            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2), 4) * r_spacing,
-            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3), 4) * r_spacing
+            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2) * r_spacing / 1000, 5),
+            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3) * r_spacing / 1000, 5)
         })
 
     for zone, cpe in zones_90.items():
@@ -288,8 +285,8 @@ def wind_data_duo_n():
             "Zone": zone,
             "cpe": round(cpe, 4),
             "Length": zones[zone]["90_deg"],
-            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2), 4) * r_spacing,
-            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3), 4) * r_spacing
+            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2) * r_spacing / 1000, 5),
+            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3) * r_spacing / 1000, 5)
         })
 
     print("Wind Upward Pressures")
@@ -298,8 +295,8 @@ def wind_data_duo_n():
     for result in results_up:
         cpe_display = f"+{result['cpe']:.2f}" if result['cpe'] > 0 else f"{result['cpe']:.2f}"
         length_display = f"{result['Length']:.2f}"
-        pressure_cpi_0_2 = f"+{result['cpi=0.2']:.2f}" if result['cpi=0.2'] > 0 else f"{result['cpi=0.2']:.2f}"
-        pressure_cpi_neg_0_3 = f"+{result['cpi=-0.3']:.2f}" if result['cpi=-0.3'] > 0 else f"{result['cpi=-0.3']:.2f}"
+        pressure_cpi_0_2 = f"+{result['cpi=0.2'] * 1000:.2f}" if result['cpi=0.2'] > 0 else f"{result['cpi=0.2']:.4f}"
+        pressure_cpi_neg_0_3 = f"+{result['cpi=-0.3'] * 1000:.2f}" if result['cpi=-0.3'] > 0 else f"{result['cpi=-0.3']:.4f}"
 
         print(f"{result['Zone']:<6}{cpe_display:<10}{length_display + ' m':<10}{pressure_cpi_0_2 + ' kN/m' :<18} {pressure_cpi_neg_0_3} kN/m")
 
@@ -309,8 +306,8 @@ def wind_data_duo_n():
     for result in results_down:
         cpe_display = f"+{result['cpe']:.2f}" if result['cpe'] > 0 else f"{result['cpe']:.2f}"
         length_display = f"{result['Length']:.2f}"
-        pressure_cpi_0_2 = (f"+{result['cpi=0.2']:.2f}" if result['cpi=0.2'] > 0 else f"{result['cpi=0.2']:.2f}")
-        pressure_cpi_neg_0_3 = (f"+{result['cpi=-0.3']:.2f}" if result['cpi=-0.3'] > 0 else f"{result['cpi=-0.3']:.2f}")
+        pressure_cpi_0_2 = (f"+{result['cpi=0.2'] * 1000:.2f}" if result['cpi=0.2'] > 0 else f"{result['cpi=0.2']:.4f}")
+        pressure_cpi_neg_0_3 = (f"+{result['cpi=-0.3'] * 1000:.2f}" if result['cpi=-0.3'] > 0 else f"{result['cpi=-0.3']:.4f}")
 
         print(f"{result['Zone']:<6}{cpe_display:<10}{length_display + ' m':<10}{pressure_cpi_0_2 + ' kN/m':<18} {pressure_cpi_neg_0_3} kN/m")
 
@@ -320,8 +317,8 @@ def wind_data_duo_n():
     for result in results_90:
         cpe_display = f"+{result['cpe']:.2f}" if result['cpe'] > 0 else f"{result['cpe']:.2f}"
         length_display = f"{result['Length']:.2f}"
-        pressure_cpi_0_2 = (f"+{result['cpi=0.2']:.2f}" if result['cpi=0.2'] > 0 else f"{result['cpi=0.2']:.2f}")
-        pressure_cpi_neg_0_3 = (f"+{result['cpi=-0.3']:.2f}" if result['cpi=-0.3'] > 0 else f"{result['cpi=-0.3']:.2f}")
+        pressure_cpi_0_2 = (f"+{result['cpi=0.2'] * 1000:.2f}" if result['cpi=0.2'] > 0 else f"{result['cpi=0.2']:.4f}")
+        pressure_cpi_neg_0_3 = (f"+{result['cpi=-0.3'] * 1000:.2f}" if result['cpi=-0.3'] > 0 else f"{result['cpi=-0.3']:.4f}")
 
         print(f"{result['Zone']:<6}{cpe_display:<10}{length_display + ' m':<10}{pressure_cpi_0_2 + ' kN/m':<18} {pressure_cpi_neg_0_3} kN/m")
 

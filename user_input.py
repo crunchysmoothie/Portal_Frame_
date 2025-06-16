@@ -126,15 +126,6 @@ def generate_nodal_loads(nodes, b_data):
 
     return nodal_loads
 
-def generate_member_loads(members):
-    member_loads = []
-
-    for member in members[0: len(members) // 2]:
-        if member["type"] == "column":
-            member_loads.append({"member": member["name"], "direction":"Fy","w1":-0.003,"w2":-0.003,"case":"D"})
-
-    return member_loads
-
 def generate_spring_supports(nodes):
     rotational_springs = [{"node": nodes[0]["name"], "direction": "RZ", "stiffness": 5E6},
                           {"node": nodes[-1]["name"], "direction": "RZ", "stiffness": 5E6}]
@@ -145,7 +136,6 @@ def update_json_file(json_filename, b_data, wind_data):
     new_nodes = generate_nodes(b_data)
     new_members = generate_members(new_nodes)
     new_supports = generate_supports(new_nodes)
-    new_member_loads = generate_member_loads(new_members)
     rotational_springs = generate_spring_supports(new_nodes)
     wind_input = wind_data
     for i in b_data:
@@ -163,7 +153,6 @@ def update_json_file(json_filename, b_data, wind_data):
     data["nodes"] = new_nodes
     data["members"] = new_members
     data["supports"] = new_supports
-    data["member_loads"] = new_member_loads
     data["rotational_springs"] = rotational_springs
     data["wind_data"] = wind_input
 
@@ -183,10 +172,12 @@ def update_json_file(json_filename, b_data, wind_data):
 
     print(f"Portal frame data saved to {json_filename}")
 
-
 def add_wind_member_loads(json_filename):
     """Generate wind loads and append them to the member loads list."""
+    from wind_loads import wind_out
     from generate_wind_loading import wind_loads
+
+    wind_out()
 
     with open(json_filename, 'r') as file:
         data = json.load(file)
@@ -194,8 +185,7 @@ def add_wind_member_loads(json_filename):
     loads = wind_loads(data)
     data.pop("wind_loads", None)
     data.setdefault("member_loads", [])
-    data["member_loads"].extend(loads)
-
+    data["member_loads"] = loads
     json_str = json.dumps(data, separators=(',', ':'))
     formatted_json_str = json_str.replace('},{', '},\n  {')
     formatted_json_str = formatted_json_str.replace('[{', '[\n  {')

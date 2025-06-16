@@ -359,7 +359,9 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
     print(f"   Δx Load Combination: {best['dx_comb']}")
     print(f"   Search time: {time.time() - start:.3f} s")
 
-    return best['frame'], member_db, r_section_type, c_section_type, (best['r_name'], best['c_name'])
+    print(best['frame'])
+
+    return best['frame'], best['dx_comb'], member_db, r_section_type, c_section_type, (best['r_name'], best['c_name'])
 
 def uls_output(sls_check_output):
 
@@ -401,14 +403,14 @@ def uls_output(sls_check_output):
     #     print(tabulate.tabulate(member_results, headers=['Member', 'Max Mz (kNm)', 'Min Mz (kNm)', 'Axial Max (kN)',
     #                                                      'Axial Min (kN)' ], tablefmt='pretty'))
 
-def render_model(frame):
+def render_model(frame, combo):
     # Render the model
     rndr = Renderer(frame)
-    rndr.annotation_size = 250
+    rndr.annotation_size = 125
     rndr.render_loads = True
     rndr.deformed_shape = True
     rndr.deformed_scale = 5
-    rndr.combo_name = '1.1 DL + 0.3 LL + 0.6 W0_0.2D'  # Adjust as necessary
+    rndr.combo_name = combo  # Adjust as necessary
     rndr.render_model()
 
 def main():
@@ -416,13 +418,13 @@ def main():
     r_section_type = 'I-Sections'  # or 'H-Sections', based on user preference
     c_section_type = 'I-Sections'  # or 'H-Sections', based on user preference
 
-    frame, member_db, r_section_typ, c_section_typ, best_section = sls_check(preferred_section, r_section_type, c_section_type)
+    frame, combo, member_db, r_section_typ, c_section_typ, best_section = sls_check(preferred_section, r_section_type, c_section_type)
 
     # uls_output((frame, member_db, r_section_typ, c_section_typ, best_section))
 
     if frame is not None:
         print("Pass")
-        render_model(frame)
+        render_model(frame, combo)
     else:
         print("Unable to find acceptable sections.")
 
