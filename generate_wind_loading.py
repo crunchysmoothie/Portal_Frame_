@@ -52,8 +52,8 @@ def _distribute(length: float, members: List[Dict[str, Any]], intensity: float,
             pos = 0.0
             continue
 
-        start = pos / 1000 if pos > 0 else None
-        end = (pos + seg) / 1000 if seg < m["length"] * 1000 or start is not None else None
+        start = pos if pos > 0 else None
+        end = (pos + seg) if seg < m["length"] * 1000 or start is not None else None
         _add_load(loads, m["name"], intensity, case, start, end)
 
         remaining -= seg
