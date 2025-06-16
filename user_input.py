@@ -1,235 +1,157 @@
+from __future__ import annotations
+
 import json
 import math
+from typing import List, Dict
 
-# Function to generate nodes based on the portal frame structure with static values
-def generate_nodes(b_data):
-    eaves_height = b_data['eaves_height']
-    apex_height = b_data['apex_height']
-    gable_width = b_data['gable_width']
+from models import BuildingData, WindData
 
+
+# ---------------------------------------------------------------------------
+# Geometry generation helpers
+# ---------------------------------------------------------------------------
+
+def _column_nodes(start_idx: int, count: int, x: float, y_start: float, y_end: float) -> List[Dict[str, float]]:
+    step = (y_end - y_start) / (count - 1) if count > 1 else 0.0
     nodes = []
-    num_vertical = b_data['col_bracing_spacing'] + 2
+    for i in range(count):
+        nodes.append({"name": f"N{start_idx + i}", "x": x, "y": round(y_start + i * step, 2), "z": 0})
+    return nodes
 
-    # Generate nodes for Duo Pitched type
-    if b_data["building_roof"] == "Duo Pitched":
-        # Generate 3 vertical nodes on the left side
-        for i in range(num_vertical):
-            node = {
-                "name": f"N{i + 1}",
-                "x": 0,
-                "y": round(i * (eaves_height / (num_vertical - 1)), 2),
-                "z": 0
-            }
-            nodes.append(node)
 
-        # Generate 4 diagonal nodes for the rafter section
-        num_diagonal = b_data['rafter_bracing_spacing'] * 2
-        for i in range(1, num_diagonal):
-            x = round(i * (gable_width / num_diagonal), 2)
-            y = round(
-                eaves_height + ((apex_height - eaves_height) * (1 - abs(i - (num_diagonal / 2)) / (num_diagonal / 2))),
-                2)
-            node = {
-                "name": f"N{num_vertical + i}",
-                "x": x,
-                "y": y,
-                "z": 0
-            }
-            nodes.append(node)
+def _duo_rafter_nodes(start_idx: int, num: int, gable_width: float, eaves_height: float, apex_height: float) -> List[Dict[str, float]]:
+    nodes = []
+    for i in range(1, num):
+        x = round(i * (gable_width / num), 2)
+        y = round(eaves_height + (apex_height - eaves_height) * (1 - abs(i - (num / 2)) / (num / 2)), 2)
+        nodes.append({"name": f"N{start_idx}", "x": x, "y": y, "z": 0})
+        start_idx += 1
+    return nodes
 
-        # Generate 3 vertical nodes on the right side
-        for i in range(num_vertical):
-            node = {
-                "name": f"N{num_vertical + num_diagonal + i}",
-                "x": gable_width,
-                "y": round(eaves_height - i * (eaves_height / (num_vertical - 1)), 2),
-                "z": 0
-            }
-            nodes.append(node)
 
-    # Generate nodes for Mono-Pitched type
-    elif b_data["building_roof"] == "Mono Pitched":
-        # Generate 3 vertical nodes on the left side
-        for i in range(num_vertical):
-            node = {
-                "name": f"N{i + 1}",
-                "x": 0,
-                "y": round(i * (eaves_height / (num_vertical - 1)), 2),
-                "z": 0
-            }
-            nodes.append(node)
+def _mono_rafter_nodes(start_idx: int, num: int, gable_width: float, eaves_height: float, apex_height: float) -> List[Dict[str, float]]:
+    nodes = []
+    for i in range(1, num + 1):
+        x = round(i * (gable_width / num), 2)
+        y = round(eaves_height + (apex_height - eaves_height) * (i / num), 2)
+        nodes.append({"name": f"N{start_idx}", "x": x, "y": y, "z": 0})
+        start_idx += 1
+    return nodes
 
-        # Generate 4 diagonal nodes for the rafter section for a single slope
-        num_diagonal = 4
-        for i in range(1, num_diagonal + 1):
-            x = round(i * (gable_width / num_diagonal), 2)
-            y = round(eaves_height + (apex_height - eaves_height) * (i / num_diagonal), 2)
-            node = {
-                "name": f"N{num_vertical + i}",
-                "x": x,
-                "y": y,
-                "z": 0
-            }
-            nodes.append(node)
 
-        # Generate 3 vertical nodes on the right side
-        for i in range(1, num_vertical):
-            node = {
-                "name": f"N{num_vertical + num_diagonal + i}",
-                "x": gable_width,
-                "y": round(apex_height - i * (apex_height / (num_vertical - 1)), 2),
-                "z": 0
-            }
-            nodes.append(node)
+def generate_nodes(b: BuildingData) -> List[Dict[str, float]]:
+    """Create node coordinates for the frame based on ``b``."""
+    nodes: List[Dict[str, float]] = []
+    num_vertical = b.col_bracing_spacing + 2
+    idx = 1
+
+    # Left column
+    nodes.extend(_column_nodes(idx, num_vertical, 0.0, 0.0, b.eaves_height))
+    idx += num_vertical
+
+    if b.building_roof == "Duo Pitched":
+        num_diagonal = b.rafter_bracing_spacing * 2
+        nodes.extend(_duo_rafter_nodes(idx, num_diagonal, b.gable_width, b.eaves_height, b.apex_height))
+        idx += num_diagonal - 1
+        nodes.extend(_column_nodes(idx, num_vertical, b.gable_width, b.eaves_height, 0.0))
+    elif b.building_roof == "Mono Pitched":
+        num_diagonal = b.rafter_bracing_spacing
+        nodes.extend(_mono_rafter_nodes(idx, num_diagonal, b.gable_width, b.eaves_height, b.apex_height))
+        idx += num_diagonal
+        start = b.apex_height - b.apex_height / (num_vertical - 1)
+        nodes.extend(_column_nodes(idx, num_vertical - 1, b.gable_width, start, 0.0))
+    else:
+        raise NotImplementedError(f"Roof type '{b.building_roof}' not handled")
 
     return nodes
 
-def generate_supports(nodes):
 
-    supports = [
+def generate_supports(nodes: List[Dict[str, float]]) -> List[Dict[str, bool | str | float]]:
+    return [
         {"node": nodes[0]["name"], "DX": True, "DY": True, "DZ": True, "RX": False, "RY": False, "RZ": False},
-        {"node": nodes[-1]["name"], "DX": True, "DY": True, "DZ": True, "RX": False, "RY": False, "RZ": False}
+        {"node": nodes[-1]["name"], "DX": True, "DY": True, "DZ": True, "RX": False, "RY": False, "RZ": False},
     ]
 
-    return supports
 
-def generate_members(nodes):
+def generate_members(nodes: List[Dict[str, float]]) -> List[Dict[str, float | str]]:
     members = []
-    num_nodes = len(nodes)
-
-    # Create members between consecutive nodes
-    for i in range(1, num_nodes):
-        xi = nodes[i - 1]['x']
-        yi = nodes[i - 1]['y']
-        xj = nodes[i]['x']
-        yj = nodes[i]['y']
-        member = {
+    for i in range(1, len(nodes)):
+        xi, yi = nodes[i - 1]["x"], nodes[i - 1]["y"]
+        xj, yj = nodes[i]["x"], nodes[i]["y"]
+        members.append({
             "name": f"M{i}",
             "i_node": nodes[i - 1]["name"],
             "j_node": nodes[i]["name"],
             "material": "Steel_S355",
             "type": "rafter" if xi != xj else "column",
-            "length": round(math.sqrt((xj-xi)**2 + (yj-yi)**2) / 1_000, 3)
-        }
-        members.append(member)
-
+            "length": round(math.hypot(xj - xi, yj - yi) / 1000, 3),
+        })
     return members
 
-def generate_nodal_loads(nodes, b_data):
+
+def generate_nodal_loads(nodes: List[Dict[str, float]], b: BuildingData) -> List[Dict[str, float | str]]:
     apex_node = nodes[len(nodes) // 2]
-    for i in nodes:
-        if i['x'] == 0 and i['y'] == b_data['eaves_height']:
-            eaves_node = i
-    nodal_loads = [{"node": eaves_node["name"], "direction": "FX", "magnitude": 10, "case": "L"},
-                   {"node": apex_node["name"], "direction": "FY", "magnitude": -10, "case": "L"},]
+    eaves_node = next(n for n in nodes if n["x"] == 0 and n["y"] == b.eaves_height)
+    return [
+        {"node": eaves_node["name"], "direction": "FX", "magnitude": 10, "case": "L"},
+        {"node": apex_node["name"], "direction": "FY", "magnitude": -10, "case": "L"},
+    ]
 
-    return nodal_loads
 
-def generate_spring_supports(nodes):
-    rotational_springs = [{"node": nodes[0]["name"], "direction": "RZ", "stiffness": 5E6},
-                          {"node": nodes[-1]["name"], "direction": "RZ", "stiffness": 5E6}]
-    return rotational_springs
+def generate_spring_supports(nodes: List[Dict[str, float]]) -> List[Dict[str, float | str]]:
+    return [
+        {"node": nodes[0]["name"], "direction": "RZ", "stiffness": 5e6},
+        {"node": nodes[-1]["name"], "direction": "RZ", "stiffness": 5e6},
+    ]
 
-def update_json_file(json_filename, b_data, wind_data):
-    # Generate new node and member data based on input dimensions
-    new_nodes = generate_nodes(b_data)
-    new_members = generate_members(new_nodes)
-    new_supports = generate_supports(new_nodes)
-    rotational_springs = generate_spring_supports(new_nodes)
-    wind_input = wind_data
-    for i in b_data:
-        if i in ["eaves_height", "apex_height", "gable_width", "rafter_spacing", "building_length", "roof_pitch"]:
-            wind_input[i] = b_data[i]/1000
-        else:
-            wind_input[i] = b_data[i]
 
-    # Load existing JSON data
-    with open(json_filename, 'r') as file:
-        data = json.load(file)
+def write_json(filename: str, data: dict) -> None:
+    with open(filename, "w") as f:
+        json.dump(data, f, indent=2)
 
-    # Update only the "nodes" and "members" sections
-    data["frame_data"] = [b_data]
-    data["nodes"] = new_nodes
-    data["members"] = new_members
-    data["supports"] = new_supports
-    data["rotational_springs"] = rotational_springs
-    data["wind_data"] = wind_input
 
-    # Convert data to a compact JSON string
-    json_str = json.dumps(data, separators=(',', ':'))
+def update_json_file(filename: str, building: BuildingData, wind: WindData) -> None:
+    nodes = generate_nodes(building)
+    members = generate_members(nodes)
+    supports = generate_supports(nodes)
+    springs = generate_spring_supports(nodes)
 
-    # Insert line breaks between JSON objects
-    formatted_json_str = json_str.replace('},{', '},\n  {')
-    formatted_json_str = formatted_json_str.replace('[{', '[\n  {')
-    formatted_json_str = formatted_json_str.replace('}]', '}\n]')
-    formatted_json_str = formatted_json_str.replace('],', '],\n')
-    formatted_json_str = formatted_json_str.replace(']}', ']\n}')
+    with open(filename, "r") as f:
+        data = json.load(f)
 
-    # Save the formatted JSON string to a file
-    with open(json_filename, 'w') as json_file:
-        json_file.write(formatted_json_str)
+    wind.update_from_building(building)
 
-    print(f"Portal frame data saved to {json_filename}")
+    data["frame_data"] = [building.to_dict()]
+    data["nodes"] = nodes
+    data["members"] = members
+    data["supports"] = supports
+    data["rotational_springs"] = springs
+    data["wind_data"] = wind.to_dict()
 
-def add_wind_member_loads(json_filename):
-    """Generate wind loads and append them to the member loads list."""
+    write_json(filename, data)
+    print(f"Portal frame data saved to {filename}")
+
+
+def add_wind_member_loads(filename: str) -> None:
     from generate_wind_loading import wind_loading
 
-    with open(json_filename, 'r') as file:
-        data = json.load(file)
+    with open(filename, "r") as f:
+        data = json.load(f)
 
     loads = wind_loading(data)
     data.setdefault("member_loads", [])
     data["member_loads"] = loads
-    json_str = json.dumps(data, separators=(',', ':'))
-    formatted_json_str = json_str.replace('},{', '},\n  {')
-    formatted_json_str = formatted_json_str.replace('[{', '[\n  {')
-    formatted_json_str = formatted_json_str.replace('}]', '}\n]')
-    formatted_json_str = formatted_json_str.replace('],', '],\n')
-    formatted_json_str = formatted_json_str.replace(']}', ']\n}')
 
-    with open(json_filename, 'w') as json_file:
-        json_file.write(formatted_json_str)
+    write_json(filename, data)
 
-# Static inputs for eaves, apex, and rafter span (converted to mm)
-building_roof = "Duo Pitched" # "Mono Pitched" or "Duo Pitched"
-building_type = "Normal"    # "Normal" or "Canopy"
-eaves_height = 5 * 1000     # Convert to mm
-apex_height = 7 * 1000      # Convert to mm
-gable_width = 8 * 1000      # Convert to mm
-rafter_spacing = 5 * 1000   # Convert to mm
-building_length = 50 * 1000 # Convert to mm
-col_bracing_spacing = 2     # number of braced points per column (1: Lx=Ly = 1.0 L, 2: Lx = L, Ly = 0.5L, etc)
-rafter_bracing_spacing = 4  # number of braced points per rafter (1: Lx=Ly = 1.0 L, 2: Lx = L, Ly = 0.5L, etc)
 
-building_data = {
-    "building_type": building_type,
-    "building_roof": building_roof,
-    "eaves_height": eaves_height,
-    "apex_height": apex_height,
-    "gable_width": gable_width,
-    "rafter_spacing": rafter_spacing,
-    "building_length": building_length,
-    "col_bracing_spacing": col_bracing_spacing,
-    "rafter_bracing_spacing": rafter_bracing_spacing,
-    "roof_pitch": math.degrees(math.atan((apex_height - eaves_height) / (gable_width / 2)))*1000
-}
-wind_data = {
-    "wind": "3s gust",
-    "fundamental_basic_wind_speed": 36,
-    "return_period": 50,
-    "terrain_category": "B",
-    "topographic_factor": 1.0,
-    "altitude": 1450
-}
+def main() -> None:
+    building = BuildingData()
+    wind = WindData()
+    filename = "input_data.json"
+    update_json_file(filename, building, wind)
+    add_wind_member_loads(filename)
 
-# Filename of the existing JSON file
-json_filename = 'input_data.json'
 
-# Call the function to update the nodes and members in the JSON file
-update_json_file(json_filename,
-                 building_data,
-                 wind_data)
-
-# Append wind-induced member loads
-add_wind_member_loads(json_filename)
+if __name__ == "__main__":
+    main()
