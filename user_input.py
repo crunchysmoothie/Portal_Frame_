@@ -185,6 +185,29 @@ def update_json_file(json_filename, b_data, wind_data):
 
     print(f"Portal frame data saved to {json_filename}")
 
+
+def add_wind_member_loads(json_filename):
+    """Generate wind loads and append them to the member loads list."""
+    from generate_wind_loading import wind_loads
+
+    with open(json_filename, 'r') as file:
+        data = json.load(file)
+
+    loads = wind_loads(data)
+    data.pop("wind_loads", None)
+    data.setdefault("member_loads", [])
+    data["member_loads"].extend(loads)
+
+    json_str = json.dumps(data, separators=(',', ':'))
+    formatted_json_str = json_str.replace('},{', '},\n  {')
+    formatted_json_str = formatted_json_str.replace('[{', '[\n  {')
+    formatted_json_str = formatted_json_str.replace('}]', '}\n]')
+    formatted_json_str = formatted_json_str.replace('],', '],\n')
+    formatted_json_str = formatted_json_str.replace(']}', ']\n}')
+
+    with open(json_filename, 'w') as json_file:
+        json_file.write(formatted_json_str)
+
 # Static inputs for eaves, apex, and rafter span (converted to mm)
 building_roof = "Duo Pitched" # "Mono Pitched" or "Duo Pitched"
 building_type = "Normal"    # "Normal" or "Canopy"
@@ -224,3 +247,6 @@ json_filename = 'input_data.json'
 update_json_file(json_filename,
                  building_data,
                  wind_data)
+
+# Append wind-induced member loads
+add_wind_member_loads(json_filename)
