@@ -4,6 +4,7 @@ import multiprocessing
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from Pynite import FEModel3D
 from Pynite.Visualization import Renderer
+from tabulate import tabulate
 import member_database as mdb
 
 num_cores = multiprocessing.cpu_count()
@@ -364,6 +365,36 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
     print(f"   Max Δx: {best['dx']:.2f} mm   (limit {horiz_limit:.2f})")
     print(f"   Δx Load Combination: {best['dx_comb']}")
     print(f"   Search time: {time.time() - start:.3f} s")
+
+    # --- Output worst deflections for each SLS load case ---------------------
+    table_data = []
+    for combo in data['serviceability_load_combinations']:
+        cn = combo['name']
+        worst_dx = 0.0
+        worst_dx_node = ''
+        worst_dy = 0.0
+        worst_dy_node = ''
+        for nd in best['frame'].nodes.values():
+            dx = abs(nd.DX[cn])
+            dy = abs(nd.DY[cn])
+            if dx > worst_dx:
+                worst_dx = dx
+                worst_dx_node = nd.name
+            if dy > worst_dy:
+                worst_dy = dy
+                worst_dy_node = nd.name
+        table_data.append([
+            cn,
+            round(worst_dx, 2),
+            worst_dx_node,
+            round(worst_dy, 2),
+            worst_dy_node
+        ])
+
+    print(tabulate(table_data,
+                   headers=['Load Case', 'Deflection in X', 'Node',
+                            'Deflection in Y', 'Node'],
+                   tablefmt='pretty'))
 
 
     return best['frame'], best['dx_comb'], member_db, r_section_type, c_section_type, (best['r_name'], best['c_name'])
