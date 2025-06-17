@@ -5,9 +5,6 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from Pynite import FEModel3D
 from Pynite.Visualization import Renderer
 import member_database as mdb
-import tabulate
-import math
-import os
 
 num_cores = multiprocessing.cpu_count()
 
@@ -414,10 +411,10 @@ def uls_output(sls_check_output):
 def render_model(frame, combo):
     # Render the model
     rndr = Renderer(frame)
-    rndr.annotation_size = 125
+    rndr.annotation_size = 80
     rndr.render_loads = True
     rndr.deformed_shape = True
-    rndr.deformed_scale = 5
+    rndr.deformed_scale = 20
     rndr.combo_name = combo  # Adjust as necessary
     rndr.render_model()
 

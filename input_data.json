@@ -42,14 +42,14 @@
   {"name":"W90_0.3","type":"wind"}
 ],
 "serviceability_load_combinations":[
-  {"name":"1.1 DL","factors":{"D":1.1}},
-  {"name":"1.1 DL + 1.0 LL","factors":{"D":1.1,"L":1.0}},
-  {"name":"0.9 DL + 0.6 W0_0.2U","factors":{"D":0.9,"W0_0.2U":0.6}},
-  {"name":"1.1 DL + 0.3 LL + 0.6 W0_0.2D","factors":{"D":1.1,"L":0.3,"W0_0.2D":0.6}},
-  {"name":"0.9 DL + 0.6 W0_0.3U","factors":{"D":0.9,"W0_0.3U":0.6}},
-  {"name":"1.1 DL + 0.3 LL + 0.6 W0_0.3U","factors":{"D":1.1,"L":0.3,"W0_0.3D":0.6}},
-  {"name":"0.9 DL + 0.3 LL + 0.6 W90_0.2","factors":{"D":1.1,"L":0.3,"W90_0.2":0.6}},
-  {"name":"0.9 DL + 0.3 LL + 0.6 W90_0.3","factors":{"D":1.1,"L":0.3,"W90_0.3":0.6}}
+  {"name":"1.1 DL","factors":{"D":1.1,"D_MAX":1.1}},
+  {"name":"1.1 DL + 1.0 LL","factors":{"D":1.1,"D_MAX":1.1,"L":1.0}},
+  {"name":"0.9 DL + 0.6 W0_0.2U","factors":{"D":0.9,"D_MIN":0.9,"W0_0.2U":0.6}},
+  {"name":"1.1 DL + 0.3 LL + 0.6 W0_0.2D","factors":{"D":1.1,"D_MAX":1.1,"L":0.3,"W0_0.2D":0.6}},
+  {"name":"0.9 DL + 0.6 W0_0.3U","factors":{"D":0.9,"D_MIN":0.9,"W0_0.3U":0.6}},
+  {"name":"1.1 DL + 0.3 LL + 0.6 W0_0.3U","factors":{"D":1.1,"D_MAX":1.1,"L":0.3,"W0_0.3D":0.6}},
+  {"name":"0.9 DL + 0.3 LL + 0.6 W90_0.2","factors":{"D":0.9,"D_MIN":0.9,"L":0.3,"W90_0.2":0.6}},
+  {"name":"0.9 DL + 0.3 LL + 0.6 W90_0.3","factors":{"D":0.9,"D_MIN":0.9,"L":0.3,"W90_0.3":0.6}}
 ],
 "load_combinations":[
   {"name":"1.5 DL","factors":{"D":1.5}},
@@ -200,6 +200,30 @@
   {"member":"M9","direction":"Fy","w1":0.00134,"w2":0.00134,"case":"W90_0.3"},
   {"member":"M10","direction":"Fy","w1":0.00134,"w2":0.00134,"case":"W90_0.3"},
   {"member":"M11","direction":"Fy","w1":0.00134,"w2":0.00134,"case":"W90_0.3"},
-  {"member":"M14","direction":"Fy","w1":0.00266,"w2":0.00266,"case":"W90_0.3","x2":1600.0}
+  {"member":"M14","direction":"Fy","w1":0.00266,"w2":0.00266,"case":"W90_0.3","x2":1600.0},
+  {"member":"M4","direction":"FY","w1":-0.00125,"w2":-0.00125,"case":"L"},
+  {"member":"M5","direction":"FY","w1":-0.00125,"w2":-0.00125,"case":"L"},
+  {"member":"M6","direction":"FY","w1":-0.00125,"w2":-0.00125,"case":"L"},
+  {"member":"M7","direction":"FY","w1":-0.00125,"w2":-0.00125,"case":"L"},
+  {"member":"M8","direction":"FY","w1":-0.00125,"w2":-0.00125,"case":"L"},
+  {"member":"M9","direction":"FY","w1":-0.00125,"w2":-0.00125,"case":"L"},
+  {"member":"M10","direction":"FY","w1":-0.00125,"w2":-0.00125,"case":"L"},
+  {"member":"M11","direction":"FY","w1":-0.00125,"w2":-0.00125,"case":"L"},
+  {"member":"M4","direction":"FY","w1":-0.001,"w2":-0.001,"case":"D_MAX"},
+  {"member":"M4","direction":"FY","w1":-0.0007,"w2":-0.0007,"case":"D_MIN"},
+  {"member":"M5","direction":"FY","w1":-0.001,"w2":-0.001,"case":"D_MAX"},
+  {"member":"M5","direction":"FY","w1":-0.0007,"w2":-0.0007,"case":"D_MIN"},
+  {"member":"M6","direction":"FY","w1":-0.001,"w2":-0.001,"case":"D_MAX"},
+  {"member":"M6","direction":"FY","w1":-0.0007,"w2":-0.0007,"case":"D_MIN"},
+  {"member":"M7","direction":"FY","w1":-0.001,"w2":-0.001,"case":"D_MAX"},
+  {"member":"M7","direction":"FY","w1":-0.0007,"w2":-0.0007,"case":"D_MIN"},
+  {"member":"M8","direction":"FY","w1":-0.001,"w2":-0.001,"case":"D_MAX"},
+  {"member":"M8","direction":"FY","w1":-0.0007,"w2":-0.0007,"case":"D_MIN"},
+  {"member":"M9","direction":"FY","w1":-0.001,"w2":-0.001,"case":"D_MAX"},
+  {"member":"M9","direction":"FY","w1":-0.0007,"w2":-0.0007,"case":"D_MIN"},
+  {"member":"M10","direction":"FY","w1":-0.001,"w2":-0.001,"case":"D_MAX"},
+  {"member":"M10","direction":"FY","w1":-0.0007,"w2":-0.0007,"case":"D_MIN"},
+  {"member":"M11","direction":"FY","w1":-0.001,"w2":-0.001,"case":"D_MAX"},
+  {"member":"M11","direction":"FY","w1":-0.0007,"w2":-0.0007,"case":"D_MIN"}
 ]
 }
