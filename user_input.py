@@ -115,16 +115,6 @@ def generate_members(nodes):
 
     return members
 
-def generate_nodal_loads(nodes, b_data):
-    apex_node = nodes[len(nodes) // 2]
-    for i in nodes:
-        if i['x'] == 0 and i['y'] == b_data['eaves_height']:
-            eaves_node = i
-    nodal_loads = [{"node": eaves_node["name"], "direction": "FX", "magnitude": 10, "case": "L"},
-                   {"node": apex_node["name"], "direction": "FY", "magnitude": -10, "case": "L"},]
-
-    return nodal_loads
-
 def generate_spring_supports(nodes):
     rotational_springs = [{"node": nodes[0]["name"], "direction": "RZ", "stiffness": 5E6},
                           {"node": nodes[-1]["name"], "direction": "RZ", "stiffness": 5E6}]
@@ -191,6 +181,73 @@ def add_wind_member_loads(json_filename):
     with open(json_filename, 'w') as json_file:
         json_file.write(formatted_json_str)
 
+def add_live_loads(json_filename):
+    """Generate live loads and append them to the member loads list."""
+    with open(json_filename, 'r') as file:
+        data = json.load(file)
+
+    live_load = round(data["frame_data"][0]["rafter_spacing"] / 1000 * -0.25/1000, 5)
+
+    for member in data["members"]:
+        if member["type"] == "rafter":
+            lod = {
+                'member': member["name"],
+                'direction': 'FY',
+                'w1': live_load,
+                'w2': live_load,
+                'case': 'L'
+            }
+            data["member_loads"].append(lod)
+
+    json_str = json.dumps(data, separators=(',', ':'))
+    formatted_json_str = json_str.replace('},{', '},\n  {')
+    formatted_json_str = formatted_json_str.replace('[{', '[\n  {')
+    formatted_json_str = formatted_json_str.replace('}]', '}\n]')
+    formatted_json_str = formatted_json_str.replace('],', '],\n')
+    formatted_json_str = formatted_json_str.replace(']}', ']\n}')
+
+    with open(json_filename, 'w') as json_file:
+        json_file.write(formatted_json_str)
+
+def add_dead_loads(json_filename):
+    """Generate live loads and append them to the member loads list."""
+    with open(json_filename, 'r') as file:
+        data = json.load(file)
+
+    dead_load_max = round(data["frame_data"][0]["rafter_spacing"] / 1000 * -0.2/1000, 5)
+    dead_load_min = round(data["frame_data"][0]["rafter_spacing"] / 1000 * -0.14/1000, 5)
+
+    for member in data["members"]:
+        if member["type"] == "rafter":
+            d_max = {
+                'member': member["name"],
+                'direction': 'FY',
+                'w1': dead_load_max,
+                'w2': dead_load_max,
+                'case': 'D_MAX'
+            }
+            data["member_loads"].append(d_max)
+
+            d_min = {
+                'member': member["name"],
+                'direction': 'FY',
+                'w1': dead_load_min,
+                'w2': dead_load_min,
+                'case': 'D_MIN'
+            }
+            data["member_loads"].append(d_min)
+
+    json_str = json.dumps(data, separators=(',', ':'))
+    formatted_json_str = json_str.replace('},{', '},\n  {')
+    formatted_json_str = formatted_json_str.replace('[{', '[\n  {')
+    formatted_json_str = formatted_json_str.replace('}]', '}\n]')
+    formatted_json_str = formatted_json_str.replace('],', '],\n')
+    formatted_json_str = formatted_json_str.replace(']}', ']\n}')
+
+    with open(json_filename, 'w') as json_file:
+        json_file.write(formatted_json_str)
+
+
 # Static inputs for eaves, apex, and rafter span (converted to mm)
 building_roof = "Duo Pitched" # "Mono Pitched" or "Duo Pitched"
 building_type = "Normal"    # "Normal" or "Canopy"
@@ -233,3 +290,7 @@ update_json_file(json_filename,
 
 # Append wind-induced member loads
 add_wind_member_loads(json_filename)
+
+add_live_loads(json_filename)
+
+add_dead_loads(json_filename)
