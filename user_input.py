@@ -1,5 +1,6 @@
 import json
 import math
+from wind_loads import wind_out
 
 # Function to generate nodes based on the portal frame structure with static values
 def generate_nodes(b_data):
@@ -127,6 +128,7 @@ def update_json_file(json_filename, b_data, wind_data):
     new_supports = generate_supports(new_nodes)
     rotational_springs = generate_spring_supports(new_nodes)
     wind_input = wind_data
+    wind_out()
     for i in b_data:
         if i in ["eaves_height", "apex_height", "gable_width", "rafter_spacing", "building_length", "roof_pitch"]:
             wind_input[i] = b_data[i]/1000
@@ -251,11 +253,11 @@ def add_dead_loads(json_filename):
 # Static inputs for eaves, apex, and rafter span (converted to mm)
 building_roof = "Duo Pitched" # "Mono Pitched" or "Duo Pitched"
 building_type = "Normal"    # "Normal" or "Canopy"
-eaves_height = 5 * 1000     # Convert to mm
-apex_height = 7 * 1000      # Convert to mm
-gable_width = 8 * 1000      # Convert to mm
+eaves_height = 7 * 1000     # Convert to mm
+apex_height = 11 * 1000      # Convert to mm
+gable_width = 16 * 1000      # Convert to mm
 rafter_spacing = 5 * 1000   # Convert to mm
-building_length = 50 * 1000 # Convert to mm
+building_length = 120 * 1000 # Convert to mm
 col_bracing_spacing = 2     # number of braced points per column (1: Lx=Ly = 1.0 L, 2: Lx = L, Ly = 0.5L, etc)
 rafter_bracing_spacing = 4  # number of braced points per rafter (1: Lx=Ly = 1.0 L, 2: Lx = L, Ly = 0.5L, etc)
 
@@ -277,7 +279,7 @@ wind_data = {
     "return_period": 50,
     "terrain_category": "B",
     "topographic_factor": 1.0,
-    "altitude": 1450
+    "altitude": 1200
 }
 
 # Filename of the existing JSON file
