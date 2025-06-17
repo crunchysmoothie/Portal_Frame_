@@ -124,15 +124,11 @@ def wind_loading(data: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
 
     loads: List[Dict[str, Any]] = []
 
-    _process_0deg(data["wind_zones_0U"], left_cols, rafters, right_cols, pitch,
-                  "W0_0.2U", "W0_0.3U", loads)
-    _process_0deg(data["wind_zones_0D"], left_cols, rafters, right_cols, pitch,
-                  "W0_0.2D", "W0_0.3D", loads)
+    _process_0deg(data["wind_zones_0U"], left_cols, rafters, right_cols, pitch,"W0_0.2U", "W0_0.3U", loads)
+    _process_0deg(data["wind_zones_0D"], left_cols, rafters, right_cols, pitch,"W0_0.2D", "W0_0.3D", loads)
     _process_90deg(data["wind_zones_90"], left_cols, rafters, right_cols,"W90_0.2", "W90_0.3", loads)
 
     return loads
 
 if __name__ == "__main__":
     loads = wind_loading()
-    print(loads)
-
