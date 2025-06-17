@@ -131,4 +131,4 @@ def wind_loading(data: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     return loads
 
 if __name__ == "__main__":
-    loads = wind_loading()
+    print(wind_loading())
