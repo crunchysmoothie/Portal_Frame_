@@ -270,7 +270,7 @@ def directional_search(primary, r_list, c_list, r_section_type, c_section_type,m
 
 
     acceptable = []
-    with ProcessPoolExecutor(max_workers=(num_core-8)) as ex:
+    with ProcessPoolExecutor(max_workers=(num_core-4)) as ex:
         futures = [ex.submit(analyze_combination, t) for t in tasks]
         for fut in as_completed(futures):
             result = fut.result()
