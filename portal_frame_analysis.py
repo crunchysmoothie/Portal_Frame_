@@ -366,7 +366,7 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
     print(f"   Δx Load Combination: {best['dx_comb']}")
     print(f"   Search time: {time.time() - start:.3f} s")
 
-    # --- Output worst deflections for each SLS load case ---------------------
+    # --- Output the worst deflections for each SLS load case ---------------------
     table_data = []
     for combo in data['serviceability_load_combinations']:
         cn = combo['name']
@@ -419,11 +419,11 @@ def uls_output(sls_check_output):
     # Analyze the frame
     frame.analyze(check_statics=False)
 
-    # # Get the maximum strong-axis moment from member 'M1' for load combination '1.4D'
-    # my_model.members['M1'].max_moment('Mz', '1.4D')
+    # # Get the maximum strong-axis moment from member 'M1' for load combination '1.5D'
+    # my_model.members['M1'].max_moment('Mz', '1.5D')
     #
     # # Get the minimum weak-axis moment from member 'M3' for load combination '1.2D+1.6L'
-    # my_model.members['M3'].min_moment('My', '1.2D+1.6L')
+    # my_model.members['M3'].min_moment('My', '1.2D + 1.6L')
 
     # Print maximum and minimum moments for each member
 

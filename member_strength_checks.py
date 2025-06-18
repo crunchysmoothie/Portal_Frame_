@@ -4,9 +4,11 @@ import member_database as mdb
 
 member_db = mdb.load_member_database()
 rafter_section_name = '254x146x31'
-r_mem_properties = mdb.member_properties(rafter_section_name, member_db)
+rafter_section_type = 'I-Sections'
+r_mem_properties = mdb.member_properties(rafter_section_type, rafter_section_name, member_db)
 column_section_name = '356x171x45'
-c_mem_properties = mdb.member_properties(column_section_name, member_db)
+column_section_type = 'I-Sections'
+c_mem_properties = mdb.member_properties(column_section_type, column_section_name, member_db)
 
 Cu = 2000
 Lx, Kx = 5.0, 1.0
@@ -14,7 +16,7 @@ Ly, Ky = 2.5, 1
 Mux_Top, Mux_Bot = 80, 30
 Muy_Top, Muy_Bot = 50, 20
 Braced = "no"
-Section_Type = "I-section"
+Section_Type = "I-Sections"
 
 def classify_flange(fy, b, tf):
     ratio = b / (2 * tf)
@@ -93,35 +95,38 @@ def calculate_ltb(section, fy=350, E=200):
     LTB = max((Cu / Cry + (section['Mrx_co'] * U1x * max(Mux_Bot, Mux_Top) / section['Mrx']) + (
                 B * U1y * max(Muy_Top, Muy_Bot) / section['Mry'])),
               max(Mux_Bot, Mux_Top) / section['Mrx'] + max(Muy_Top, Muy_Bot) / section['Mry'])
+
+    print(Cry)
+
     return LTB
 
-def read_member_database(filename, section_choice, fy=350, E=200):
+def read_member_database(section_type, fy=350, E=200, preferred_section = "Yes"):
+    list = [sec for sec in member_db[section_type] if member_db[section_type][sec].get('Preferred','No') == preferred_section]
     lightest_section = None
-    for idx, row in enumerate(csv.DictReader(open(filename))):
-        if (section_choice == "I-section" and idx < 43) or (section_choice == "H-section" and idx >= 43):
-            section = {k: float(v) for k, v in row.items() if k != 'Designation'}
-            section['Flange Class'] = classify_flange(fy, section['b'], section['tf'])
-            section['Web Class'] = classify_web(fy, section['h'], section['tf'], section['tw'], section['A'])
-            section['Mrx_co'] = 0.85 if int(section['Flange Class'][-1]) in [1, 2] and int(section['Web Class'][-1]) in [1, 2] else 1
+    for section in list:
+        section_props = mdb.member_properties(section_type, section, member_db)
+        section_props['Flange Class'] = classify_flange(fy, section_props['b'], section_props['tf'])
+        section_props['Web Class'] = classify_web(fy, section_props['h'], section_props['tf'], section_props['tw'], section_props['A'])
+        section_props['Mrx_co'] = 0.85 if int(section_props['Flange Class'][-1]) in [1, 2] and int(section_props['Web Class'][-1]) in [1, 2] else 1
 
-            css = calculate_css(section, fy, E)
-            oms = calculate_oms(section, fy, E)
-            ltb = calculate_ltb(section, fy, E)
+        css = calculate_css(section_props, fy, E)
+        oms = calculate_oms(section_props, fy, E)
+        ltb = calculate_ltb(section_props, fy, E)
 
-            if css <= 1.0 and oms <= 1.0 and ltb <= 1.0:
-                if lightest_section is None or section['A'] < lightest_section['A']:
-                    lightest_section = {
-                        'Designation': row['Designation'],
-                        'A': section['A'],
-                        'CSS': css,
-                        'OMS': oms,
-                        'LTB': ltb
-                    }
+        if css <= 1.0 and oms <= 1.0 and ltb <= 1.0:
+            if lightest_section is None or section_props['A'] < lightest_section['A']:
+                lightest_section = {
+                    'Designation': section_props['Designation'],
+                    'A': section_props['A'],
+                    'CSS': css,
+                    'OMS': oms,
+                    'LTB': ltb
+                }
 
     return lightest_section
 
-filename = 'member_database.csv'
-lightest_section = read_member_database(filename, Section_Type)
+
+lightest_section = read_member_database(Section_Type)
 
 if lightest_section:
     print(f"Lightest Section: {lightest_section['Designation']}")
