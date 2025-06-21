@@ -458,6 +458,7 @@ def internal_forces(frame, r_type, r_mem, c_type, c_mem, data, combo, md):
 
     return member_des
 
+
 def member_design_checks(frame, r_type, r_mem, c_type, c_mem, data, md):
     """Return True if all members pass design checks for all ULS combos."""
     for combo in data['load_combinations']:
@@ -472,6 +473,39 @@ def member_design_checks(frame, r_type, r_mem, c_type, c_mem, data, md):
             ):
                 return False
     return True
+
+def uls_results(frame, r_type, r_mem, c_type, c_mem, data, md):
+    """Print ULS design ratios for each member and load combination."""
+    table = []
+    for combo in data['load_combinations']:
+        results = internal_forces(
+            frame, r_type, r_mem, c_type, c_mem, data, combo['name'], md
+        )
+        for res in results:
+            table.append([
+                res['Name'],
+                combo['name'],
+                round(res['CSS'], 3),
+                round(res['OMS'], 3),
+                round(res['LTB'][0], 3),
+                round(res['LTB'][1], 3),
+            ])
+
+    print(
+        tabulate(
+            table,
+            headers=[
+                'Member',
+                'Load Case',
+                'CSS',
+                'OMS',
+                'LTB(Mode1)',
+                'LTB (Mode 2)',
+            ],
+            tablefmt='pretty',
+        )
+    )
+
 
 def render_model(frame, combo):
     # Render the model
@@ -490,10 +524,16 @@ def main():
 
     frame, combo, member_db, r_section_typ, c_section_typ, best_section = sls_check(preferred_section, r_section_type, c_section_type)
 
-    # if frame is not None:
-    #     render_model(frame, combo)
-    # else:
-    #     print("Unable to find acceptable sections.")
+
+    if frame is not None:
+        print("Done")
+        data = import_data('input_data.json')
+        r_mem = mdb.member_properties(r_section_typ, best_section[0], member_db)
+        c_mem = mdb.member_properties(c_section_typ, best_section[1], member_db)
+        uls_results(frame, r_section_typ, r_mem, c_section_typ, c_mem, data, member_db)
+        render_model(frame, combo)
+    else:
+        print("Unable to find acceptable sections.")
 
 if __name__ == "__main__":
     main()
