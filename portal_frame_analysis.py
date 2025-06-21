@@ -240,50 +240,6 @@ def analyze_combination(args):
             worst_h,         # 5
             worst_h_combo)   # 6
 
-# def analyze_combination_uls(args):
-#     """
-#     Analyse ONE rafter/column pair for all serviceability load-combinations
-#     and return the lightest acceptable option, or None if it fails limits.
-#     """
-#     (r_type, r_name,
-#      c_type, c_name,
-#      member_db, data) = args
-#
-#     # --- section properties -------------------------------------------------
-#     r_mem = mdb.member_properties(r_type, r_name, member_db)
-#     c_mem = mdb.member_properties(c_type, c_name, member_db)
-#
-#     # ❶ Reject combos where the rafter flange is wider than the column flange
-#     if r_mem['b'] > c_mem['b'] + 3.5:
-#         return None
-#
-#     # --- build and analyse FE model ----------------------------------------
-#     frame = build_model(r_mem, c_mem)
-#
-#     for ULS_combo in data['load_combinations']:
-#         frame.add_load_combo(ULS_combo['name'], ULS_combo['factors'])
-#
-#     try:
-#         frame.analyze(check_statics=False)
-#     except (ValueError, RuntimeError):
-#         return None
-#
-#     uls_out = []
-#     for combo_u in data['load_combinations']:
-#         mem_d = internal_forces(frame, r_type, r_mem, c_type, c_mem, data, combo_u['name'], member_db)
-#         for mem in mem_d:
-#             if mem["CSS"] > 1 or mem['OMS'] > 1 or mem['LTB'][0] > 1 or mem['LTB'][1] > 1:
-#                 uls_out.append({
-#                     'Member': mem['name'],
-#                     'Combo': combo_u['name'],
-#                     'CSS': mem['CSS'],
-#                     'OMS': mem['OMS'],
-#                     'LTB': mem['LTB']
-#                 })
-#                 return None
-#
-#     return uls_out
-
 def get_member_lengths(data):
     """Return (Σ rafter_len [m], Σ column_len [m]) from input_data.json."""
     r_len = 0
@@ -392,8 +348,6 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
         num_cores
     )
 
-    print("Rafter-first Done")
-
     # ❷ Search by fixing columns first, then rafters
     best_c = directional_search(
         'column',
@@ -404,8 +358,6 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
         vert_limit, horiz_limit,
         num_cores
     )
-
-    print("Column-first Done")
 
     candidates = [b for b in (best_r, best_c) if b]
     if not candidates:
@@ -554,6 +506,7 @@ def uls_results(frame, r_type, r_mem, c_type, c_mem, data, md):
         )
     )
 
+
 def render_model(frame, combo):
     # Render the model
     rndr = Renderer(frame)
@@ -570,6 +523,7 @@ def main():
     c_section_type = 'I-Sections'  # or 'H-Sections', based on user preference
 
     frame, combo, member_db, r_section_typ, c_section_typ, best_section = sls_check(preferred_section, r_section_type, c_section_type)
+
 
     if frame is not None:
         print("Done")
