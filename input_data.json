@@ -27,9 +27,15 @@
   {"node":"N15","direction":"RZ","stiffness":5000000.0}
 ],
 "materials":[
-  {"name":"Steel_S355","E":200,"G":80,"nu":0.3,"rho":7.85e-08},
-  {"name":"Steel_S275","E":200,"G":80,"nu":0.3,"rho":7.85e-08}
+  {"name":"Steel_S355","Fy":355,"E":200,"G":80,"nu":0.3,"rho":7.85e-08},
+  {"name":"Steel_S275","Fy":275,"E":200,"G":80,"nu":0.3,"rho":7.85e-08}
 ],
+
+"steel_grades":[
+  {"Steel_S355": {"fy":355,"E":200,"G":80,"nu":0.3,"rho":7.85e-08}},
+  {"Steel_S275": {"fy":275,"E":200,"G":80,"nu":0.3,"rho":7.85e-08}}
+],
+
 "load_cases":[
   {"name":"D_MIN","type":"dead"},
   {"name":"D_MAX","type":"dead"},

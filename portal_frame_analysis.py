@@ -6,6 +6,7 @@ from Pynite import FEModel3D
 from Pynite.Visualization import Renderer
 from tabulate import tabulate
 import member_database as mdb
+from strength_checks import member_class_check, element_properties
 
 num_cores = multiprocessing.cpu_count()
 
@@ -193,10 +194,12 @@ def analyze_combination(args):
     for SLS_combo in data['serviceability_load_combinations']:
         frame.add_load_combo(SLS_combo['name'], SLS_combo['factors'])
 
+    for ULS_combo in data['load_combinations']:
+        frame.add_load_combo(ULS_combo['name'], ULS_combo['factors'])
+
     try:
         frame.analyze(check_statics=False)
     except (ValueError, RuntimeError):
-        # Solver failed → discard this combination
         return None
 
     # --- deflection checks --------------------------------------------------
@@ -215,6 +218,8 @@ def analyze_combination(args):
 
     if worst_v > v_lim or worst_h > h_lim:
         return None   # fails serviceability
+
+    internal_forces(frame, r_mem, c_mem, data)
 
     # --- weight (kN) --------------------------------------------------------
     weight = round(r_mem['m'] * r_total_m + c_mem['m'] * c_total_m, 1)
@@ -399,45 +404,48 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
 
     return best['frame'], best['dx_comb'], member_db, r_section_type, c_section_type, (best['r_name'], best['c_name'])
 
-def uls_output(sls_check_output):
+def internal_forces(frame, r_mem, c_mem, data):
+    combo = "1.2 DL + 1.6 LL"
+    fr = data['frame_data'][0]
+    rafter_span = fr['gable_width'] / (2 if fr['building_roof'] == "Duo Pitched" else 1)
+    col_kx = 1.2 * data['frame_data'][0]['eaves_height']
+    raf_kx = 1.2 * rafter_span
+    internal_loads = []
 
-    # Use sections from SLS check
-    frame_old, member_db, r_section_type, c_section_type, best_section = sls_check_output
+    # for combo in data['load_combinations']:
+    #     pass
 
-    r_mem = member_db[r_section_type][best_section[0]]
-    c_mem = member_db[c_section_type][best_section[1]]
+    for mem in data['members']:
+        l = mem['length']
+        mem_type = mem['type']
+        t_sec = r_mem['Designation'] if mem['type'] == 'rafter' else c_mem['Designation']
+        Cu = round(frame.members[mem['name']].max_axial(combo), 3)
+        Mx_max = round(max(frame.members[mem['name']].max_moment('Mz', combo),
+                          abs(frame.members[mem['name']].min_moment('Mz', combo)))/1000, 3)
+        Mx_top = round(frame.members[mem['name']].moment('Mz', 0, combo)/1000, 3)
+        Mx_bot = round(frame.members[mem['name']].moment('Mz', l * 1000, combo)/1000, 3)
 
-    frame = build_model(r_mem, c_mem)
+        w1, w2 = element_properties(Mx_max, Mx_top, Mx_bot)
 
-    # Add load combinations
-    data = import_data('input_data.json')
-    for combo in data.get('load_combinations', []):
-        combo_name = combo['name']
-        factors = combo['factors']
-        frame.add_load_combo(combo_name, factors=factors)
+        internal_loads.append({
+            'Name': mem['name'],
+            'kly': l,
+            'klx': (raf_kx if mem_type == 'rafter' else col_kx)/1000,
+            'type': mem_type,
+            'section': t_sec,
+            'Cu': Cu,
+            'Class': member_class_check(Cu, r_mem if mem['type'] == 'rafter' else c_mem),
+            'Mx_max': Mx_max,
+            'Mx_top': Mx_top,
+            'Mx_bot': Mx_bot,
+            'w1': w1,
+            'w2': w2
+        })
 
-    # Analyze the frame
-    frame.analyze(check_statics=False)
+    for i in internal_loads:
+        print(i)
 
-    # # Get the maximum strong-axis moment from member 'M1' for load combination '1.5D'
-    # my_model.members['M1'].max_moment('Mz', '1.5D')
-    #
-    # # Get the minimum weak-axis moment from member 'M3' for load combination '1.2D+1.6L'
-    # my_model.members['M3'].min_moment('My', '1.2D + 1.6L')
-
-    # Print maximum and minimum moments for each member
-
-    # for combo in data.get('load_combinations', []):
-    #     member_results = []
-    #     print(f"Load combination: {combo['name']}")
-    #     for member in frame.members.values():
-    #         mz_max = member.max_moment('Mz', combo['name']) / 1000
-    #         mz_min = member.min_moment('Mz', combo['name']) / 1000
-    #         n_max = member.max_axial(combo['name'])
-    #         n_min = member.min_axial(combo['name'])
-    #         member_results.append([member.name, round(mz_max, 4), round(mz_min, 4), round(n_max, 4), round(n_min, 4)])
-    #     print(tabulate.tabulate(member_results, headers=['Member', 'Max Mz (kNm)', 'Min Mz (kNm)', 'Axial Max (kN)',
-    #                                                      'Axial Min (kN)' ], tablefmt='pretty'))
+    return internal_loads
 
 def render_model(frame, combo):
     # Render the model
@@ -459,9 +467,13 @@ def main():
     # uls_output((frame, member_db, r_section_typ, c_section_typ, best_section))
 
     if frame is not None:
+        print("Done")
         render_model(frame, combo)
     else:
         print("Unable to find acceptable sections.")
 
 if __name__ == "__main__":
-    main()
+    data = import_data('input_data.json')
+    r_len, c_len = get_member_lengths(data)
+    analyze_combination(('I-Sections', '406x178x60', 'I-Sections', '457x191x74', mdb.load_member_database(), data, 53.33, 23.33, r_len, c_len))
+    # main()
