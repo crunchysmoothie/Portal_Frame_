@@ -6,7 +6,7 @@ from Pynite import FEModel3D
 from Pynite.Visualization import Renderer
 from tabulate import tabulate
 import member_database as mdb
-from strength_checks import member_class_check, element_properties
+from strength_checks import member_class_check, element_properties, member_design
 
 num_cores = multiprocessing.cpu_count()
 
@@ -197,9 +197,6 @@ def analyze_combination(args):
     for SLS_combo in data['serviceability_load_combinations']:
         frame.add_load_combo(SLS_combo['name'], SLS_combo['factors'])
 
-    for ULS_combo in data['load_combinations']:
-        frame.add_load_combo(ULS_combo['name'], ULS_combo['factors'])
-
     try:
         frame.analyze(check_statics=False)
     except (ValueError, RuntimeError):
@@ -222,8 +219,6 @@ def analyze_combination(args):
     if worst_v > v_lim or worst_h > h_lim:
         return None   # fails serviceability
 
-    internal_forces(frame, r_mem, c_mem, data)
-
     # --- weight (kN) --------------------------------------------------------
     weight = round(r_mem['m'] * r_total_m + c_mem['m'] * c_total_m, 1)
 
@@ -234,6 +229,50 @@ def analyze_combination(args):
             worst_v_combo,   # 4
             worst_h,         # 5
             worst_h_combo)   # 6
+
+# def analyze_combination_uls(args):
+#     """
+#     Analyse ONE rafter/column pair for all serviceability load-combinations
+#     and return the lightest acceptable option, or None if it fails limits.
+#     """
+#     (r_type, r_name,
+#      c_type, c_name,
+#      member_db, data) = args
+#
+#     # --- section properties -------------------------------------------------
+#     r_mem = mdb.member_properties(r_type, r_name, member_db)
+#     c_mem = mdb.member_properties(c_type, c_name, member_db)
+#
+#     # ❶ Reject combos where the rafter flange is wider than the column flange
+#     if r_mem['b'] > c_mem['b'] + 3.5:
+#         return None
+#
+#     # --- build and analyse FE model ----------------------------------------
+#     frame = build_model(r_mem, c_mem)
+#
+#     for ULS_combo in data['load_combinations']:
+#         frame.add_load_combo(ULS_combo['name'], ULS_combo['factors'])
+#
+#     try:
+#         frame.analyze(check_statics=False)
+#     except (ValueError, RuntimeError):
+#         return None
+#
+#     uls_out = []
+#     for combo_u in data['load_combinations']:
+#         mem_d = internal_forces(frame, r_type, r_mem, c_type, c_mem, data, combo_u['name'], member_db)
+#         for mem in mem_d:
+#             if mem["CSS"] > 1 or mem['OMS'] > 1 or mem['LTB'][0] > 1 or mem['LTB'][1] > 1:
+#                 uls_out.append({
+#                     'Member': mem['name'],
+#                     'Combo': combo_u['name'],
+#                     'CSS': mem['CSS'],
+#                     'OMS': mem['OMS'],
+#                     'LTB': mem['LTB']
+#                 })
+#                 return None
+#
+#     return uls_out
 
 def get_member_lengths(data):
     """Return (Σ rafter_len [m], Σ column_len [m]) from input_data.json."""
@@ -404,23 +443,21 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
                             'Deflection in Y', 'Node'],
                    tablefmt='pretty'))
 
-
     return best['frame'], best['dx_comb'], member_db, r_section_type, c_section_type, (best['r_name'], best['c_name'])
 
-def internal_forces(frame, r_mem, c_mem, data):
-    combo = "1.2 DL + 1.6 LL"
+def internal_forces(frame, r_type, r_mem, c_type, c_mem, data, combo, md):
     steel_grade = data['steel_grade']
     fr = data['frame_data'][0]
     rafter_span = fr['gable_width'] / (2 if fr['building_roof'] == "Duo Pitched" else 1)
     col_kx = 1.2 * data['frame_data'][0]['eaves_height']
-    raf_kx = 1.2 * rafter_span
+    raf_kx = rafter_span
     internal_loads = []
-
-    # for combo in data['load_combinations']:
-    #     pass
+    member_des = []
+    mat_props = data['steel_grade']
 
     for mem in data['members']:
         l = mem['length']
+        sec_type = r_type if mem['type'] == "rafter" else c_type
         mem_type = mem['type']
         t_sec = r_mem['Designation'] if mem['type'] == 'rafter' else c_mem['Designation']
         Cu = round(frame.members[mem['name']].max_axial(combo), 3)
@@ -436,6 +473,7 @@ def internal_forces(frame, r_mem, c_mem, data):
             'kly': l,
             'klx': (raf_kx if mem_type == 'rafter' else col_kx)/1000,
             'type': mem_type,
+            'section_type': sec_type,
             'section': t_sec,
             'Cu': Cu,
             'Class': member_class_check(Cu, r_mem if mem['type'] == 'rafter' else c_mem, steel_grade),
@@ -446,10 +484,17 @@ def internal_forces(frame, r_mem, c_mem, data):
             'w2': w2
         })
 
-    for i in internal_loads:
-        print(i)
+    for memb in internal_loads:
+        mem_props = mdb.member_properties(memb['section_type'], memb['section'], md)
+        CSS, OMS, LTB = member_design(mem_props, memb, mat_props[0])
+        member_des.append({
+            'Name': memb['Name'],
+            'CSS': CSS,
+            'OMS': OMS,
+            'LTB': LTB
+        })
 
-    return internal_loads
+    return member_des
 
 def render_model(frame, combo):
     # Render the model
@@ -468,8 +513,6 @@ def main():
 
     frame, combo, member_db, r_section_typ, c_section_typ, best_section = sls_check(preferred_section, r_section_type, c_section_type)
 
-    # uls_output((frame, member_db, r_section_typ, c_section_typ, best_section))
-
     if frame is not None:
         print("Done")
         render_model(frame, combo)
@@ -477,7 +520,4 @@ def main():
         print("Unable to find acceptable sections.")
 
 if __name__ == "__main__":
-    data = import_data('input_data.json')
-    r_len, c_len = get_member_lengths(data)
-    analyze_combination(('I-Sections', '406x178x60', 'I-Sections', '457x191x74', mdb.load_member_database(), data, 53.33, 23.33, r_len, c_len))
-    # main()
+    main()

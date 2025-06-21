@@ -29,7 +29,7 @@
   {"name":"Steel_S275","Fy":275,"E":200,"G":80,"nu":0.3,"rho":7.85e-08}
 ],
 "steel_grade":[
-  {"fy":355,"E":200,"G":80,"nu":0.3,"rho":7.85e-08}
+  {"fy":355,"E":200,"G":77,"nu":0.3,"rho":7.85e-08}
 ],
 "load_cases":[
   {"name":"D_MIN","type":"dead"},
