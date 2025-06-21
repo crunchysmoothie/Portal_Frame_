@@ -9,7 +9,7 @@ def generate_nodes(b_data):
     gable_width = b_data['gable_width']
 
     nodes = []
-    num_vertical = b_data['col_bracing_spacing'] + 2
+    num_vertical = b_data['col_bracing_spacing'] + 1
 
     # Generate nodes for Duo Pitched type
     if b_data["building_roof"] == "Duo Pitched":
@@ -121,12 +121,20 @@ def generate_spring_supports(nodes):
                           {"node": nodes[-1]["name"], "direction": "RZ", "stiffness": 5E6}]
     return rotational_springs
 
+def steel_prop(grade):
+    pro = {
+        "Steel_S355": {"fy": 355, "E": 200, "G": 80, "nu": 0.3, "rho": 7.85e-08},
+        "Steel_S275": {"fy": 275, "E": 200, "G": 80, "nu": 0.3, "rho": 7.85e-08}
+    }
+    return pro[grade]
+
 def update_json_file(json_filename, b_data, wind_data):
     # Generate new node and member data based on input dimensions
     new_nodes = generate_nodes(b_data)
     new_members = generate_members(new_nodes)
     new_supports = generate_supports(new_nodes)
     rotational_springs = generate_spring_supports(new_nodes)
+    steel_props = steel_prop(b_data['steel_grade'])
     wind_input = wind_data
     wind_out()
     for i in b_data:
@@ -145,7 +153,8 @@ def update_json_file(json_filename, b_data, wind_data):
     data["members"] = new_members
     data["supports"] = new_supports
     data["rotational_springs"] = rotational_springs
-    data["wind_data"] = wind_input
+    data["wind_data"] = [wind_input]
+    data["steel_grade"] = [steel_props]
 
     # Convert data to a compact JSON string
     json_str = json.dumps(data, separators=(',', ':'))
@@ -260,6 +269,7 @@ rafter_spacing = 5 * 1000   # Convert to mm
 building_length = 120 * 1000 # Convert to mm
 col_bracing_spacing = 2     # number of braced points per column (1: Lx=Ly = 1.0 L, 2: Lx = L, Ly = 0.5L, etc)
 rafter_bracing_spacing = 4  # number of braced points per rafter (1: Lx=Ly = 1.0 L, 2: Lx = L, Ly = 0.5L, etc)
+steel_grade = 'Steel_S355'  # 'Steel_S355' or 'Steel_S275
 
 building_data = {
     "building_type": building_type,
@@ -271,7 +281,8 @@ building_data = {
     "building_length": building_length,
     "col_bracing_spacing": col_bracing_spacing,
     "rafter_bracing_spacing": rafter_bracing_spacing,
-    "roof_pitch": math.degrees(math.atan((apex_height - eaves_height) / (gable_width / 2)))*1000
+    "roof_pitch": math.degrees(math.atan((apex_height - eaves_height) / (gable_width / 2)))*1000,
+    "steel_grade": steel_grade
 }
 wind_data = {
     "wind": "3s gust",

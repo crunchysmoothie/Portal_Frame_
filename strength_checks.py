@@ -2,8 +2,8 @@ import math
 import member_database as mdb
 import json
 
-def member_class_check(Cu, member_prop):
-    fy = 355
+def member_class_check(Cu, member_prop, grade):
+    fy = grade[0]['fy']
     b, h, tf, tw = member_prop['b'], member_prop['h'], member_prop['tf'], member_prop['tw']
     # Flange Class
     ratio = b / (2 * tf)
@@ -86,18 +86,6 @@ def cross_sectional_strength(args):
 
     return None
 
-def material_props(grade):
-    with open("input_data.json") as f:
-        data = json.load(f)["steel_grades"]  # list[dict]
-
-    for item in data:  # scan the list
-        if grade in item:  # found it
-            return item[grade]
-
-    # fallthrough → not found
-    raise ValueError(f"Unknown steel grade: {grade!r}")
-
-
 member_db = mdb.load_member_database()
 mem_props = mdb.member_properties("I-Sections", '457x191x74', member_db)
 mem = {'Name': 'M1', 'kly': 2.333, 'klx': 8.4, 'type': 'column', 'section': '457x191x74', 'Cu': 30.571, 'Class': 1,
@@ -105,5 +93,5 @@ mem = {'Name': 'M1', 'kly': 2.333, 'klx': 8.4, 'type': 'column', 'section': '457
 max_m = mem['Mx_max']
 top_m = mem['Mx_top']
 bot_m = mem['Mx_bot']
-mat_props = material_props('Steel_S355')
+mat_props = {"fy":355,"E":200,"G":80,"nu":0.3,"rho":7.85e-08}
 section_properties(mem_props, mem, mat_props)
