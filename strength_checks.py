@@ -43,55 +43,133 @@ def section_properties(mb, mem, mat_prop):
     Kly = mem['kly']
     Zx = mb['Zplx'] if cl < 3 else mb['Zex']
     Zy = mb['Zply'] if cl < 3 else mb['Zpy']
-
-    Cr = 0.9 * mb['A'] * fy
-    Cex = math.pi ** 2 * E * Ix / (Klx ** 2)
-    Cey = math.pi ** 2 * E * Iy / (Kly ** 2)
-    Mrx = 0.9 * fy * Zx / 1000
-    Mry = 0.9 * fy * Zy / 1000
-    Mrx_ltb = None
-
-    Mcr = ltb_moment(cl, mem, mb, mat_prop)
     rx = mb['rx']
     ry = mb['ry']
     lamda_x = (Klx * 1000 / rx) * math.sqrt(fy / ((math.pi ** 2) * (E * 10 ** 3)))
     lamda_y = (Kly * 1000 / ry) * math.sqrt(fy / ((math.pi ** 2) * (E * 10 ** 3)))
 
-    nm = ['Cr', 'Cex', 'Cey', 'Mrx', 'Mry', 'Mcr']
-    val = [Cr, Cex, Cey, Mrx, Mry, Mcr]
-    for i in range(len(nm)):
-        print(f'{nm[i]} = {round(val[i], 2)}')
+    Cr = 0.9 * mb['A'] * fy
+    Crx = 0.9 * mb['A'] * fy * (1 + lamda_x ** (2 * 1.34)) ** (-1 / 1.34)
+    Cry = 0.9 * mb['A'] * fy * (1 + lamda_y ** (2 * 1.34)) ** (-1 / 1.34)
+    Cex = math.pi ** 2 * E * Ix / (Klx ** 2)
+    Cey = math.pi ** 2 * E * Iy / (Kly ** 2)
+    Mrx = 0.9 * fy * Zx / 1000
+    Mry = 0.9 * fy * Zy / 1000
+    Mrx_ltb = ltb_moment(mem, mb, mat_prop)
 
-    return Cr, Cex, Cey, Mrx, Mry, Mrx_ltb, lamda_x, lamda_y
+    sec_prop = {
+        'Cr': Cr,
+        'Crx': Crx,
+        'Cry': Cry,
+        'Cex': Cex,
+        'Cey': Cey,
+        'Mrx': Mrx,
+        'Mry': Mry,
+        'Mrx_ltb': Mrx_ltb,
+        'lamda_x': lamda_x,
+        'lamda_y': lamda_y
+    }
 
-def ltb_moment(cl, mem, mem_prop, mat_prop):
+    return sec_prop
+
+def ltb_moment(mem, mem_prop, mat_prop):
     G = mat_prop['G']
     fy = mat_prop['fy']
     E = mat_prop['E']
+    cl = mem['Class']
     w2 = mem['w2']
-    Klx = mem['klx']
+    Kly = mem['kly']
     Iy = mem_prop['Iy']
+    Zplx = mem_prop['Zplx']
+    Zex = mem_prop['Zex']
     Cw = mem_prop['Cw']
     J = mem_prop['J']
 
-    i1 = E * Iy * G * J
-    i2 = (math.pi * E / Klx) ** 2 * Iy * Cw
-    i3 = w2 * math.pi / Klx
-    Mcr = i3 * ((i1 + i2) ** 0.5)
-    print(f'Mcr = {round(Mcr, 2)}')
-    return Mcr
+    i1 = E * 10 **3 * (Iy * 10 ** 6) * G * 10 ** 3 * J * 10 ** 3
+    i2 = ((math.pi * (E * 10 ** 3) / (Kly/10 **3) ) ** 2 * Iy * 10 ** 3 * Cw)
+    i3 = (w2 * math.pi / Kly) / 1000
+    Mcr = i3 * ((i1 + i2) ** 0.5) / 10 ** 6
+    Mp = fy * Zplx / 1000
+    My = fy * Zex / 1000
 
-def cross_sectional_strength(args):
-    Cr, Cex, Cey, Mrx, Mry = args
+    Mi = Mp if cl < 3 else My
 
-    return None
+    if Mcr > 0.67 * Mi:
+        Mr = min(1.15 * 0.9 * Mi * (1 - (0.28 * Mi/Mcr)), 0.9 * Mi)
+    else:
+        Mr = 0.9 * Mcr
 
-member_db = mdb.load_member_database()
-mem_props = mdb.member_properties("I-Sections", '457x191x74', member_db)
-mem = {'Name': 'M1', 'kly': 2.333, 'klx': 8.4, 'type': 'column', 'section': '457x191x74', 'Cu': 30.571, 'Class': 1,
-       'Mx_max': 10.779, 'Mx_top': -7.021, 'Mx_bot': 10.777, 'w1': 1.0, 'w2': 1.1933}
-max_m = mem['Mx_max']
-top_m = mem['Mx_top']
-bot_m = mem['Mx_bot']
-mat_props = {"fy":355,"E":200,"G":80,"nu":0.3,"rho":7.85e-08}
-section_properties(mem_props, mem, mat_props)
+    return Mr
+
+def cross_sectional_strength(mem, sec_props):
+    cl = mem['Class']
+    Cu = mem['Cu']
+    w1 = mem['w1']
+    Mx = abs(mem['Mx_max'])
+    m_fac = 0.85 if cl < 3 else 1.0
+
+    Cr = sec_props['Cr']
+    Cex = sec_props['Cex']
+    Mrx = sec_props['Mrx']
+
+    U1x = max(1, w1/(1-(Cu/Cex)))
+
+    return (Cu/Cr) + m_fac * U1x * Mx / Mrx
+
+def overall_member_strength(mem, sec_props):
+    cl = mem['Class']
+    Cu = mem['Cu']
+    w1 = mem['w1']
+    Mx = abs(mem['Mx_max'])
+
+    lamda_y = sec_props['lamda_y']
+    m_fac = 0.85 if cl < 3 else 1.0
+
+    Cr = sec_props['Crx']
+    Cex = sec_props['Cex']
+    Mrx = sec_props['Mrx']
+
+    U1x = w1/(1-(Cu/Cex))
+
+    return (Cu/Cr) + m_fac * U1x * Mx / Mrx
+
+def lateral_torsional_buckling(mem, sec_props):
+    cl = mem['Class']
+    Cu = mem['Cu']
+    w1 = mem['w1']
+    Mx = abs(mem['Mx_max'])
+
+    Cr = sec_props['Cry']
+    Cex = sec_props['Cex']
+    Mrx = sec_props['Mrx']
+
+    U1x = max(1, w1 / (1 - (Cu / Cex)))
+    m_fac = 0.85 if cl < 3 else 1.0
+
+
+    Check1 = (Cu / Cr) + m_fac * U1x * Mx / Mrx
+    Check2 = Mx / Mrx
+
+    return Check1, Check2
+
+def member_design(mb, mem, mat_prop):
+    sec_props = section_properties(mb, mem, mat_prop)
+    CSS = cross_sectional_strength(mem, sec_props)
+    OMS = overall_member_strength(mem, sec_props)
+    LTB = lateral_torsional_buckling(mem, sec_props)
+
+    return CSS, OMS, LTB
+
+# member_db = mdb.load_member_database()
+# mem_props = mdb.member_properties("I-Sections", '457x191x74', member_db)
+# mem = {'Name': 'M1', 'kly': 3.5, 'klx': 8.4, 'type': 'column', 'section': '457x191x74', 'Cu': 30.571,
+#        'Class': 1, 'Mx_max': 19.68, 'Mx_top': -7.021, 'Mx_bot': 19.68, 'w1': 1.0, 'w2': 2.1628}
+# max_m = mem['Mx_max']
+# top_m = mem['Mx_top']
+# bot_m = mem['Mx_bot']
+# mat_props = {"fy":355,"E":200,"G":77 ,"nu":0.3,"rho":7.85e-08}
+# sec_prop = section_properties(mem_props, mem, mat_props)
+# print(cross_sectional_strength(mem, sec_prop))
+# print(overall_member_strength(mem, sec_prop))
+# print(lateral_torsional_buckling(mem, sec_prop))
+

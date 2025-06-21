@@ -123,8 +123,8 @@ def generate_spring_supports(nodes):
 
 def steel_prop(grade):
     pro = {
-        "Steel_S355": {"fy": 355, "E": 200, "G": 80, "nu": 0.3, "rho": 7.85e-08},
-        "Steel_S275": {"fy": 275, "E": 200, "G": 80, "nu": 0.3, "rho": 7.85e-08}
+        "Steel_S355": {"fy": 355, "E": 200, "G": 77, "nu": 0.3, "rho": 7.85e-08},
+        "Steel_S275": {"fy": 275, "E": 200, "G": 77, "nu": 0.3, "rho": 7.85e-08}
     }
     return pro[grade]
 
