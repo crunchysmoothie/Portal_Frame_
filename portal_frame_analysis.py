@@ -45,6 +45,8 @@ def import_data(file):
                     }
                     for material in data.get('materials', [])}
 
+        steel_grade = data.get('steel_grade', False)
+
         members = data.get('members', [])  # List of member dictionaries
 
         rotational_springs = data.get('rotational_springs', [])  # List of spring dictionaries
@@ -66,7 +68,8 @@ def import_data(file):
             'rotational_springs': rotational_springs,
             'serviceability_load_combinations': serviceability_load_combinations,
             'load_combinations': load_combinations,
-            'geometry_parameters': geometry_parameters
+            'geometry_parameters': geometry_parameters,
+            'steel_grade': steel_grade
         }
 
 def build_model(r_mem, c_mem):
@@ -406,6 +409,7 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
 
 def internal_forces(frame, r_mem, c_mem, data):
     combo = "1.2 DL + 1.6 LL"
+    steel_grade = data['steel_grade']
     fr = data['frame_data'][0]
     rafter_span = fr['gable_width'] / (2 if fr['building_roof'] == "Duo Pitched" else 1)
     col_kx = 1.2 * data['frame_data'][0]['eaves_height']
@@ -434,7 +438,7 @@ def internal_forces(frame, r_mem, c_mem, data):
             'type': mem_type,
             'section': t_sec,
             'Cu': Cu,
-            'Class': member_class_check(Cu, r_mem if mem['type'] == 'rafter' else c_mem),
+            'Class': member_class_check(Cu, r_mem if mem['type'] == 'rafter' else c_mem, steel_grade),
             'Mx_max': Mx_max,
             'Mx_top': Mx_top,
             'Mx_bot': Mx_bot,
