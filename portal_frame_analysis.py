@@ -6,7 +6,11 @@ from Pynite import FEModel3D
 from Pynite.Visualization import Renderer
 from tabulate import tabulate
 import member_database as mdb
-from strength_checks import member_class_check, element_properties, member_design
+from strength_checks import (
+    member_class_check,
+    element_properties,
+    member_design,
+)
 
 num_cores = multiprocessing.cpu_count()
 
@@ -193,9 +197,12 @@ def analyze_combination(args):
     # --- build and analyse FE model ----------------------------------------
     frame = build_model(r_mem, c_mem)
 
-    # add serviceability combos (they’re already defined in *data*)
+    # add serviceability and ultimate combos
     for SLS_combo in data['serviceability_load_combinations']:
         frame.add_load_combo(SLS_combo['name'], SLS_combo['factors'])
+
+    for ULS_combo in data['load_combinations']:
+        frame.add_load_combo(ULS_combo['name'], ULS_combo['factors'])
 
     try:
         frame.analyze(check_statics=False)
@@ -218,6 +225,9 @@ def analyze_combination(args):
 
     if worst_v > v_lim or worst_h > h_lim:
         return None   # fails serviceability
+
+    if not member_design_checks(frame, r_type, r_mem, c_type, c_mem, data, member_db):
+        return None
 
     # --- weight (kN) --------------------------------------------------------
     weight = round(r_mem['m'] * r_total_m + c_mem['m'] * c_total_m, 1)
@@ -495,6 +505,22 @@ def internal_forces(frame, r_type, r_mem, c_type, c_mem, data, combo, md):
         })
 
     return member_des
+
+
+def member_design_checks(frame, r_type, r_mem, c_type, c_mem, data, md):
+    """Return True if all members pass design checks for all ULS combos."""
+    for combo in data['load_combinations']:
+        results = internal_forces(frame, r_type, r_mem, c_type, c_mem,
+                                 data, combo['name'], md)
+        for res in results:
+            if (
+                res['CSS'] > 1
+                or res['OMS'] > 1
+                or res['LTB'][0] > 1
+                or res['LTB'][1] > 1
+            ):
+                return False
+    return True
 
 def render_model(frame, combo):
     # Render the model
