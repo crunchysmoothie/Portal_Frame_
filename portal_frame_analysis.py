@@ -426,7 +426,7 @@ def internal_forces(frame, r_type, r_mem, c_type, c_mem, data, combo, md):
         Mx_max = round(max(frame.members[mem['name']].max_moment('Mz', combo),
                           abs(frame.members[mem['name']].min_moment('Mz', combo)))/1000, 3)
         Mx_top = round(frame.members[mem['name']].moment('Mz', 0, combo)/1000, 3)
-        Mx_bot = round(frame.members[mem['name']].moment('Mz', l * 1000, combo)/1000, 3)
+        Mx_bot = round(frame.members[mem['name']].moment('Mz', l * 999, combo)/1000, 3)
 
         w1, w2 = element_properties(Mx_max, Mx_top, Mx_bot)
 
@@ -526,7 +526,6 @@ def main():
 
 
     if frame is not None:
-        print("Done")
         data = import_data('input_data.json')
         r_mem = mdb.member_properties(r_section_typ, best_section[0], member_db)
         c_mem = mdb.member_properties(c_section_typ, best_section[1], member_db)
