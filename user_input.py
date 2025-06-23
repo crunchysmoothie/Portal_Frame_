@@ -262,11 +262,11 @@ def add_dead_loads(json_filename):
 # Static inputs for eaves, apex, and rafter span (converted to mm)
 building_roof = "Duo Pitched" # "Mono Pitched" or "Duo Pitched"
 building_type = "Normal"    # "Normal" or "Canopy"
-eaves_height = 7 * 1000     # Convert to mm
-apex_height = 11 * 1000      # Convert to mm
-gable_width = 16 * 1000      # Convert to mm
+eaves_height = 2 * 1000     # Convert to mm
+apex_height = 5 * 1000      # Convert to mm
+gable_width = 3 * 1000      # Convert to mm
 rafter_spacing = 5 * 1000   # Convert to mm
-building_length = 120 * 1000 # Convert to mm
+building_length = 10 * 1000 # Convert to mm
 col_bracing_spacing = 2     # number of braced points per column (1: Lx=Ly = 1.0 L, 2: Lx = L, Ly = 0.5L, etc)
 rafter_bracing_spacing = 4  # number of braced points per rafter (1: Lx=Ly = 1.0 L, 2: Lx = L, Ly = 0.5L, etc)
 steel_grade = 'Steel_S355'  # 'Steel_S355' or 'Steel_S275
