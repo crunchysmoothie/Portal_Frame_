@@ -77,7 +77,7 @@ def wind_data_duo_n():
     results_down = []
     results_90 = []
 
-    wind = data['wind_data']
+    wind = data['wind_data'][0]
     bs = calculate_basic_wind_speed(wind['fundamental_basic_wind_speed'], wind['return_period'])
     roughness = calculate_terrain_roughness(wind['apex_height'], wind['terrain_category'])
     peak_pressure = calculate_peak_wind_pressure(wind['topographic_factor'], bs, roughness, wind['altitude'])
@@ -389,7 +389,7 @@ def print_zones(zones):
         print(f"{zone:<5} {fmt(v['0_deg']):<20} {fmt(v['90_deg']):<20}")
 
 def zones_normal():
-    data = import_data('input_data.json')['wind_data']
+    data = import_data('input_data.json')['wind_data'][0]
 
     b_0 = data['building_length']
     b_90 = data['gable_width']
@@ -470,7 +470,7 @@ def zones_normal():
     return zones
 
 def wind_out():
-    data = import_data('input_data.json')['wind_data']
+    data = import_data('input_data.json')['wind_data'][0]
     if data['building_type'] == 'Normal':
         if data['building_roof'] == 'Duo Pitched':
             return wind_data_duo_n()
