@@ -130,7 +130,7 @@ def build_model(r_mem, c_mem):
         material = member['material']
         member_type = member['type'].lower()  # 'rafter' or 'column'
 
-        # Select properties based on member type
+        # Select properties based on member-type
         if member_type == 'rafter':
             frame.add_member(name, i_node, j_node, material, r_mem["Designation"])
 
@@ -162,7 +162,7 @@ def build_model(r_mem, c_mem):
         case = member_load.get('case', None)  # Optional
         frame.add_member_dist_load(member_name, direction, w1, w2, x1, x2, case)
 
-    # Add member self weight (optional, adjust as needed)
+    # Add member self-weight (optional, adjust as needed)
     frame.add_member_self_weight('FY', -1, 'D')  # Example: Adding self-weight in FY direction
 
     # Add rotational springs
@@ -224,7 +224,7 @@ def analyze_combination(args):
                 worst_h, worst_h_combo = dx, cn
 
     if worst_v > v_lim or worst_h > h_lim:
-        return None   # fails serviceability
+        return None   # structure fails serviceability
 
     if not member_design_checks(frame, r_type, r_mem, c_type, c_mem, data, member_db):
         return None
@@ -309,7 +309,7 @@ def directional_search(primary, r_list, c_list, r_section_type, c_section_type,m
 
     return {
         'weight': wt,
-        'frame': best_frame,  # ← now an actual PyNite model
+        'frame': best_frame,  # ← now an actual Pynite model
         'r_name': r_name,
         'c_name': c_name,
         'r_m': r_mem['m'],
@@ -334,8 +334,8 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
 
     data = import_data('input_data.json')
     r_total_m, c_total_m = get_member_lengths(data)
-    vert_limit  = data['frame_data'][0]['gable_width'] / 300
-    horiz_limit = data['frame_data'][0]['eaves_height'] / 300
+    vert_limit  = data['frame_data'][0]['gable_width'] / 175
+    horiz_limit = data['frame_data'][0]['eaves_height'] / 175
 
     # ❶ Search by fixing rafters first, then columns
     best_r = directional_search(
@@ -458,7 +458,6 @@ def internal_forces(frame, r_type, r_mem, c_type, c_mem, data, combo, md):
 
     return member_des
 
-
 def member_design_checks(frame, r_type, r_mem, c_type, c_mem, data, md):
     """Return True if all members pass design checks for all ULS combos."""
     for combo in data['load_combinations']:
@@ -505,7 +504,6 @@ def uls_results(frame, r_type, r_mem, c_type, c_mem, data, md):
             tablefmt='pretty',
         )
     )
-
 
 def render_model(frame, combo):
     # Render the model

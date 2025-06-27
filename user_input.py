@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 import math
 from wind_loads import wind_out
 
@@ -121,6 +122,12 @@ def generate_spring_supports(nodes):
                           {"node": nodes[-1]["name"], "direction": "RZ", "stiffness": 5E6}]
     return rotational_springs
 
+def generate_nodal_loads(nodes):
+    apex_node = nodes[len(nodes) // 2]
+    nodal_loads = [{"node": apex_node["name"], "direction": "FY", "magnitude": -10, "case": "CR"}]
+
+    return nodal_loads
+
 def steel_prop(grade):
     pro = {
         "Steel_S355": {"fy": 355, "E": 200, "G": 77, "nu": 0.3, "rho": 7.85e-08},
@@ -128,49 +135,129 @@ def steel_prop(grade):
     }
     return pro[grade]
 
+def add_materials():
+    materials = [{"name": "Steel_S355", "Fy": 355, "E": 200, "G": 80, "nu": 0.3, "rho": 7.85e-08},
+        {"name": "Steel_S275", "Fy": 275, "E": 200, "G": 80, "nu": 0.3, "rho": 7.85e-08}]
+
+    return materials
+
+def add_load_cases():
+    load_cases = [
+        {"name": "D_MIN", "type": "dead"},
+        {"name": "D_MAX", "type": "dead"},
+        {"name": "L", "type": "live"},
+        {"name": "W0_0.2U", "type": "wind"},
+        {"name": "W0_0.2D", "type": "wind"},
+        {"name": "W0_0.3U", "type": "wind"},
+        {"name": "W0_0.3D", "type": "wind"},
+        {"name": "W90_0.2", "type": "wind"},
+        {"name": "W90_0.3", "type": "wind"}
+    ]
+
+    serviceability_load_combinations = [
+        {"name": "1.1 DL", "factors": {"D": 1.1, "D_MAX": 1.1}},
+        {"name": "1.1 DL + 1.0 LL", "factors": {"D": 1.1, "D_MAX": 1.1, "L": 1.0}},
+        {"name": "0.9 DL + 0.6 W0_0.2U", "factors": {"D": 0.9, "D_MIN": 0.9, "W0_0.2U": 0.6}},
+        {"name": "1.1 DL + 0.3 LL + 0.6 W0_0.2D", "factors": {"D": 1.1, "D_MAX": 1.1, "L": 0.3, "W0_0.2D": 0.6}},
+        {"name": "0.9 DL + 0.6 W0_0.3U", "factors": {"D": 0.9, "D_MIN": 0.9, "W0_0.3U": 0.6}},
+        {"name": "1.1 DL + 0.3 LL + 0.6 W0_0.3D", "factors": {"D": 1.1, "D_MAX": 1.1, "L": 0.3, "W0_0.3D": 0.6}},
+        {"name": "0.9 DL + 0.3 LL + 0.6 W90_0.2", "factors": {"D": 0.9, "D_MIN": 0.9, "L": 0.3, "W90_0.2": 0.6}},
+        {"name": "0.9 DL + 0.3 LL + 0.6 W90_0.3", "factors": {"D": 0.9, "D_MIN": 0.9, "L": 0.3, "W90_0.3": 0.6}}
+    ]
+
+    load_combinations = [
+        {"name": "1.5 DL", "factors": {"D": 1.5}},
+        {"name": "1.2 DL + 1.6 LL", "factors": {"D": 1.2, "L": 1.6}},
+        {"name": "0.9 DL + 0.6 W0_0.2U", "factors": {"D": 0.9, "W0_0.2U": 0.6}},
+        {"name": "1.1 DL + 0.5 LL + 0.6 W0_0.2D", "factors": {"D": 1.1, "L": 0.5, "W0_0.2D": 0.6}},
+        {"name": "0.9 DL + 0.6 W0_0.3U", "factors": {"D": 0.9, "W0_0.3U": 0.6}},
+        {"name": "1.1 DL + 0.5 LL + 0.6 W0_0.3D", "factors": {"D": 1.1, "L": 0.5, "W0_0.3D": 0.6}},
+        {"name": "0.9 DL + 0.6 W90_0.2", "factors": {"D": 1.1, "W90_0.2": 0.6}},
+        {"name": "0.9 DL + 0.6 W90_0.3", "factors": {"D": 1.1, "W90_0.3": 0.6}}
+    ]
+
+    return load_cases, serviceability_load_combinations, load_combinations
+
+def add_SLS():
+    serviceability_load_combinations = [
+        {"name": "1.1 DL", "factors": {"D": 1.1, "D_MAX": 1.1}},
+        {"name": "1.1 DL + 1.0 LL", "factors": {"D": 1.1, "D_MAX": 1.1, "L": 1.0}},
+        {"name": "0.9 DL + 0.6 W0_0.2U", "factors": {"D": 0.9, "D_MIN": 0.9, "W0_0.2U": 0.6}},
+        {"name": "1.1 DL + 0.3 LL + 0.6 W0_0.2D", "factors": {"D": 1.1, "D_MAX": 1.1, "L": 0.3, "W0_0.2D": 0.6}},
+        {"name": "0.9 DL + 0.6 W0_0.3U", "factors": {"D": 0.9, "D_MIN": 0.9, "W0_0.3U": 0.6}},
+        {"name": "1.1 DL + 0.3 LL + 0.6 W0_0.3D", "factors": {"D": 1.1, "D_MAX": 1.1, "L": 0.3, "W0_0.3D": 0.6}},
+        {"name": "0.9 DL + 0.3 LL + 0.6 W90_0.2", "factors": {"D": 0.9, "D_MIN": 0.9, "L": 0.3, "W90_0.2": 0.6}},
+        {"name": "0.9 DL + 0.3 LL + 0.6 W90_0.3", "factors": {"D": 0.9, "D_MIN": 0.9, "L": 0.3, "W90_0.3": 0.6}}
+    ]
+    return serviceability_load_combinations
+
+def add_ULS():
+    load_combinations = [
+        {"name": "1.5 DL", "factors": {"D": 1.5}},
+        {"name": "1.2 DL + 1.6 LL", "factors": {"D": 1.2, "L": 1.6}},
+        {"name": "0.9 DL + 0.6 W0_0.2U", "factors": {"D": 0.9, "W0_0.2U": 0.6}},
+        {"name": "1.1 DL + 0.5 LL + 0.6 W0_0.2D", "factors": {"D": 1.1, "L": 0.5, "W0_0.2D": 0.6}},
+        {"name": "0.9 DL + 0.6 W0_0.3U", "factors": {"D": 0.9, "W0_0.3U": 0.6}},
+        {"name": "1.1 DL + 0.5 LL + 0.6 W0_0.3D", "factors": {"D": 1.1, "L": 0.5, "W0_0.3D": 0.6}},
+        {"name": "0.9 DL + 0.6 W90_0.2", "factors": {"D": 1.1, "W90_0.2": 0.6}},
+        {"name": "0.9 DL + 0.6 W90_0.3", "factors": {"D": 1.1, "W90_0.3": 0.6}}
+    ]
+    return load_combinations
+
+
+def safe_load_json(path: str | Path) -> dict:
+    try:
+        with open(path, 'r') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        # New file or corrupt content → start fresh
+        return {}
+
 def update_json_file(json_filename, b_data, wind_data):
-    # Generate new node and member data based on input dimensions
-    new_nodes = generate_nodes(b_data)
-    new_members = generate_members(new_nodes)
-    new_supports = generate_supports(new_nodes)
-    rotational_springs = generate_spring_supports(new_nodes)
-    steel_props = steel_prop(b_data['steel_grade'])
-    wind_input = wind_data
-    wind_out()
-    for i in b_data:
-        if i in ["eaves_height", "apex_height", "gable_width", "rafter_spacing", "building_length", "roof_pitch"]:
-            wind_input[i] = b_data[i]/1000
-        else:
-            wind_input[i] = b_data[i]
+    json_filename = Path(json_filename)
 
-    # Load existing JSON data
-    with open(json_filename, 'r') as file:
-        data = json.load(file)
+    # --- generate fresh data -------------------------------------------------
+    new_nodes           = generate_nodes(b_data)
+    new_members         = generate_members(new_nodes)
+    new_supports        = generate_supports(new_nodes)
+    rotational_springs  = generate_spring_supports(new_nodes)
+    nodal_loads         = generate_nodal_loads(new_nodes)
+    materials           = add_materials()
+    LC, SLS, ULS        = add_load_cases()
+    steel_props         = steel_prop(b_data['steel_grade'])
 
-    # Update only the "nodes" and "members" sections
-    data["frame_data"] = [b_data]
-    data["nodes"] = new_nodes
-    data["members"] = new_members
-    data["supports"] = new_supports
-    data["rotational_springs"] = rotational_springs
-    data["wind_data"] = [wind_input]
-    data["steel_grade"] = [steel_props]
+    # build wind_input without mutating caller's dict
+    wind_input = wind_data | {k: (v/1000 if k in {
+        "eaves_height","apex_height","gable_width",
+        "rafter_spacing","building_length","roof_pitch"} else v)
+        for k, v in b_data.items()}
 
-    # Convert data to a compact JSON string
-    json_str = json.dumps(data, separators=(',', ':'))
+    # --- load (or initialise) the JSON --------------------------------------
+    data = safe_load_json(json_filename)
 
-    # Insert line breaks between JSON objects
-    formatted_json_str = json_str.replace('},{', '},\n  {')
-    formatted_json_str = formatted_json_str.replace('[{', '[\n  {')
-    formatted_json_str = formatted_json_str.replace('}]', '}\n]')
-    formatted_json_str = formatted_json_str.replace('],', '],\n')
-    formatted_json_str = formatted_json_str.replace(']}', ']\n}')
+    # --- overwrite the sections we care about --------------------------------
+    data.update({
+        "frame_data"        : [b_data],
+        "nodes"             : new_nodes,
+        "members"           : new_members,
+        "supports"          : new_supports,
+        "nodal_loads"       : nodal_loads,
+        "rotational_springs": rotational_springs,
+        "wind_data"         : [wind_input],
+        "steel_grade"       : [steel_props],
+        "materials"         : materials,
+        "load_cases"        : LC,
+        "serviceability_load_combinations" : SLS,
+        "load_combinations" : ULS,
+    })
 
-    # Save the formatted JSON string to a file
-    with open(json_filename, 'w') as json_file:
-        json_file.write(formatted_json_str)
+    # --- write it back, *letting json handle the formatting* -----------------
+    with open(json_filename, "w") as f:
+        json.dump(data, f, indent=2)      # `indent` pretty-prints safely
 
     print(f"Portal frame data saved to {json_filename}")
+    wind_out()
+
 
 def add_wind_member_loads(json_filename):
     """Generate wind loads and append them to the member loads list."""
@@ -225,8 +312,8 @@ def add_dead_loads(json_filename):
     with open(json_filename, 'r') as file:
         data = json.load(file)
 
-    dead_load_max = round(data["frame_data"][0]["rafter_spacing"] / 1000 * -0.2/1000, 5)
-    dead_load_min = round(data["frame_data"][0]["rafter_spacing"] / 1000 * -0.14/1000, 5)
+    dead_load_max = round(data["frame_data"][0]["rafter_spacing"] / 1000 * -0.35/1000, 5)
+    dead_load_min = round(data["frame_data"][0]["rafter_spacing"] / 1000 * -0.25/1000, 5)
 
     for member in data["members"]:
         if member["type"] == "rafter":
@@ -262,12 +349,12 @@ def add_dead_loads(json_filename):
 # Static inputs for eaves, apex, and rafter span (converted to mm)
 building_roof = "Duo Pitched" # "Mono Pitched" or "Duo Pitched"
 building_type = "Normal"    # "Normal" or "Canopy"
-eaves_height = 2 * 1000     # Convert to mm
-apex_height = 5 * 1000      # Convert to mm
-gable_width = 3 * 1000      # Convert to mm
+eaves_height = 7 * 1000     # Convert to mm
+apex_height =  9 * 1000      # Convert to mm
+gable_width = 16 * 1000      # Convert to mm
 rafter_spacing = 5 * 1000   # Convert to mm
-building_length = 10 * 1000 # Convert to mm
-col_bracing_spacing = 2     # number of braced points per column (1: Lx=Ly = 1.0 L, 2: Lx = L, Ly = 0.5L, etc)
+building_length = 80 * 1000 # Convert to mm
+col_bracing_spacing = 1     # number of braced points per column (1: Lx=Ly = 1.0 L, 2: Lx = L, Ly = 0.5L, etc)
 rafter_bracing_spacing = 4  # number of braced points per rafter (1: Lx=Ly = 1.0 L, 2: Lx = L, Ly = 0.5L, etc)
 steel_grade = 'Steel_S355'  # 'Steel_S355' or 'Steel_S275
 
@@ -288,9 +375,9 @@ wind_data = {
     "wind": "3s gust",
     "fundamental_basic_wind_speed": 36,
     "return_period": 50,
-    "terrain_category": "B",
+    "terrain_category": "C",
     "topographic_factor": 1.0,
-    "altitude": 1200
+    "altitude": 1450
 }
 
 # Filename of the existing JSON file
