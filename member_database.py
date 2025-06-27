@@ -15,7 +15,7 @@ def load_member_database(filename='member_database.csv'):
                     except ValueError:
                         pass
 
-            # Check the row index to determine section type
+            # Check the row index to determine section-type
             if index < 44:
                 member_db['I-Sections'][section_name] = row
             else:

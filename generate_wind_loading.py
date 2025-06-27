@@ -104,7 +104,7 @@ def wind_loading(data: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     if data is None:
         data = json.load(open("input_data.json"))
 
-    wd = data["wind_data"]
+    wd = data["wind_data"][0]
 
     if wd.get("building_type") != "Normal" or wd.get("building_roof") != "Duo Pitched":
         raise NotImplementedError("Only Normal Duo Pitched buildings are handled")
