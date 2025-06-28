@@ -269,15 +269,8 @@ def add_wind_member_loads(json_filename):
     loads = wind_loading(data)
     data.setdefault("member_loads", [])
     data["member_loads"] = loads
-    json_str = json.dumps(data, separators=(',', ':'))
-    formatted_json_str = json_str.replace('},{', '},\n  {')
-    formatted_json_str = formatted_json_str.replace('[{', '[\n  {')
-    formatted_json_str = formatted_json_str.replace('}]', '}\n]')
-    formatted_json_str = formatted_json_str.replace('],', '],\n')
-    formatted_json_str = formatted_json_str.replace(']}', ']\n}')
-
     with open(json_filename, 'w') as json_file:
-        json_file.write(formatted_json_str)
+        json.dump(data, json_file, indent=2)
 
 def add_live_loads(json_filename):
     """Generate live loads and append them to the member loads list."""
@@ -297,15 +290,8 @@ def add_live_loads(json_filename):
             }
             data["member_loads"].append(lod)
 
-    json_str = json.dumps(data, separators=(',', ':'))
-    formatted_json_str = json_str.replace('},{', '},\n  {')
-    formatted_json_str = formatted_json_str.replace('[{', '[\n  {')
-    formatted_json_str = formatted_json_str.replace('}]', '}\n]')
-    formatted_json_str = formatted_json_str.replace('],', '],\n')
-    formatted_json_str = formatted_json_str.replace(']}', ']\n}')
-
     with open(json_filename, 'w') as json_file:
-        json_file.write(formatted_json_str)
+        json.dump(data, json_file, indent=2)
 
 def add_dead_loads(json_filename):
     """Generate live loads and append them to the member loads list."""
@@ -335,15 +321,8 @@ def add_dead_loads(json_filename):
             }
             data["member_loads"].append(d_min)
 
-    json_str = json.dumps(data, separators=(',', ':'))
-    formatted_json_str = json_str.replace('},{', '},\n  {')
-    formatted_json_str = formatted_json_str.replace('[{', '[\n  {')
-    formatted_json_str = formatted_json_str.replace('}]', '}\n]')
-    formatted_json_str = formatted_json_str.replace('],', '],\n')
-    formatted_json_str = formatted_json_str.replace(']}', ']\n}')
-
     with open(json_filename, 'w') as json_file:
-        json_file.write(formatted_json_str)
+        json.dump(data, json_file, indent=2)
 
 
 # Static inputs for eaves, apex, and rafter span (converted to mm)
