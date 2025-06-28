@@ -204,7 +204,6 @@ def add_ULS():
     ]
     return load_combinations
 
-
 def safe_load_json(path: str | Path) -> dict:
     try:
         with open(path, 'r') as f:
@@ -257,7 +256,6 @@ def update_json_file(json_filename, b_data, wind_data):
 
     print(f"Portal frame data saved to {json_filename}")
     wind_out()
-
 
 def add_wind_member_loads(json_filename):
     """Generate wind loads and append them to the member loads list."""
@@ -324,7 +322,6 @@ def add_dead_loads(json_filename):
     with open(json_filename, 'w') as json_file:
         json.dump(data, json_file, indent=2)
 
-
 def main() -> None:
     """Generate the default portal-frame input JSON and associated loads."""
 
@@ -373,7 +370,6 @@ def main() -> None:
     add_wind_member_loads(json_filename)
     add_live_loads(json_filename)
     add_dead_loads(json_filename)
-
 
 if __name__ == "__main__":
     main()
