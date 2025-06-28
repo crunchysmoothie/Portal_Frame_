@@ -1,4 +1,3 @@
-import json
 import time
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -11,72 +10,15 @@ from strength_checks import (
     element_properties,
     member_design,
 )
+from frame_model import load_portal_frame, PortalFrame
 
 num_cores = multiprocessing.cpu_count()
 
-def import_data(file):
-    """
-    Imports structural data from a JSON file and structures it into dictionaries and lists.
-    """
-    with open(file) as f:
-        data = json.load(f)
+def import_data(file: str) -> PortalFrame:
+    """Load ``file`` and return a :class:`PortalFrame` instance."""
+    return load_portal_frame(file)
 
-        frame_data = data.get('frame_data', {})
-
-        # Initialize dictionaries for the imported data
-        nodes = {node['name']: {'x': node['x'], 'y': node['y'], 'z': node['z']}
-                 for node in data.get('nodes', [])}
-
-        supports = {support['node']: {
-                        'DX': support.get('DX', False),
-                        'DY': support.get('DY', False),
-                        'DZ': support.get('DZ', False),
-                        'RX': support.get('RX', False),
-                        'RY': support.get('RY', False),
-                        'RZ': support.get('RZ', False)
-                    }
-                    for support in data.get('supports', [])}
-
-        node_loads = data.get('nodal_loads', [])  # List of nodal load dictionaries
-
-        member_loads = data.get('member_loads', [])  # List of member load dictionaries
-
-        materials = {material['name']: {
-                        'E': material['E'],
-                        'G': material['G'],
-                        'nu': material['nu'],
-                        'rho': material['rho']
-                    }
-                    for material in data.get('materials', [])}
-
-        steel_grade = data.get('steel_grade', False)
-
-        members = data.get('members', [])  # List of member dictionaries
-
-        rotational_springs = data.get('rotational_springs', [])  # List of spring dictionaries
-
-        serviceability_load_combinations = data.get('serviceability_load_combinations', [])  # List of load combination dictionaries
-
-        load_combinations = data.get('load_combinations', [])  # List of load combination dictionaries
-
-        geometry_parameters = data.get('geometry_parameters', {})  # Geometry parameters dictionary
-
-        return {
-            'frame_data': frame_data,
-            'nodes': nodes,
-            'supports': supports,
-            'nodal_loads': node_loads,
-            'member_loads': member_loads,
-            'materials': materials,
-            'members': members,
-            'rotational_springs': rotational_springs,
-            'serviceability_load_combinations': serviceability_load_combinations,
-            'load_combinations': load_combinations,
-            'geometry_parameters': geometry_parameters,
-            'steel_grade': steel_grade
-        }
-
-def build_model(r_mem, c_mem):
+def build_model(r_mem, c_mem, data: PortalFrame):
     """
     Builds and returns the FE model based on the imported JSON data.
     """
@@ -94,41 +36,34 @@ def build_model(r_mem, c_mem):
     except (NameError, AttributeError):
         pass
 
-    # Import data
-    data = import_data('input_data.json')
 
     # Define materials
-    for name, props in data['materials'].items():
-        E = props['E']
-        G = props['G']
-        nu = props['nu']
-        rho = props['rho']
-        frame.add_material(name, E, G, nu, rho)
+    for name, props in data.materials.items():
+        frame.add_material(name, props['E'], props['G'], props['nu'], props['rho'])
 
     # Define nodes
-    for name, coords in data['nodes'].items():
-        x = coords['x']
-        y = coords['y']
-        z = coords['z']
-        frame.add_node(name, x, y, z)
+    for name, node in data.nodes.items():
+        frame.add_node(name, node.x, node.y, node.z)
 
     # Define supports
-    for node, support in data['supports'].items():
-        DX = support.get('DX', False)
-        DY = support.get('DY', False)
-        DZ = support.get('DZ', False)
-        RX = support.get('RX', False)
-        RY = support.get('RY', False)
-        RZ = support.get('RZ', False)
-        frame.def_support(node, DX, DY, DZ, RX, RY, RZ)
+    for node, support in data.supports.items():
+        frame.def_support(
+            node,
+            support.get('DX', False),
+            support.get('DY', False),
+            support.get('DZ', False),
+            support.get('RX', False),
+            support.get('RY', False),
+            support.get('RZ', False),
+        )
 
     # Define members
-    for member in data['members']:
-        name = member['name']
-        i_node = member['i_node']
-        j_node = member['j_node']
-        material = member['material']
-        member_type = member['type'].lower()  # 'rafter' or 'column'
+    for member in data.members:
+        name = member.name
+        i_node = member.i_node
+        j_node = member.j_node
+        material = member.material
+        member_type = member.type.lower()
 
         # Select properties based on member-type
         if member_type == 'rafter':
@@ -140,33 +75,28 @@ def build_model(r_mem, c_mem):
             raise ValueError(f"Invalid member type '{member['type']}' for member '{name}'")
 
     # Add nodal loads
-    for node_load in data['nodal_loads']:
-        node = node_load['node']
-        direction = node_load['direction']
-        magnitude = node_load['magnitude']
-        case = node_load.get('case', None)  # Optional
-        frame.add_node_load(node, direction, magnitude, case)
+    for node in data.nodes.values():
+        for load in node.loads:
+            frame.add_node_load(node.name, load.direction, load.magnitude, load.case)
 
     # Add member distributed loads
-    for member_load in data['member_loads']:
-        member_name = member_load['member']
-        direction = member_load['direction']
-        w1 = member_load['w1']
-        w2 = member_load['w2']
-        x1 = None
-        x2 = None
-        if 'x1' in member_load:
-            x1 = member_load['x1']
-        if 'x2' in member_load:
-            x2 = member_load['x2']
-        case = member_load.get('case', None)  # Optional
-        frame.add_member_dist_load(member_name, direction, w1, w2, x1, x2, case)
+    for m in data.members:
+        for load in m.loads:
+            frame.add_member_dist_load(
+                m.name,
+                load.direction,
+                load.w1,
+                load.w2,
+                load.x1,
+                load.x2,
+                load.case,
+            )
 
     # Add member self-weight (optional, adjust as needed)
     frame.add_member_self_weight('FY', -1, 'D')  # Example: Adding self-weight in FY direction
 
     # Add rotational springs
-    for spring in data['rotational_springs']:
+    for spring in data.rotational_springs:
         node = spring['node']
         direction = spring['direction']
         stiffness = spring['stiffness']
@@ -195,13 +125,13 @@ def analyze_combination(args):
         return None
 
     # --- build and analyse FE model ----------------------------------------
-    frame = build_model(r_mem, c_mem)
+    frame = build_model(r_mem, c_mem, data)
 
     # add serviceability and ultimate combos
-    for SLS_combo in data['serviceability_load_combinations']:
+    for SLS_combo in data.serviceability_load_combinations:
         frame.add_load_combo(SLS_combo['name'], SLS_combo['factors'])
 
-    for ULS_combo in data['load_combinations']:
+    for ULS_combo in data.load_combinations:
         frame.add_load_combo(ULS_combo['name'], ULS_combo['factors'])
 
     try:
@@ -213,7 +143,7 @@ def analyze_combination(args):
     worst_v = worst_h = 0.0
     worst_v_combo = worst_h_combo = ""
 
-    for combo in data['serviceability_load_combinations']:
+    for combo in data.serviceability_load_combinations:
         cn = combo['name']
         for nd in frame.nodes.values():
             dx = abs(nd.DX[cn])
@@ -240,19 +170,21 @@ def analyze_combination(args):
             worst_h,         # 5
             worst_h_combo)   # 6
 
-def get_member_lengths(data):
-    """Return (Σ rafter_len [m], Σ column_len [m]) from input_data.json."""
-    r_len = 0
-    c_len = 0
-    for member in data['members']:
-        if member['type'] == 'rafter':
-            r_len += member['length']
-        if member['type'] == 'column':
-            c_len += member['length']
+def get_member_lengths(data: PortalFrame):
+    """Return total rafter and column lengths in metres."""
+    r_len = 0.0
+    c_len = 0.0
+    for member in data.members:
+        if member.type == 'rafter':
+            r_len += member.length
+        if member.type == 'column':
+            c_len += member.length
 
     return r_len, c_len
 
-def directional_search(primary, r_list, c_list, r_section_type, c_section_type,member_db, data,r_total_m, c_total_m, vert_limit, horiz_limit, num_core):
+def directional_search(primary, r_list, c_list, r_section_type, c_section_type,
+                       member_db, data: PortalFrame, r_total_m, c_total_m,
+                       vert_limit, horiz_limit, num_core):
 
     # Decide which list is the outer loop
     if primary == 'column':
@@ -298,12 +230,12 @@ def directional_search(primary, r_list, c_list, r_section_type, c_section_type,m
     # --- rebuild the FE model for the best pair ------------------------
     r_mem = mdb.member_properties(r_section_type, r_name, member_db)
     c_mem = mdb.member_properties(c_section_type, c_name, member_db)
-    best_frame = build_model(r_mem, c_mem)
+    best_frame = build_model(r_mem, c_mem, data)
 
-    for combo in data['serviceability_load_combinations']:
+    for combo in data.serviceability_load_combinations:
         best_frame.add_load_combo(combo['name'], combo['factors'])
 
-    for combo in data['load_combinations']:  # e.g. '1.1 DL + 1.0 LL'
+    for combo in data.load_combinations:  # e.g. '1.1 DL + 1.0 LL'
         best_frame.add_load_combo(combo['name'], combo['factors'])
 
     best_frame.analyze(check_statics=False)
@@ -335,8 +267,8 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
 
     data = import_data('input_data.json')
     r_total_m, c_total_m = get_member_lengths(data)
-    vert_limit  = data['frame_data'][0]['gable_width'] / 175
-    horiz_limit = data['frame_data'][0]['eaves_height'] / 175
+    vert_limit = data.frame_data[0]['gable_width'] / 175
+    horiz_limit = data.frame_data[0]['eaves_height'] / 175
 
     # ❶ Search by fixing rafters first, then columns
     best_r = directional_search(
@@ -378,7 +310,7 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
 
     # --- Output the worst deflections for each SLS load case ---------------------
     table_data = []
-    for combo in data['serviceability_load_combinations']:
+    for combo in data.serviceability_load_combinations:
         cn = combo['name']
         worst_dx = 0.0
         worst_dx_node = ''
@@ -408,38 +340,38 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
 
     return best['frame'], best['dx_comb'], member_db, r_section_type, c_section_type, (best['r_name'], best['c_name'])
 
-def internal_forces(frame, r_type, r_mem, c_type, c_mem, data, combo, md):
-    steel_grade = data['steel_grade']
-    fr = data['frame_data'][0]
+def internal_forces(frame, r_type, r_mem, c_type, c_mem, data: PortalFrame, combo, md):
+    steel_grade = data.steel_grade
+    fr = data.frame_data[0]
     rafter_span = fr['gable_width'] / (2 if fr['building_roof'] == "Duo Pitched" else 1)
-    col_kx = 1.2 * data['frame_data'][0]['eaves_height']
+    col_kx = 1.2 * data.frame_data[0]['eaves_height']
     raf_kx = rafter_span
     internal_loads = []
     member_des = []
-    mat_props = data['steel_grade']
+    mat_props = data.steel_grade
 
-    for mem in data['members']:
-        l = mem['length']
-        sec_type = r_type if mem['type'] == "rafter" else c_type
-        mem_type = mem['type']
-        t_sec = r_mem['Designation'] if mem['type'] == 'rafter' else c_mem['Designation']
-        Cu = round(frame.members[mem['name']].max_axial(combo), 3)
-        Mx_max = round(max(frame.members[mem['name']].max_moment('Mz', combo),
-                          abs(frame.members[mem['name']].min_moment('Mz', combo)))/1000, 3)
-        Mx_top = round(frame.members[mem['name']].moment('Mz', 0, combo)/1000, 3)
-        Mx_bot = round(frame.members[mem['name']].moment('Mz', l * 999, combo)/1000, 3)
+    for mem in data.members:
+        l = mem.length
+        sec_type = r_type if mem.type == "rafter" else c_type
+        mem_type = mem.type
+        t_sec = r_mem['Designation'] if mem.type == 'rafter' else c_mem['Designation']
+        Cu = round(frame.members[mem.name].max_axial(combo), 3)
+        Mx_max = round(max(frame.members[mem.name].max_moment('Mz', combo),
+                          abs(frame.members[mem.name].min_moment('Mz', combo)))/1000, 3)
+        Mx_top = round(frame.members[mem.name].moment('Mz', 0, combo)/1000, 3)
+        Mx_bot = round(frame.members[mem.name].moment('Mz', l * 999, combo)/1000, 3)
 
         w1, w2 = element_properties(Mx_max, Mx_top, Mx_bot)
 
         internal_loads.append({
-            'Name': mem['name'],
+            'Name': mem.name,
             'kly': l,
             'klx': (raf_kx if mem_type == 'rafter' else col_kx)/1000,
             'type': mem_type,
             'section_type': sec_type,
             'section': t_sec,
             'Cu': Cu,
-            'Class': member_class_check(Cu, r_mem if mem['type'] == 'rafter' else c_mem, steel_grade),
+            'Class': member_class_check(Cu, r_mem if mem.type == 'rafter' else c_mem, steel_grade),
             'Mx_max': Mx_max,
             'Mx_top': Mx_top,
             'Mx_bot': Mx_bot,
@@ -461,7 +393,7 @@ def internal_forces(frame, r_type, r_mem, c_type, c_mem, data, combo, md):
 
 def member_design_checks(frame, r_type, r_mem, c_type, c_mem, data, md):
     """Return True if all members pass design checks for all ULS combos."""
-    for combo in data['load_combinations']:
+    for combo in data.load_combinations:
         results = internal_forces(frame, r_type, r_mem, c_type, c_mem,
                                  data, combo['name'], md)
         for res in results:
@@ -477,7 +409,7 @@ def member_design_checks(frame, r_type, r_mem, c_type, c_mem, data, md):
 def uls_results(frame, r_type, r_mem, c_type, c_mem, data, md):
     """Print ULS design ratios for each member and load combination."""
     table = []
-    for combo in data['load_combinations']:
+    for combo in data.load_combinations:
         results = internal_forces(
             frame, r_type, r_mem, c_type, c_mem, data, combo['name'], md
         )
