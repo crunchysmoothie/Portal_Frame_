@@ -1,6 +1,6 @@
-import json
 import math
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Union
+from frame_model import PortalFrame, load_portal_frame
 
 
 def _get_nodes(data: Dict[str, Any]) -> Dict[str, Dict[str, float]]:
@@ -100,19 +100,39 @@ def _process_90deg(zones: List[Dict[str, Any]], left_cols: List[Dict[str, Any]],
         _distribute(roof_len, rafters, zd["H"][key], case, loads)
         _distribute(zd["A"]["Length"] * 1000, right_cols, zd["A"][key], case, loads)
  
-def wind_loading(data: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+def wind_loading(data: Optional[Union[PortalFrame, Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
     if data is None:
-        data = json.load(open("input_data.json"))
+        data = load_portal_frame("input_data.json")
 
-    wd = data["wind_data"][0]
+    if isinstance(data, PortalFrame):
+        nodes = {name: {"x": n.x, "y": n.y, "z": n.z} for name, n in data.nodes.items()}
+        gable_width = data.frame_data[0]["gable_width"]
+        members = [{
+            "name": m.name,
+            "i_node": m.i_node,
+            "j_node": m.j_node,
+            "type": m.type,
+            "length": m.length,
+        } for m in data.members]
+        wind_data = data.wind_data[0]
+        zones_0u = data.wind_zones_0U
+        zones_0d = data.wind_zones_0D
+        zones_90 = data.wind_zones_90
+    else:
+        nodes = _get_nodes(data)
+        gable_width = data["frame_data"][0]["gable_width"]
+        members = data["members"]
+        wind_data = data["wind_data"][0]
+        zones_0u = data["wind_zones_0U"]
+        zones_0d = data["wind_zones_0D"]
+        zones_90 = data["wind_zones_90"]
+
+    wd = wind_data
 
     if wd.get("building_type") != "Normal" or wd.get("building_roof") != "Duo Pitched":
         raise NotImplementedError("Only Normal Duo Pitched buildings are handled")
 
-    nodes = _get_nodes(data)
-    gable_width = data["frame_data"][0]["gable_width"]
-
-    members = data["members"]
+    # ``nodes`` and ``members`` derived above depending on input type
     left_cols = _sort_columns(members, nodes, 0)
     right_cols = _sort_columns(members, nodes, gable_width)
     rafters = _sort_rafters(members, nodes)
@@ -124,9 +144,9 @@ def wind_loading(data: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
 
     loads: List[Dict[str, Any]] = []
 
-    _process_0deg(data["wind_zones_0U"], left_cols, rafters, right_cols, pitch,"W0_0.2U", "W0_0.3U", loads)
-    _process_0deg(data["wind_zones_0D"], left_cols, rafters, right_cols, pitch,"W0_0.2D", "W0_0.3D", loads)
-    _process_90deg(data["wind_zones_90"], left_cols, rafters, right_cols,"W90_0.2", "W90_0.3", loads)
+    _process_0deg(zones_0u, left_cols, rafters, right_cols, pitch, "W0_0.2U", "W0_0.3U", loads)
+    _process_0deg(zones_0d, left_cols, rafters, right_cols, pitch, "W0_0.2D", "W0_0.3D", loads)
+    _process_90deg(zones_90, left_cols, rafters, right_cols, "W90_0.2", "W90_0.3", loads)
 
     return loads
 
