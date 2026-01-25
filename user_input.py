@@ -326,13 +326,13 @@ def main() -> None:
     """Generate the default portal-frame input JSON and associated loads."""
 
     # Static inputs for eaves, apex, and rafter span (converted to mm)
-    building_roof = "Duo Pitched"  # "Mono Pitched" or "Duo Pitched"
+    building_roof = "Mono Pitched"  # "Mono Pitched" or "Duo Pitched"
     building_type = "Normal"       # "Normal" or "Canopy"
-    eaves_height = 7 * 1000        # Convert to mm
+    eaves_height = 6 * 1000        # Convert to mm
     apex_height = 9 * 1000         # Convert to mm
-    gable_width = 16 * 1000        # Convert to mm
-    rafter_spacing = 5 * 1000      # Convert to mm
-    building_length = 80 * 1000    # Convert to mm
+    gable_width = 20 * 1000        # Convert to mm
+    rafter_spacing = 6 * 1000      # Convert to mm
+    building_length = 84 * 1000    # Convert to mm
     col_bracing_spacing = 1        # number of braced points per column
     rafter_bracing_spacing = 4     # number of braced points per rafter
     steel_grade = "Steel_S355"     # "Steel_S355" or "Steel_S275"
