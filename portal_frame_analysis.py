@@ -506,14 +506,30 @@ def uls_results(frame, r_type, r_mem, c_type, c_mem, data, md):
     )
 
 def render_model(frame, combo):
-    # Render the model
-    rndr = Renderer(frame)
-    rndr.annotation_size = 80
-    rndr.render_loads = True
-    rndr.deformed_shape = True
-    rndr.deformed_scale = 20
-    rndr.combo_name = combo  # Adjust as necessary
-    rndr.render_model()
+    """Render the analysed model.
+
+    PyNite's load-rendering can fail for zero-length visual load arrows
+    (OverflowError in Visualization.py). If that happens, retry without
+    rendering loads so the model/deformed shape is still viewable.
+    """
+
+    def _render(show_loads):
+        rndr = Renderer(frame)
+        rndr.annotation_size = 80
+        rndr.render_loads = show_loads
+        rndr.deformed_shape = True
+        rndr.deformed_scale = 20
+        rndr.combo_name = combo
+        rndr.render_model()
+
+    try:
+        _render(show_loads=True)
+    except OverflowError:
+        print(
+            "Warning: Skipping load glyph rendering due to a PyNite "
+            "visualization overflow for (near) zero-length load arrows."
+        )
+        _render(show_loads=False)
 
 def main():
     preferred_section = 'Yes'      # or 'No', based on user preference
