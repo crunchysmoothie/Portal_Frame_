@@ -204,7 +204,6 @@ def add_ULS():
     ]
     return load_combinations
 
-
 def safe_load_json(path: str | Path) -> dict:
     try:
         with open(path, 'r') as f:
@@ -258,7 +257,6 @@ def update_json_file(json_filename, b_data, wind_data):
     print(f"Portal frame data saved to {json_filename}")
     wind_out()
 
-
 def add_wind_member_loads(json_filename):
     """Generate wind loads and append them to the member loads list."""
     from generate_wind_loading import wind_loading
@@ -269,15 +267,8 @@ def add_wind_member_loads(json_filename):
     loads = wind_loading(data)
     data.setdefault("member_loads", [])
     data["member_loads"] = loads
-    json_str = json.dumps(data, separators=(',', ':'))
-    formatted_json_str = json_str.replace('},{', '},\n  {')
-    formatted_json_str = formatted_json_str.replace('[{', '[\n  {')
-    formatted_json_str = formatted_json_str.replace('}]', '}\n]')
-    formatted_json_str = formatted_json_str.replace('],', '],\n')
-    formatted_json_str = formatted_json_str.replace(']}', ']\n}')
-
     with open(json_filename, 'w') as json_file:
-        json_file.write(formatted_json_str)
+        json.dump(data, json_file, indent=2)
 
 def add_live_loads(json_filename):
     """Generate live loads and append them to the member loads list."""
@@ -297,15 +288,8 @@ def add_live_loads(json_filename):
             }
             data["member_loads"].append(lod)
 
-    json_str = json.dumps(data, separators=(',', ':'))
-    formatted_json_str = json_str.replace('},{', '},\n  {')
-    formatted_json_str = formatted_json_str.replace('[{', '[\n  {')
-    formatted_json_str = formatted_json_str.replace('}]', '}\n]')
-    formatted_json_str = formatted_json_str.replace('],', '],\n')
-    formatted_json_str = formatted_json_str.replace(']}', ']\n}')
-
     with open(json_filename, 'w') as json_file:
-        json_file.write(formatted_json_str)
+        json.dump(data, json_file, indent=2)
 
 def add_dead_loads(json_filename):
     """Generate live loads and append them to the member loads list."""
@@ -335,62 +319,57 @@ def add_dead_loads(json_filename):
             }
             data["member_loads"].append(d_min)
 
-    json_str = json.dumps(data, separators=(',', ':'))
-    formatted_json_str = json_str.replace('},{', '},\n  {')
-    formatted_json_str = formatted_json_str.replace('[{', '[\n  {')
-    formatted_json_str = formatted_json_str.replace('}]', '}\n]')
-    formatted_json_str = formatted_json_str.replace('],', '],\n')
-    formatted_json_str = formatted_json_str.replace(']}', ']\n}')
-
     with open(json_filename, 'w') as json_file:
-        json_file.write(formatted_json_str)
+        json.dump(data, json_file, indent=2)
 
+def main() -> None:
+    """Generate the default portal-frame input JSON and associated loads."""
 
-# Static inputs for eaves, apex, and rafter span (converted to mm)
-building_roof = "Duo Pitched" # "Mono Pitched" or "Duo Pitched"
-building_type = "Normal"    # "Normal" or "Canopy"
-eaves_height = 7 * 1000     # Convert to mm
-apex_height =  9 * 1000      # Convert to mm
-gable_width = 16 * 1000      # Convert to mm
-rafter_spacing = 5 * 1000   # Convert to mm
-building_length = 80 * 1000 # Convert to mm
-col_bracing_spacing = 1     # number of braced points per column (1: Lx=Ly = 1.0 L, 2: Lx = L, Ly = 0.5L, etc)
-rafter_bracing_spacing = 4  # number of braced points per rafter (1: Lx=Ly = 1.0 L, 2: Lx = L, Ly = 0.5L, etc)
-steel_grade = 'Steel_S355'  # 'Steel_S355' or 'Steel_S275
+    # Static inputs for eaves, apex, and rafter span (converted to mm)
+    building_roof = "Mono Pitched"  # "Mono Pitched" or "Duo Pitched"
+    building_type = "Normal"       # "Normal" or "Canopy"
+    eaves_height = 6 * 1000        # Convert to mm
+    apex_height = 9 * 1000         # Convert to mm
+    gable_width = 20 * 1000        # Convert to mm
+    rafter_spacing = 6 * 1000      # Convert to mm
+    building_length = 84 * 1000    # Convert to mm
+    col_bracing_spacing = 1        # number of braced points per column
+    rafter_bracing_spacing = 4     # number of braced points per rafter
+    steel_grade = "Steel_S355"     # "Steel_S355" or "Steel_S275"
 
-building_data = {
-    "building_type": building_type,
-    "building_roof": building_roof,
-    "eaves_height": eaves_height,
-    "apex_height": apex_height,
-    "gable_width": gable_width,
-    "rafter_spacing": rafter_spacing,
-    "building_length": building_length,
-    "col_bracing_spacing": col_bracing_spacing,
-    "rafter_bracing_spacing": rafter_bracing_spacing,
-    "roof_pitch": math.degrees(math.atan((apex_height - eaves_height) / (gable_width / 2)))*1000,
-    "steel_grade": steel_grade
-}
-wind_data = {
-    "wind": "3s gust",
-    "fundamental_basic_wind_speed": 36,
-    "return_period": 50,
-    "terrain_category": "C",
-    "topographic_factor": 1.0,
-    "altitude": 1450
-}
+    building_data = {
+        "building_type": building_type,
+        "building_roof": building_roof,
+        "eaves_height": eaves_height,
+        "apex_height": apex_height,
+        "gable_width": gable_width,
+        "rafter_spacing": rafter_spacing,
+        "building_length": building_length,
+        "col_bracing_spacing": col_bracing_spacing,
+        "rafter_bracing_spacing": rafter_bracing_spacing,
+        "roof_pitch": math.degrees(
+            math.atan((apex_height - eaves_height) / (gable_width / 2))
+        ) * 1000,
+        "steel_grade": steel_grade,
+    }
 
-# Filename of the existing JSON file
-json_filename = 'input_data.json'
+    wind_data = {
+        "wind": "3s gust",
+        "fundamental_basic_wind_speed": 36,
+        "return_period": 50,
+        "terrain_category": "C",
+        "topographic_factor": 1.0,
+        "altitude": 1450,
+    }
 
-# Call the function to update the nodes and members in the JSON file
-update_json_file(json_filename,
-                 building_data,
-                 wind_data)
+    # Filename of the existing JSON file
+    json_filename = "input_data.json"
 
-# Append wind-induced member loads
-add_wind_member_loads(json_filename)
+    # Generate the input file and associated loads
+    update_json_file(json_filename, building_data, wind_data)
+    add_wind_member_loads(json_filename)
+    add_live_loads(json_filename)
+    add_dead_loads(json_filename)
 
-add_live_loads(json_filename)
-
-add_dead_loads(json_filename)
+if __name__ == "__main__":
+    main()

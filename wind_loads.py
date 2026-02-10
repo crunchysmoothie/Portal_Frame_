@@ -8,6 +8,12 @@ def import_data(file):
         data = json.load(f)
         return data
 
+def normalize_wind_data(data):
+    wind = data.get("wind_data", {})
+    if isinstance(wind, list):
+        return wind[0] if wind else {}
+    return wind
+
 def calculate_basic_wind_speed(fbs, return_period):
     if return_period == 0: return 0
     numerator = 1 - 0.2 * math.log(-math.log(1 - (1 / return_period)))
@@ -263,7 +269,7 @@ def wind_data_mono_n():
     results_up = []
     results_down = []
 
-    wind = data['wind_data']
+    wind = normalize_wind_data(data)
     bs = calculate_basic_wind_speed(wind['fundamental_basic_wind_speed'], wind['return_period'])
     roughness = calculate_terrain_roughness(wind['apex_height'], wind['terrain_category'])
     peak_pressure = calculate_peak_wind_pressure(wind['topographic_factor'], bs, roughness, wind['altitude'])
