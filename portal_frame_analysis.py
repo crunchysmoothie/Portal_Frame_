@@ -1,6 +1,8 @@
 import time
 import multiprocessing
+import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from scipy.sparse.linalg import MatrixRankWarning
 from Pynite import FEModel3D
 from Pynite.Visualization import Renderer
 from tabulate import tabulate
@@ -13,6 +15,15 @@ from strength_checks import (
 from frame_model import load_portal_frame, PortalFrame
 
 num_cores = multiprocessing.cpu_count()
+
+
+def _is_instability_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return (
+        "singular" in msg
+        or "unstable" in msg
+        or "rigid body motion" in msg
+    )
 
 def import_data(file: str) -> PortalFrame:
     """Load ``file`` and return a :class:`PortalFrame` instance."""
@@ -82,6 +93,10 @@ def build_model(r_mem, c_mem, data: PortalFrame):
     # Add member distributed loads
     for m in data.members:
         for load in m.loads:
+            # PyNite visualization fails on zero-magnitude distributed loads.
+            # They are analytically irrelevant, so skip them.
+            if abs(load.w1) < 1e-12 and abs(load.w2) < 1e-12:
+                continue
             frame.add_member_dist_load(
                 m.name,
                 load.direction,
@@ -135,9 +150,15 @@ def analyze_combination(args):
         frame.add_load_combo(ULS_combo['name'], ULS_combo['factors'])
 
     try:
-        frame.analyze(check_statics=False)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=MatrixRankWarning)
+            frame.analyze(check_statics=False)
     except (ValueError, RuntimeError):
         return None
+    except Exception as exc:
+        if _is_instability_error(exc):
+            return None
+        raise
 
     # --- deflection checks --------------------------------------------------
     worst_v = worst_h = 0.0
@@ -238,7 +259,9 @@ def directional_search(primary, r_list, c_list, r_section_type, c_section_type,
     for combo in data.load_combinations:  # e.g. '1.1 DL + 1.0 LL'
         best_frame.add_load_combo(combo['name'], combo['factors'])
 
-    best_frame.analyze(check_statics=False)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=MatrixRankWarning)
+        best_frame.analyze(check_statics=False)
 
     return {
         'weight': wt,
@@ -439,30 +462,78 @@ def uls_results(frame, r_type, r_mem, c_type, c_mem, data, md):
     )
 
 def render_model(frame, combo):
-    """Render the analysed model.
+    """Render the analysed model with nodal displacement labels and loads."""
 
-    PyNite's load-rendering can fail for zero-length visual load arrows
-    (OverflowError in Visualization.py). If that happens, retry without
-    rendering loads so the model/deformed shape is still viewable.
-    """
+    def _get_disp(comp, combo_name):
+        try:
+            return float(comp.get(combo_name, 0.0))
+        except AttributeError:
+            try:
+                return float(comp[combo_name])
+            except Exception:
+                return 0.0
 
-    def _render(show_loads):
+    original_node_names = {key: node.name for key, node in frame.nodes.items()}
+    original_member_dist_loads = {}
+    try:
+        combo_factors = {}
+        combo_obj = frame.load_combos.get(combo) if hasattr(frame, "load_combos") else None
+        if combo_obj is not None and hasattr(combo_obj, "factors"):
+            combo_factors = combo_obj.factors
+
+        # Keep only distributed loads that are active in the selected combo.
+        for key, member in frame.members.items():
+            dist_loads = getattr(member, "DistLoads", [])
+            filtered = []
+            for load in dist_loads:
+                # PyNite stores distributed loads as tuples:
+                # (direction, w1, w2, x1, x2, case)
+                case = load[5] if isinstance(load, tuple) and len(load) > 5 else None
+                w1 = load[1] if isinstance(load, tuple) and len(load) > 2 else 0.0
+                w2 = load[2] if isinstance(load, tuple) and len(load) > 2 else 0.0
+
+                # Skip zero-magnitude loads.
+                if abs(w1) < 1e-12 and abs(w2) < 1e-12:
+                    continue
+
+                # For combo rendering, skip loads from cases with zero factor.
+                if case is not None and combo_factors:
+                    if abs(combo_factors.get(case, 0.0)) < 1e-12:
+                        continue
+
+                filtered.append(load)
+
+            if len(filtered) != len(dist_loads):
+                original_member_dist_loads[key] = dist_loads
+                member.DistLoads = filtered
+
+        for key, node in frame.nodes.items():
+            dx = _get_disp(node.DX, combo)
+            dy = _get_disp(node.DY, combo)
+            dz = _get_disp(node.DZ, combo)
+            node.name = f"{original_node_names[key]} DX={dx:.2f} DY={dy:.2f} DZ={dz:.2f}"
+
         rndr = Renderer(frame)
         rndr.annotation_size = 80
-        rndr.render_loads = show_loads
+        rndr.render_loads = True
         rndr.deformed_shape = True
         rndr.deformed_scale = 20
+        rndr.labels = True
         rndr.combo_name = combo
-        rndr.render_model()
-
-    try:
-        _render(show_loads=True)
-    except OverflowError:
-        print(
-            "Warning: Skipping load glyph rendering due to a PyNite "
-            "visualization overflow for (near) zero-length load arrows."
-        )
-        _render(show_loads=False)
+        try:
+            rndr.render_model()
+        except (OverflowError, ZeroDivisionError):
+            print(
+                "Warning: Load glyph rendering failed in PyNite. "
+                "Retrying without load glyphs."
+            )
+            rndr.render_loads = False
+            rndr.render_model()
+    finally:
+        for key, node in frame.nodes.items():
+            node.name = original_node_names[key]
+        for key, dist_loads in original_member_dist_loads.items():
+            frame.members[key].DistLoads = dist_loads
 
 def main():
     preferred_section = 'Yes'      # or 'No', based on user preference

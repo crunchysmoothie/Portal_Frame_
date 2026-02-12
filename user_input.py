@@ -141,7 +141,38 @@ def add_materials():
 
     return materials
 
-def add_load_cases():
+def apply_unaccessible_roof_uls_rule(load_combinations, roof_accessibility):
+    """Set all ULS live-load factors to 0.0 when the roof is unaccessible."""
+    if roof_accessibility != "Unaccessible":
+        return load_combinations
+
+    adjusted = []
+    for combo in load_combinations:
+        new_combo = dict(combo)
+        factors = dict(combo.get("factors", {}))
+        if "L" in factors:
+            factors["L"] = 0.0
+        new_combo["factors"] = factors
+        adjusted.append(new_combo)
+    return adjusted
+
+def apply_unaccessible_roof_sls_rule(serviceability_load_combinations, roof_accessibility):
+    """Set all SLS live-load factors to 0.0 when the roof is unaccessible."""
+    if roof_accessibility != "Unaccessible":
+        return serviceability_load_combinations
+
+    adjusted = []
+    for combo in serviceability_load_combinations:
+        new_combo = dict(combo)
+        factors = dict(combo.get("factors", {}))
+        if "L" in factors:
+            factors["L"] = 0.0
+        new_combo["factors"] = factors
+        adjusted.append(new_combo)
+    return adjusted
+
+
+def add_load_cases(roof_accessibility="Accessible"):
     load_cases = [
         {"name": "D_MIN", "type": "dead"},
         {"name": "D_MAX", "type": "dead"},
@@ -168,13 +199,18 @@ def add_load_cases():
     load_combinations = [
         {"name": "1.5 DL", "factors": {"D": 1.5}},
         {"name": "1.2 DL + 1.6 LL", "factors": {"D": 1.2, "L": 1.6}},
-        {"name": "0.9 DL + 0.6 W0_0.2U", "factors": {"D": 0.9, "W0_0.2U": 0.6}},
-        {"name": "1.1 DL + 0.5 LL + 0.6 W0_0.2D", "factors": {"D": 1.1, "L": 0.5, "W0_0.2D": 0.6}},
-        {"name": "0.9 DL + 0.6 W0_0.3U", "factors": {"D": 0.9, "W0_0.3U": 0.6}},
-        {"name": "1.1 DL + 0.5 LL + 0.6 W0_0.3D", "factors": {"D": 1.1, "L": 0.5, "W0_0.3D": 0.6}},
-        {"name": "0.9 DL + 0.6 W90_0.2", "factors": {"D": 1.1, "W90_0.2": 0.6}},
-        {"name": "0.9 DL + 0.6 W90_0.3", "factors": {"D": 1.1, "W90_0.3": 0.6}}
+        {"name": "0.9 DL + 1.3 W0_0.2U", "factors": {"D": 0.9, "W0_0.2U": 1.3}},
+        {"name": "1.1 DL + 0.5 LL + 1.3 W0_0.2D", "factors": {"D": 1.1, "L": 0.5, "W0_0.2D": 1.3}},
+        {"name": "0.9 DL + 1.3 W0_0.3U", "factors": {"D": 0.9, "W0_0.3U": 1.3}},
+        {"name": "1.1 DL + 0.5 LL + 1.3 W0_0.3D", "factors": {"D": 1.1, "L": 0.5, "W0_0.3D": 1.3}},
+        {"name": "0.9 DL + 1.3 W90_0.2", "factors": {"D": 1.1, "W90_0.2": 1.3}},
+        {"name": "0.9 DL + 1.3 W90_0.3", "factors": {"D": 1.1, "W90_0.3": 1.3}}
     ]
+
+    serviceability_load_combinations = apply_unaccessible_roof_sls_rule(
+        serviceability_load_combinations, roof_accessibility
+    )
+    load_combinations = apply_unaccessible_roof_uls_rule(load_combinations, roof_accessibility)
 
     return load_cases, serviceability_load_combinations, load_combinations
 
@@ -189,20 +225,20 @@ def add_SLS():
         {"name": "0.9 DL + 0.3 LL + 0.6 W90_0.2", "factors": {"D": 0.9, "D_MIN": 0.9, "L": 0.3, "W90_0.2": 0.6}},
         {"name": "0.9 DL + 0.3 LL + 0.6 W90_0.3", "factors": {"D": 0.9, "D_MIN": 0.9, "L": 0.3, "W90_0.3": 0.6}}
     ]
-    return serviceability_load_combinations
+    return apply_unaccessible_roof_sls_rule(serviceability_load_combinations, "Accessible")
 
-def add_ULS():
+def add_ULS(roof_accessibility="Accessible"):
     load_combinations = [
         {"name": "1.5 DL", "factors": {"D": 1.5}},
         {"name": "1.2 DL + 1.6 LL", "factors": {"D": 1.2, "L": 1.6}},
-        {"name": "0.9 DL + 0.6 W0_0.2U", "factors": {"D": 0.9, "W0_0.2U": 0.6}},
-        {"name": "1.1 DL + 0.5 LL + 0.6 W0_0.2D", "factors": {"D": 1.1, "L": 0.5, "W0_0.2D": 0.6}},
-        {"name": "0.9 DL + 0.6 W0_0.3U", "factors": {"D": 0.9, "W0_0.3U": 0.6}},
-        {"name": "1.1 DL + 0.5 LL + 0.6 W0_0.3D", "factors": {"D": 1.1, "L": 0.5, "W0_0.3D": 0.6}},
-        {"name": "0.9 DL + 0.6 W90_0.2", "factors": {"D": 1.1, "W90_0.2": 0.6}},
-        {"name": "0.9 DL + 0.6 W90_0.3", "factors": {"D": 1.1, "W90_0.3": 0.6}}
+        {"name": "0.9 DL + 1.3 W0_0.2U", "factors": {"D": 0.9, "W0_0.2U": 1.3}},
+        {"name": "1.1 DL + 0.5 LL + 1.3 W0_0.2D", "factors": {"D": 1.1, "L": 0.5, "W0_0.2D": 1.3}},
+        {"name": "0.9 DL + 1.3 W0_0.3U", "factors": {"D": 0.9, "W0_0.3U": 1.3}},
+        {"name": "1.1 DL + 0.5 LL + 1.3 W0_0.3D", "factors": {"D": 1.1, "L": 0.5, "W0_0.3D": 1.3}},
+        {"name": "0.9 DL + 1.3 W90_0.2", "factors": {"D": 1.1, "W90_0.2": 1.3}},
+        {"name": "0.9 DL + 1.3 W90_0.3", "factors": {"D": 1.1, "W90_0.3": 1.3}}
     ]
-    return load_combinations
+    return apply_unaccessible_roof_uls_rule(load_combinations, roof_accessibility)
 
 def safe_load_json(path: str | Path) -> dict:
     try:
@@ -222,13 +258,14 @@ def update_json_file(json_filename, b_data, wind_data):
     rotational_springs  = generate_spring_supports(new_nodes)
     nodal_loads         = generate_nodal_loads(new_nodes)
     materials           = add_materials()
-    LC, SLS, ULS        = add_load_cases()
+    roof_accessibility = b_data.get("roof_accessibility", "Accessible")
+    LC, SLS, ULS        = add_load_cases(roof_accessibility)
     steel_props         = steel_prop(b_data['steel_grade'])
 
     # build wind_input without mutating caller's dict
     wind_input = wind_data | {k: (v/1000 if k in {
         "eaves_height","apex_height","gable_width",
-        "rafter_spacing","building_length","roof_pitch"} else v)
+        "rafter_spacing","building_length"} else v)
         for k, v in b_data.items()}
 
     # --- load (or initialise) the JSON --------------------------------------
@@ -326,16 +363,19 @@ def main() -> None:
     """Generate the default portal-frame input JSON and associated loads."""
 
     # Static inputs for eaves, apex, and rafter span (converted to mm)
-    building_roof = "Mono Pitched"  # "Mono Pitched" or "Duo Pitched"
+    building_roof = "Duo Pitched"  # "Mono Pitched" or "Duo Pitched"
     building_type = "Normal"       # "Normal" or "Canopy"
-    eaves_height = 6 * 1000        # Convert to mm
-    apex_height = 9 * 1000         # Convert to mm
-    gable_width = 20 * 1000        # Convert to mm
-    rafter_spacing = 6 * 1000      # Convert to mm
-    building_length = 84 * 1000    # Convert to mm
+    eaves_height = 4 * 1000        # Convert to mm
+    apex_height = 6 * 1000         # Convert to mm
+    gable_width = 12 * 1000        # Convert to mm
+    rafter_spacing = 5 * 1000      # Convert to mm
+    building_length = 20 * 1000    # Convert to mm
     col_bracing_spacing = 1        # number of braced points per column
     rafter_bracing_spacing = 4     # number of braced points per rafter
     steel_grade = "Steel_S355"     # "Steel_S355" or "Steel_S275"
+    roof_accessibility = "Unaccessible"  # "Accessible" or "Unaccessible"
+    blocking_factor = 0.0          # Canopy only: 0.0 (open) to 1.0 (fully blocked)
+    roof_span = gable_width / 2 if building_roof == "Duo Pitched" else gable_width
 
     building_data = {
         "building_type": building_type,
@@ -347,9 +387,9 @@ def main() -> None:
         "building_length": building_length,
         "col_bracing_spacing": col_bracing_spacing,
         "rafter_bracing_spacing": rafter_bracing_spacing,
-        "roof_pitch": math.degrees(
-            math.atan((apex_height - eaves_height) / (gable_width / 2))
-        ) * 1000,
+        "roof_accessibility": roof_accessibility,
+        "blocking_factor": blocking_factor,
+        "roof_pitch": math.degrees(math.atan((apex_height - eaves_height) / roof_span)),
         "steel_grade": steel_grade,
     }
 
@@ -373,3 +413,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
