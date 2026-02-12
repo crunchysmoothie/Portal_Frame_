@@ -41,8 +41,9 @@ def section_properties(mb, mem, mat_prop):
     Iy = mb['Iy']
     Klx = mem['klx']
     Kly = mem['kly']
-    Zx = mb['Zplx'] if cl < 3 else mb['Zex']
-    Zy = mb['Zply'] if cl < 3 else mb['Zpy']
+    Zx = mb['Zplx'] if cl < 3 else mb.get('Zex', mb.get('Zplx'))
+    # member_database.csv uses 'Zey' (elastic minor-axis modulus), not 'Zpy'
+    Zy = mb['Zply'] if cl < 3 else mb.get('Zey', mb.get('Zply', mb.get('Zex')))
     rx = mb['rx']
     ry = mb['ry']
     lamda_x = (Klx * 1000 / rx) * math.sqrt(fy / ((math.pi ** 2) * (E * 10 ** 3)))
