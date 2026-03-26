@@ -1,0 +1,111 @@
+Project Handoff - Structural Apps
+Date: 2026-02-13
+
+Summary of completed work
+- Added canopy support end-to-end in wind generation and application.
+- Added blocking factor input to building data.
+- Parsed local SANS 10160-3 PDF into queryable local dataset.
+- Updated rendering behavior and various stability/error handling fixes.
+
+Key files changed
+1) wind_loads.py
+- Normal building paths:
+  - wind_data_duo_n() and wind_data_mono_n() exist.
+  - Mono 90deg coefficients (neg_w90) were updated to match Table 9 cpe,10 style values.
+- Canopy paths:
+  - wind_out() now routes Canopy to wind_data_duo_c()/wind_data_mono_c().
+  - _wind_data_canopy() now uses Table 13/14 style cp,net interpolation logic and blocking factor phi interpolation.
+  - blocking_factor read from wind_data/building_data via _get_blocking_factor().
+- IMPORTANT: canopy wind_zones output keeps keys cpi=0.2 and cpi=-0.3 for downstream compatibility, but values are identical and represent cp,net-based net effects.
+
+2) generate_wind_loading.py
+- Accepts building_type in {Normal, Canopy}.
+- Canopy structural loads now use cf resultant logic via _process_canopy_structural():
+  - mono: d/4 intent via half-span loading from windward side.
+  - duo: one-pitch-loaded behavior (other pitch unloaded), opposite wind direction case.
+- Added STRUCTURAL_ROOF_ZONES_0DEG = ("G", "H", "J", "I") so Zone F is excluded from structural frame loading.
+- Canopy loads are applied to rafters only (no canopy wall/column wind loading).
+
+3) user_input.py
+- Added roof accessibility rules:
+  - Unaccessible roof => L factor set to 0.0 for both SLS and ULS combinations.
+- Added blocking_factor default in main() building_data and carried into wind_data/json.
+
+4) run_full_analysis.py
+- Orchestrator script created.
+- Owns editable building_data/wind_data (does NOT call user_input.main defaults).
+- Includes blocking_factor setting.
+
+5) portal_frame_analysis.py
+- render_model() currently tries render_loads=True, with fallback to render_loads=False on PyNite glyph failure.
+- build_model() skips zero-magnitude distributed loads to reduce PyNite load glyph divide-by-zero failures.
+- Also suppresses MatrixRankWarning handling during search by ignoring singular candidates (without stopping option sweep).
+
+6) strength_checks.py
+- Fixed KeyError: 'Zpy' by using safe fallback and Zey where appropriate.
+
+7) New helper scripts
+- identify_singular_sections.py
+  - Scans section pairs and reports singular/other failing combinations.
+- parse_sans_10160_3.py
+  - Parses local .codes/SANS 10160-3.pdf into structured files.
+- query_sans_10160_3.py
+  - Query utility for clauses/tables/keywords from parsed dataset.
+
+Parsed SANS dataset created
+- Directory: .codes/sans_10160_3_parsed/
+  - manifest.json
+  - full_text.txt
+  - pages.json
+  - clauses.json
+  - references.json
+  - lines.jsonl
+- Parser coverage summary (from manifest):
+  - pages: 95
+  - clauses_indexed: 193
+  - tables_indexed: 22
+  - figures_indexed: 39
+
+Temporary/extracted helper files present in repo root
+- sans_10160_3_canopy_extract.txt
+- table8.txt, table9.txt, table11.txt, table13.txt, table14.txt
+- page_40.txt, page_41.txt, page_53.txt, page_55.txt
+These can be deleted or moved to .codes if desired.
+
+Current known caveats / pending audit items
+A) Full Normal roof coefficient audit is NOT complete
+- Normal Duo/Mono logic still relies on hardcoded arrays and zone mapping assumptions from earlier code.
+- Mono 90deg was corrected, but full strict table mapping for:
+  - Mono 0deg Table 8 (including sign-case handling per notes)
+  - Duo 0deg Table 10 (4 combinations per note for zones F/G/H with I/J pairing)
+  - Duo 90deg Table 11
+  has not been fully re-implemented yet.
+
+B) Canopy cp,net output mapping is compatibility-driven
+- wind_zones_* still uses old zone-key schema A..J and cpi=... keys for compatibility with existing pipeline.
+- Structural loads correctly use cf now in generate_wind_loading.py, but if strict cp,net sheeting/fixings checks are required, a dedicated canopy-local-zone schema may be cleaner.
+
+C) Renderer load glyph fallback
+- If PyNite load glyph rendering still fails in edge cases, render_model() falls back to no-load glyphs.
+- This is visualization-only; analysis is unaffected.
+
+Recommended next actions for next agent
+1) Complete strict SANS mapping for Normal building coefficients (Tables 8/9/10/11), including combination logic notes.
+2) Separate canopy structural vs sheeting output explicitly:
+   - structural: cf resultant loads (already done)
+   - sheeting/fixings: cp,net table values with explicit canopy zones.
+3) Decide whether to keep or clean temporary files listed above.
+4) Run a regression matrix:
+   - Normal Duo / Normal Mono / Canopy Duo / Canopy Mono
+   - multiple pitches and blocking factors
+   - verify member_loads distribution patterns and sign conventions.
+
+Quick commands
+- Full run: python run_full_analysis.py
+- Query clause: python query_sans_10160_3.py --clause 8.4.6
+- Query table page text: python query_sans_10160_3.py --table 13
+- Find singular section pairs: python identify_singular_sections.py --rafter-type "I-Sections" --column-type "I-Sections" --preferred "Yes"
+
+Git status snapshot at handoff
+- Modified: generate_wind_loading.py, portal_frame_analysis.py, strength_checks.py, user_input.py, wind_loads.py
+- Untracked: identify_singular_sections.py, parse_sans_10160_3.py, query_sans_10160_3.py, run_full_analysis.py, and several extracted text files.
