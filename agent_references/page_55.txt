@@ -1,0 +1,215 @@
+SANS 10160-3:2019 
+Edition 2.1 
+ 
+ 
+ 
+51 
+Table 14 — cp,net and cf values for duo-pitch canopies 
+ 
+1 2 3 4 5 6 7
+ 
+Roof angle α 
+Degrees Blockage φ Overall force 
+coefficient cf 
+Net pressure coefficients cp,net for zones 
+ABC D
+−20 
+Max. all φ 
+Min. φ = 0 
+Min. φ = 1 
++0,7 
+−0,7 
+−1,3 
++0,8 
+−0,9 
+−1,5 
++1,6 
+−1,3 
+−2,4 
++0,6 
+−1,6 
+−2,4 
++1,7 
+−0,6 
+−0,6 
+−15 
+Max. all φ 
+Min. φ = 0 
+Min. φ = 1 
++0,5 
+−0,6 
+−1,4 
++0,6 
+−0,8 
+−1,6 
++1,5 
+−1,3 
+−2,7 
++0,7 
+−1,6 
+−2,6 
++1,4 
+−0,6 
+−0,6 
+−10 
+Max all φ 
+Min. φ = 0 
+Min. φ = 1 
++0,4 
+−0,6 
+−1,4 
++0,6 
+−0,8 
+−1,6 
++1,4 
+−1,3 
+−2,7 
++0,8 
+−1,5 
+−2,6 
++1,1 
+−0,6 
+−0,6 
+−5 
+Max. all φ 
+Min. φ = 0 
+Min. φ = 1 
++0,3 
+−0,5 
+−1,3 
++0,5 
+−0,7 
+−1,5 
++1,5 
+−1,3 
+−2,4 
++0,8 
+−1,6 
+−2,4 
++0,8 
+−0,6 
+−0,6 
++5 
+Max. all φ 
+Min. φ = 0 
+Min. φ = 1 
++0,3 
+−0,6 
+−1,3 
++0,6 
+−0,6 
+−1,3 
++1,8 
+−1,4 
+−2,0 
++1,3 
+−1,4 
+−1,8 
++0,4 
+−1,1 
+−1,5 
++10 
+Max. all φ 
+Min. φ = 0 
+Min. φ = 1 
++0,4 
+−0,7 
+−1,3 
++0,7 
+−0,7 
+−1,3 
++1,8 
+−1,5 
+−2,0 
++1,4 
+−1,4 
+−1,8 
++0,4 
+−1,4 
+−1,8 
++15 
+Max. all φ 
+Min. φ = 0 
+Min. φ = 1 
++0,4 
+−0,8 
+−1,3 
++0,9 
+−0,9 
+−1,3 
++1,9 
+−1,7 
+−2,2 
++1,4 
+−1,4 
+−1,6 
++0,4 
+−1,8 
+−2,1 
++20 
+Max. all φ 
+Min. φ = 0 
+Min. φ = 1 
++0,6 
+−0,9 
+−1,3 
++1,1 
+−1,2 
+−1,4 
++1,9 
+−1,8 
+−2,2 
++1,5 
+−1,4 
+−1,6 
++0,4 
+−2,0 
+−2,1 
++25 
+Max. all φ 
+Min. φ = 0 
+Min. φ = 1 
++0,7 
+−1,0 
+−1,3 
++1,2 
+−1,4 
+−1,4 
++1,9 
+−1,9 
+−2,0 
++1,6 
+−1,4 
+−1,5 
++0,5 
+−2,0 
+−2,0 
++30 
+Max. all φ 
+Min. φ = 0 
+Min. φ = 1 
++0,9 
+−1,0 
+−1,3 
++1,3 
+−1,4 
+−1,4 
++1,9 
+−1,9 
+−1,8 
++1,6 
+−1,4 
+−1,4 
++0,7 
+−2,0 
+−2,0 
+NOTE 1 "+" values indicate a net downward wind action and "−" values represent a net upward wind action.
+NOTE 2 For zone E the maximum value from zones B or C should be used.
+NOTE 3 Max. all φ implies maximum positive value for all φ. 
+ Min. φ = 0 implies minimum φ = 0. 
+ Min. φ = 1 implies minimum φ = 1. 
+© SABS
+© SABS. This standard may reside on a LAN, WAN, intranet, internet or ECM server and is exclusively available to the University of Pretoria in accordance with
+copyright exploitation agreement no. 014/009/22-017, valid until 2023-02-28. Only students, lecturers and staff members of the University of Pretoria may make
+paper copies of the standard. No paper copy may be photocopied or reproduced in any way.
+This product is copyrighted by SABS, 1 Dr Lategan Road, Groenkloof, 0181, South Africa. All rights reserved.

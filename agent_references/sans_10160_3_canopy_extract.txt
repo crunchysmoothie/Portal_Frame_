@@ -1,0 +1,853 @@
+
+===== PAGE 50 =====
+
+SANS 10160-3:2019 
+Edition 2.1 
+ 
+ 
+ 
+46 
+8.3.9.9  The internal pressure coeffic ient of vented tanks with small openings shall be based on the 
+following equation: 
+ 
+ c
+pi = −0,40 (18) 
+ 
+8.3.9.10  The reference height, zi, is equal to the height of the structure. 
+ 
+8.3.10  Pressure on walls and roofs with more than one external skin 
+ 
+8.3.10.1  The wind force is to be calculated separately for each skin. 
+ 
+8.3.10.2  The permeability, μ, of a skin is defined as the ratio of the total area of the opening divided 
+by the total area of the skin. A skin is defined as impermeable if the value, μ, is less than 0,1 %. 
+ 
+8.3.10.3  If only one skin is permeable, then the wind force on the impermeable skin shall be 
+determined from the difference between the internal and the ext ernal wind pressure as described in 
+7.5.2.4. If more than one skin is permeable then the wind force on each skin depends on 
+ 
+a) the relative rigidity of the skins, 
+ 
+b) the external and internal pressures, 
+ 
+c) the distance between the skins, 
+ 
+d) the permeability of the skins, and 
+ 
+e) the openings at the extremities of the layer between the ski ns. 
+ 
+NOTE 1   As a first approximation, the wind pressure on the mos t rigid skin may be taken as the difference 
+between the internal and external pressures. 
+ 
+NOTE 2   In cases where the extremities of the layer between the skins are air tight (see figure 17(a)) and 
+where the free distance between the skins is less than 100 mm ( the thermal insulation material being included 
+in one skin, with no airflow within the insulation), the following rules may be applied: 
+ 
+a) For walls and roofs with an impermeable internal skin and a permeable external skin and uniformly 
+distributed openings, the wind force on the external skin may b e calculated from, cp,net = 0,67cpe, for over-
+pressure and cp,net = 0,33cpe, for under-pressure. The wind force on the internal skin may be  calculated 
+from, cp,net = cpe − cpi. 
+ 
+b) For walls and roofs with an impermeable internal skin and an  impermeable more rigid, external skin, the 
+wind force on the external skin may be calculated from, cp,net = cpe − cpi. 
+ 
+c) For walls and roofs with a permeable internal skin with appr oximately uniformly distributed openings and 
+an impermeable external skin, the wind force on the external skin may be calculated from, cp,net = cpe − cpi, 
+and the wind force on the internal skin from, cp,net = 0,33cpi. 
+ 
+d) For walls and roofs with an impermeable external skin and an  impermeable, more rigid internal skin, the 
+wind force on the outside skin may be calculated from, cp,net = cpe  and the wind force on the internal skin 
+from cp,net = cp − cpi. 
+ 
+8.3.10.4  If openings in the skin enable the air exchange with other wa lls or with the external air 
+flow (see figure 17(b)), the rules given in (a) to (d)are not applicable. 
+ 
+© SABS
+©  SABS. This standard may reside on a LAN, WAN, intranet, internet or ECM server and is exclusively available to the University of Pretoria in accordance with
+copyright exploitation agreement no. 014/009/22-017, valid until 2023-02-28. Only students, lecturers and staff members of the University of Pretoria may make
+paper copies of the standard. No paper copy may be photocopied or reproduced in any way.
+This product is copyrighted by SABS, 1 Dr Lategan Road, Groenkloof, 0181, South Africa. All rights reserved.
+
+===== PAGE 51 =====
+
+SANS 10160-3:2019 
+Edition 2.1 
+ 
+ 
+ 
+47 
+ 
+ 
+ 
+Figure 17 — Corner details for external walls with more than one skin 
+ 
+ 
+8.4  Canopy roofs 
+ 
+8.4.1  A canopy roof is defined as the roof of a structure that does n ot have permanent walls, such 
+as petrol stations, and Dutch barns. 
+ 
+8.4.2  The degree of blockage under a canopy roof (as shown in figure 18) is defined in terms of the 
+blockage, φ, which is a ratio of the area of actual obstructions under the  canopy divided by the cross 
+sectional area under the canopy, with both areas being normal to the wind direction. 
+ 
+NOTE   φ = 0 represents an empty canopy, and φ = 1 represents the canopy fully blocked with contents up to 
+the down wind eaves only (note that this situation does not correspond to a closed building). 
+ 
+8.4.3  The overall force coefficients, cf, and net pressure coefficients, cp,net, given in tables 13 to 15 
+for φ = 0, and φ = 1, take into account the combined effect of wind acting on both the upper and 
+lower surfaces of the canopies for all wind directions. Interme diate values may be under by linear 
+interpolation. 
+Second skin
+Insulation
+Second skin
+Insulation
+Drg.698c
+Opening
+Second skin
+Insulation
+Second skin
+Insulation
+< 100 mm < 100 mm
+a) Extremities of the layer between the skins closed 
+b
+) Extremities of the la yer between the skins open
+© SABS
+©  SABS. This standard may reside on a LAN, WAN, intranet, internet or ECM server and is exclusively available to the University of Pretoria in accordance with
+copyright exploitation agreement no. 014/009/22-017, valid until 2023-02-28. Only students, lecturers and staff members of the University of Pretoria may make
+paper copies of the standard. No paper copy may be photocopied or reproduced in any way.
+This product is copyrighted by SABS, 1 Dr Lategan Road, Groenkloof, 0181, South Africa. All rights reserved.
+
+===== PAGE 52 =====
+
+SANS 10160-3:2019 
+Edition 2.1 
+ 
+ 
+ 
+48 
+8.4.4  Downwind of the position of maximum blockage values for, φ = 0, shall be used. 
+ 
+8.4.5  The overall force coefficient represents the resultant force an d shall be used in the design of 
+the structure. The net pressure coefficient represents the maxi m u m  l o c a l  p r e s s u r e  f o r  a l l  w i n d  
+directions and shall be used in the design of roofing elements and fixings only. 
+ 
+8.4.6  The loads shall be applied as follows: 
+ 
+a) For a mono-pitch canopy (see table 13), the centre of pressu r e  s h a l l  b e  t a k e n  a t  d/4, from the 
+windward edge (d = along-wind dimension, see figure 19). 
+ 
+b) For a duo-pitch canopy (see table 14), the centre of pressur e shall be taken at the centre of each 
+slope (see figure 20). In addition, a duo-pitch canopy shall be  able to support one pitch with the 
+maximum or minimum load, the other pitch being unloaded. 
+ 
+c) For a multi-bay duo-pitch canopy, each load on a bay may be calculated by applying the 
+reduction factors, 
+ψmc, given in table 15, to the cp,net values given in table 14. 
+ 
+d) For canopies with double skin, the impermeable skin and its fixings shall be calculated with cp,net 
+and the permeable skin and its fixings with 0,33 cp,net. 
+ 
+8.4.7  Friction forces shall be considered (see 8.6). 
+ 
+8.4.8  The reference height, zc shall be taken as h, as shown in figures 19 and 20. 
+ 
+ 
+ 
+ 
+Figure 18 — Airflow over canopy roofs 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+© SABS
+©  SABS. This standard may reside on a LAN, WAN, intranet, internet or ECM server and is exclusively available to the University of Pretoria in accordance with
+copyright exploitation agreement no. 014/009/22-017, valid until 2023-02-28. Only students, lecturers and staff members of the University of Pretoria may make
+paper copies of the standard. No paper copy may be photocopied or reproduced in any way.
+This product is copyrighted by SABS, 1 Dr Lategan Road, Groenkloof, 0181, South Africa. All rights reserved.
+
+===== PAGE 53 =====
+
+SANS 10160-3:2019 
+Edition 2.1 
+ 
+ 
+ 
+49 
+Table 13 — cp,net and cf  values for mono-pitch canopies 
+ 
+1 2 3 4 5 6 
+ 
+Roof 
+angle α 
+degrees 
+Blockage φ  Overall force 
+coefficients cf 
+Zone 
+A B C 
+Net pressure coefficients 
+cp,net cp,net cp,net 
+0 
+Max. all φ 
+Min. φ = 0 
+Min. φ = 1 
++0,2 
+−0,5 
+−1,3 
++0,5 
+−0,6 
+−1,5 
++1,8 
+−1,3 
+−1,8 
++1,1 
+−1,4 
+−2,2 
+5 
+Max. all φ 
+Min. φ = 0 
+Min. φ = 1 
++0,4 
+− 0,7 
+− 1,4 
++0,8 
+−1,1 
+−1,6 
++2,1 
+−1,7 
+−2,2 
++1,3 
+−1,8 
+−2,5 
+10 
+Max. all φ 
+Min. φ = 0 
+Min. φ = 1 
++0,5 
+−0,9 
+−1,4 
++1,2 
+−1,5 
+−2,1 
++2,4 
+−2,0 
+−2,6 
++1,6 
+−2,1 
+−2,7 
+15 
+Max. all φ 
+Min. φ = 0 
+Min. φ = 1 
++0,7 
+−1,1 
+− 1,4 
++1,4 
+−1,8 
+−1,6 
++2,7 
+−2,4 
+−2,9 
++1,8 
+−2,5 
+−3,0 
+20 
+Max. all φ 
+Min. φ = 0 
+Min. φ = 1 
++0,8 
+−1,3 
+−1,4 
++1,7 
+−2,2 
+−1,6 
++2,9 
+−2,8 
+−2,9 
++2,1 
+−2,9 
+−3,0 
+25 
+Max. all φ 
+Min. φ = 0 
+Min. φ = 1 
++1,0 
+−1,6 
+−1,4 
++2,0 
+−2,6 
+−1,5 
++3,1 
+−3,2 
+−2,5 
++2,3 
+−3,2 
+−2,8 
+30 
+Max. all φ 
+Min. φ = 0 
+Min. φ = 1 
++1,2 
+−1,8 
+−1,4 
++2,2 
+−3,0 
+−1,5 
++3,2 
+−3,8 
+−2,2 
++2,4 
+−3,6 
+−2,7 
+NOTE 1   "+" values indicate a net downward wind action and "−" v a l u e s  r e p r e s e n t  a  n e t  u p w a r d  w i n d  
+action. 
+NOTE 2   For zone D the maximum value from zones B or C should be used. 
+NOTE 3   Max. all φ implies maximum positive value for all φ. 
+     Min. φ = 0 implies minimum φ = 0. 
+Min. φ = 1 implies minimum φ = 1. 
+© SABS
+©  SABS. This standard may reside on a LAN, WAN, intranet, internet or ECM server and is exclusively available to the University of Pretoria in accordance with
+copyright exploitation agreement no. 014/009/22-017, valid until 2023-02-28. Only students, lecturers and staff members of the University of Pretoria may make
+paper copies of the standard. No paper copy may be photocopied or reproduced in any way.
+This product is copyrighted by SABS, 1 Dr Lategan Road, Groenkloof, 0181, South Africa. All rights reserved.
+
+===== PAGE 54 =====
+
+SANS 10160-3:2019 
+Edition 2.1 
+ 
+ 
+ 
+50 
+ 
+ 
+ 
+Figure 19 — Location of the centre of force for mono-pitch canopies 
+ 
+© SABS
+©  SABS. This standard may reside on a LAN, WAN, intranet, internet or ECM server and is exclusively available to the University of Pretoria in accordance with
+copyright exploitation agreement no. 014/009/22-017, valid until 2023-02-28. Only students, lecturers and staff members of the University of Pretoria may make
+paper copies of the standard. No paper copy may be photocopied or reproduced in any way.
+This product is copyrighted by SABS, 1 Dr Lategan Road, Groenkloof, 0181, South Africa. All rights reserved.
+
+===== PAGE 55 =====
+
+SANS 10160-3:2019 
+Edition 2.1 
+ 
+ 
+ 
+51 
+Table 14 — cp,net and cf values for duo-pitch canopies 
+ 
+1 2 3 4 5 6 7
+ 
+Roof angle α 
+Degrees Blockage φ  Overall force 
+coefficient cf 
+Net pressure coefficients cp,net for zones 
+ABC  D
+−20 
+Max. all φ 
+Min. φ = 0 
+Min. φ = 1 
++0,7 
+−0,7 
+−1,3 
++0,8 
+−0,9 
+−1,5 
++1,6 
+−1,3 
+−2,4 
++0,6 
+−1,6 
+−2,4 
++1,7 
+−0,6 
+−0,6 
+−15 
+Max. all φ 
+Min. φ = 0 
+Min. φ = 1 
++0,5 
+−0,6 
+−1,4 
++0,6 
+−0,8 
+−1,6 
++1,5 
+−1,3 
+−2,7 
++0,7 
+−1,6 
+−2,6 
++1,4 
+−0,6 
+−0,6 
+−10 
+Max all φ 
+Min. φ = 0 
+Min. φ = 1 
++0,4 
+−0,6 
+−1,4 
++0,6 
+−0,8 
+−1,6 
++1,4 
+−1,3 
+−2,7 
++0,8 
+−1,5 
+−2,6 
++1,1 
+−0,6 
+−0,6 
+−5 
+Max. all φ 
+Min. φ = 0 
+Min. φ = 1 
++0,3 
+−0,5 
+−1,3 
++0,5 
+−0,7 
+−1,5 
++1,5 
+−1,3 
+−2,4 
++0,8 
+−1,6 
+−2,4 
++0,8 
+−0,6 
+−0,6 
++5 
+Max. all φ 
+Min. φ = 0 
+Min. φ = 1 
++0,3 
+−0,6 
+−1,3 
++0,6 
+−0,6 
+−1,3 
++1,8 
+−1,4 
+−2,0 
++1,3 
+−1,4 
+−1,8 
++0,4 
+−1,1 
+−1,5 
++10 
+Max. all φ 
+Min. φ = 0 
+Min. φ = 1 
++0,4 
+−0,7 
+−1,3 
++0,7 
+−0,7 
+−1,3 
++1,8 
+−1,5 
+−2,0 
++1,4 
+−1,4 
+−1,8 
++0,4 
+−1,4 
+−1,8 
++15 
+Max. all φ 
+Min. φ = 0 
+Min. φ = 1 
++0,4 
+−0,8 
+−1,3 
++0,9 
+−0,9 
+−1,3 
++1,9 
+−1,7 
+−2,2 
++1,4 
+−1,4 
+−1,6 
++0,4 
+−1,8 
+−2,1 
++20 
+Max. all φ 
+Min. φ = 0 
+Min. φ = 1 
++0,6 
+−0,9 
+−1,3 
++1,1 
+−1,2 
+−1,4 
++1,9 
+−1,8 
+−2,2 
++1,5 
+−1,4 
+−1,6 
++0,4 
+−2,0 
+−2,1 
++25 
+Max. all φ 
+Min. φ = 0 
+Min. φ = 1 
++0,7 
+−1,0 
+−1,3 
++1,2 
+−1,4 
+−1,4 
++1,9 
+−1,9 
+−2,0 
++1,6 
+−1,4 
+−1,5 
++0,5 
+−2,0 
+−2,0 
++30 
+Max. all φ 
+Min. φ = 0 
+Min. φ = 1 
++0,9 
+−1,0 
+−1,3 
++1,3 
+−1,4 
+−1,4 
++1,9 
+−1,9 
+−1,8 
++1,6 
+−1,4 
+−1,4 
++0,7 
+−2,0 
+−2,0 
+NOTE 1   "+" values indicate a net downward wind action and "−" values represent a net upward wind action.
+NOTE 2   For zone E the maximum value from zones B or C should be used.
+NOTE 3   Max. all φ implies maximum positive value for all φ. 
+  Min. φ = 0 implies minimum φ = 0. 
+     Min. φ = 1 implies minimum φ = 1. 
+© SABS
+©  SABS. This standard may reside on a LAN, WAN, intranet, internet or ECM server and is exclusively available to the University of Pretoria in accordance with
+copyright exploitation agreement no. 014/009/22-017, valid until 2023-02-28. Only students, lecturers and staff members of the University of Pretoria may make
+paper copies of the standard. No paper copy may be photocopied or reproduced in any way.
+This product is copyrighted by SABS, 1 Dr Lategan Road, Groenkloof, 0181, South Africa. All rights reserved.
+
+===== PAGE 56 =====
+
+SANS 10160-3:2019 
+Edition 2.1 
+ 
+ 
+ 
+52 
+ 
+ 
+ 
+a) Pitch angle positive 
+ 
+ 
+ 
+b) Pitch angle negative 
+ 
+Figure 20 — Arrangements of loads obtained from force coefficients for duo-pitch canopies 
+ 
+ 
+8.4.9  Loads on each slope of multi-bay canopies, as shown in figure 2 1, are determined by 
+applying the reduction factors, ψmc, given in table 15 to the overall force, and net pressure 
+coefficients for isolated duo-pitch canopies. 
+ 
+Table 15 — Reduction factors ψ
+mc for multi-bay canopies 
+ 
+1 2 3 4 
+Bay Location 
+ψmc factors 
+For maximum (downward) 
+force and pressure 
+coefficients 
+For minimum (upward) 
+force and pressure 
+coefficients 
+1 
+2 
+3 
+End bay 
+Second bay 
+Third and subsequent bays 
+1,0 
+0,9 
+0,7 
+0,8 
+0,7 
+0,7 
+ 
+ 
+© SABS
+©  SABS. This standard may reside on a LAN, WAN, intranet, internet or ECM server and is exclusively available to the University of Pretoria in accordance with
+copyright exploitation agreement no. 014/009/22-017, valid until 2023-02-28. Only students, lecturers and staff members of the University of Pretoria may make
+paper copies of the standard. No paper copy may be photocopied or reproduced in any way.
+This product is copyrighted by SABS, 1 Dr Lategan Road, Groenkloof, 0181, South Africa. All rights reserved.
+
+===== PAGE 57 =====
+
+SANS 10160-3:2019 
+Edition 2.1 
+ 
+ 
+ 
+53 
+ 
+ 
+a) Reduction factors for maximum downward force and pressure coefficients 
+ 
+ 
+b) Reduction factors for largest upward force and pressure coefficients 
+ 
+Figure 21 — Multi-bay canopies 
+ 
+ 
+8.5  Free-standing walls, parapets, fences and signboards 
+ 
+8.5.1  General 
+ 
+The values of the resulting pressure coefficients, cp,net, for free-standing walls and parapets depend 
+on the solidity ratio, φ. For solid walls, the solidity φ, shall be taken as 1, and for walls which are 
+80 % solid (i.e. have 20 % openings), φ = 0,8. Porous walls and fences with a solidity ratio of, 
+φ ≤ 0,8, shall be treated as plane lattices in accordance with 8.12. 
+ 
+8.5.2  Free-standing walls and parapets 
+ 
+8.5.2.1  For free-standing walls and para pets the resulting pressure coe fficients, cp,net, shall be 
+specified for the zones A, B, C and D as shown in figure 22. 
+ 
+NOTE   Recommended values of the resulting pressure coefficient s cp,net are given in table 16 for two 
+different solidity ratios. 
+ 
+The wind actions shall be applied to either side of the wall an d  p e r p e n d i c u l a r  t o  t h e  w a l l .  T h e  
+reference area in both cases is the gross area. 
+ 
+NOTE   Linear interpolation may be used for solidity ratio between 0,8 and 1. 
+ 
+8.5.2.2  The reference height for free standing walls shall be taken as,  ze = h  (see figure 22). The 
+reference height for parapets in buildings shall be taken as, ze = (h + hp) (see figure 9). 
+ 
+© SABS
+©  SABS. This standard may reside on a LAN, WAN, intranet, internet or ECM server and is exclusively available to the University of Pretoria in accordance with
+copyright exploitation agreement no. 014/009/22-017, valid until 2023-02-28. Only students, lecturers and staff members of the University of Pretoria may make
+paper copies of the standard. No paper copy may be photocopied or reproduced in any way.
+This product is copyrighted by SABS, 1 Dr Lategan Road, Groenkloof, 0181, South Africa. All rights reserved.
+
+===== PAGE 58 =====
+
+SANS 10160-3:2019 
+Edition 2.1 
+ 
+ 
+ 
+54 
+Table 16 — Recommended net pressure coefficients cp,net 
+for free-standing walls and parapets 
+ 
+1 2 3 4 5 6 7 
+Solidity 
+ratio 
+Return 
+corners Aspect ratio 
+Zone
+ABC  D  
+φ = 1 
+Without 
+L/h  3 2,3 1,4 1,2 1,2 
+L/h = 5 2,9 1,8 1,4 1,2 
+L/h  10 3,4 2,1 1,7 1,2 
+length  h  2,1 1,8 1,4 1,2 
+φ = 0,8  1,2 1,2 1,2 1,2 
+NOTE   Linear interpolation may be used for return corner lengths between 0 and h. 
+ 
+ 
+ 
+ 
+Figure 22 — Key for interpretation of zones for free-standing walls and parapets 
+© SABS
+©  SABS. This standard may reside on a LAN, WAN, intranet, internet or ECM server and is exclusively available to the University of Pretoria in accordance with
+copyright exploitation agreement no. 014/009/22-017, valid until 2023-02-28. Only students, lecturers and staff members of the University of Pretoria may make
+paper copies of the standard. No paper copy may be photocopied or reproduced in any way.
+This product is copyrighted by SABS, 1 Dr Lategan Road, Groenkloof, 0181, South Africa. All rights reserved.
+
+===== PAGE 59 =====
+
+SANS 10160-3:2019 
+Edition 2.1 
+ 
+ 
+ 
+55 
+8.5.3  Signboards 
+ 
+8.5.3.1  For signboards separated from the ground by a height, hg > h/4 (see figure 23), the force 
+coefficients are given by using the following equation: 
+ 
+ cf = 1,80 (19) 
+ 
+Equation (19) is also applicable where, h
+g < h/4 and b/h < 1. 
+ 
+8.5.3.2  The resultant force normal to the  signboard shall be taken as a cting at a height of the centre 
+of the signboard with a horizontal eccentricity, e, as given in the following equation: 
+ 
+ e = ± 0,25b ( 20) 
+ 
+8.5.3.3  Signboards separated from the ground by a height, hg < h/4 and with b/h > 1, shall be 
+treated as boundary walls (see 8.5.1). 
+ 
+NOTE   Possibilities for development of flutter and divergence instabilities should be considered. 
+ 
+ 
+  
+ 
+NOTE 1   Reference height: he = hg + h/2. 
+ 
+NOTE 2   Reference area: Aref = b × h. 
+ 
+Figure 23 — Key interpretation of signboards 
+ 
+b
+b
+h
+ee
+e e
+h
+hg
+he
+hg
+Drg.698n
+© SABS
+©  SABS. This standard may reside on a LAN, WAN, intranet, internet or ECM server and is exclusively available to the University of Pretoria in accordance with
+copyright exploitation agreement no. 014/009/22-017, valid until 2023-02-28. Only students, lecturers and staff members of the University of Pretoria may make
+paper copies of the standard. No paper copy may be photocopied or reproduced in any way.
+This product is copyrighted by SABS, 1 Dr Lategan Road, Groenkloof, 0181, South Africa. All rights reserved.
+
+===== PAGE 60 =====
+
+SANS 10160-3:2019 
+Edition 2.1 
+ 
+ 
+ 
+56 
+8.6  Friction forces 
+ 
+8.6.1  Friction shall be considered for the cases defined in 7.5.3. 
+ 
+8.6.2  The friction coefficients, cfr, for walls and roof surfaces as given in table 17, shall be used. 
+ 
+8.6.3  The reference area, Afr, is given in figure 24. For buildings, friction forces shall be applied on 
+the part of the external surfaces parallel to the wind, located  beyond a distance from the upwind 
+eaves or corners, equal to the smallest value of 2b or 4h. 
+ 
+8.6.4  The reference height, ze, shall be taken as equal to the structure height above ground or 
+building height, h (see figure 24). 
+ 
+Table 17 — Friction coefficient, cfr 
+for walls, parapets and roof surfaces 
+ 
+1 2 
+Surface Friction coefficient
+cfr 
+Smooth 
+(i.e. steel, smooth concrete) 0,01 
+Rough 
+(i.e. rough concrete, tar-boards) 0,02 
+Very rough 
+(i.e. ripples, ribs, folds) 0,04 
+ 
+© SABS
+©  SABS. This standard may reside on a LAN, WAN, intranet, internet or ECM server and is exclusively available to the University of Pretoria in accordance with
+copyright exploitation agreement no. 014/009/22-017, valid until 2023-02-28. Only students, lecturers and staff members of the University of Pretoria may make
+paper copies of the standard. No paper copy may be photocopied or reproduced in any way.
+This product is copyrighted by SABS, 1 Dr Lategan Road, Groenkloof, 0181, South Africa. All rights reserved.
+
+===== PAGE 61 =====
+
+SANS 10160-3:2019 
+Edition 2.1 
+ 
+ 
+ 
+57 
+ 
+ 
+Figure 24 — Reference area for friction 
+ 
+ 
+8.7  Structural elements with rectangular sections 
+ 
+8.7.1  The force coefficient, cf of structural elements of rectangular section with the wind bl owing 
+normally to a face, shall be determined using the following equation: 
+ 
+ cf = cf,0 × ψr × ψλ (21) 
+ 
+where 
+ 
+ c f,0 is the force coefficient of rectangular sections with sharp co rners and without free-end 
+flow as given in figure 25; 
+ 
+ ψr is the reduction factor for square sections with rounded corne rs.; 
+ 
+  NOTE 1   ψr depends on the Reynolds number, (see note 2). 
+© SABS
+©  SABS. This standard may reside on a LAN, WAN, intranet, internet or ECM server and is exclusively available to the University of Pretoria in accordance with
+copyright exploitation agreement no. 014/009/22-017, valid until 2023-02-28. Only students, lecturers and staff members of the University of Pretoria may make
+paper copies of the standard. No paper copy may be photocopied or reproduced in any way.
+This product is copyrighted by SABS, 1 Dr Lategan Road, Groenkloof, 0181, South Africa. All rights reserved.
+
+===== PAGE 62 =====
+
+SANS 10160-3:2019 
+Edition 2.1 
+ 
+ 
+ 
+58 
+ ψλ is the end-effect factor for elements with free-end flow as de fined in 8.13. 
+ 
+NOTE 2   The recommended approximate upper bound values of ψr, are given in figure 26. These values are 
+based on measurements in low-turbulence conditions, which are assumed to be conservative. 
+ 
+NOTE 3   Figure 26 may also be used for buildings with h/d > 5,0. 
+ 
+ 
+ 
+ 
+Figure 25 — Force coefficients cf,0 of rectangular sections 
+with sharp corners and without free-end flow 
+ 
+ 
+ 
+Figure 26 — Reduction factor, ψr for a square cross-section 
+with rounded corners 
+ 
+© SABS
+©  SABS. This standard may reside on a LAN, WAN, intranet, internet or ECM server and is exclusively available to the University of Pretoria in accordance with
+copyright exploitation agreement no. 014/009/22-017, valid until 2023-02-28. Only students, lecturers and staff members of the University of Pretoria may make
+paper copies of the standard. No paper copy may be photocopied or reproduced in any way.
+This product is copyrighted by SABS, 1 Dr Lategan Road, Groenkloof, 0181, South Africa. All rights reserved.

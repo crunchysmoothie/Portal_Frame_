@@ -1,0 +1,49 @@
+SANS 10160-3:2019 
+Edition 2.1 
+ 
+ 
+ 
+37 
+Table 11 — External pressure coefficients for duo-pitch roofs 
+with the wind direction θ = 90˚ 
+ 
+1 2 3 4 5 6 7 8 9 
+Pitch 
+angle 
+α 
+ 
+ 
+degrees 
+Zone
+F G H I 
+External pressure coefficients 
+cpe,10 cpe,1 cpe,10 cpe,1 cpe,10 cpe,1 cpe,10 cpe,1 
+−45 −1,4 −2,0 −1,2 −2,0 −1,0 −1,3 −0,9 −1,2 
+−30 −1,5 −2,1 −1,2 −2,0 −1,0 −1,3 −0,9 −1,2 
+−15 −1,9 −2,5 −1,2 −2,0 −0,8 −1,2 −0,8 −1,2 
+−5 −1,8 −2,5 −1,2 −2,0 −0,7 −1,2 −0,6 −1,2 
+5 −1,6 −2,2 −1,3 −2,0 −0,7 −1,2 −0,6 
+15 −1,3 −2,0 −1,3 −2,0 −0,6 −1,2 −0,5 
+30 −1,1 −1,5 −1,4 −2,0 −0,8 −1,2 −0,5 
+45 −1,1 −1,5 −1,4 −2,0 −0,9 −1,2 −0,5 
+60 −1,1 −1,5 −1,2 −2,0 −0,8 −1,0 −0,5 
+75 −1,1 −1,5 −1,2 −2,0 −0,8 −1,0 −0,5 
+NOTE For intermediate pitch angles of the same sign, linear interpolation may be used between values of the 
+same sign. (Interpolation should not be done between α = +5˚ and α = −5˚, but use the data for flat roofs given 
+in 8.3.3). 
+ 
+ 
+8.3.6 External pressure coefficients for hipped roofs 
+ 
+8.3.6.1 The roof, including its protrusions, shall be divided into zones as shown in figure 12. 
+ 
+8.3.6.2 The reference height, ze, shall be taken as equal to h. 
+ 
+8.3.6.3
+ The pressure coefficients that shall be used are given in table 12. 
+ 
+© SABS
+© SABS. This standard may reside on a LAN, WAN, intranet, internet or ECM server and is exclusively available to the University of Pretoria in accordance with
+copyright exploitation agreement no. 014/009/22-017, valid until 2023-02-28. Only students, lecturers and staff members of the University of Pretoria may make
+paper copies of the standard. No paper copy may be photocopied or reproduced in any way.
+This product is copyrighted by SABS, 1 Dr Lategan Road, Groenkloof, 0181, South Africa. All rights reserved.
