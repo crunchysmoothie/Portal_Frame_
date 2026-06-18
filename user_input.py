@@ -118,8 +118,8 @@ def generate_members(nodes):
     return members
 
 def generate_spring_supports(nodes):
-    rotational_springs = [{"node": nodes[0]["name"], "direction": "RZ", "stiffness": 5E6},
-                          {"node": nodes[-1]["name"], "direction": "RZ", "stiffness": 5E6}]
+    rotational_springs = [{"node": nodes[0]["name"], "direction": "RZ", "stiffness": 10E6},
+                          {"node": nodes[-1]["name"], "direction": "RZ", "stiffness": 10E6}]
     return rotational_springs
 
 def generate_nodal_loads(nodes):
@@ -365,13 +365,13 @@ def main() -> None:
     # Static inputs for eaves, apex, and rafter span (converted to mm)
     building_roof = "Duo Pitched"  # "Mono Pitched" or "Duo Pitched"
     building_type = "Normal"       # "Normal" or "Canopy"
-    eaves_height = 4 * 1000        # Convert to mm
-    apex_height = 6 * 1000         # Convert to mm
-    gable_width = 12 * 1000        # Convert to mm
-    rafter_spacing = 5 * 1000      # Convert to mm
-    building_length = 20 * 1000    # Convert to mm
+    eaves_height = 6 * 1000        # Convert to mm
+    apex_height = 6.8 * 1000         # Convert to mm
+    gable_width = 16 * 1000        # Convert to mm
+    rafter_spacing = 6 * 1000      # Convert to mm
+    building_length = 72 * 1000    # Convert to mm
     col_bracing_spacing = 1        # number of braced points per column
-    rafter_bracing_spacing = 4     # number of braced points per rafter
+    rafter_bracing_spacing = 3     # number of braced points per rafter
     steel_grade = "Steel_S355"     # "Steel_S355" or "Steel_S275"
     roof_accessibility = "Unaccessible"  # "Accessible" or "Unaccessible"
     blocking_factor = 0.0          # Canopy only: 0.0 (open) to 1.0 (fully blocked)
@@ -397,9 +397,9 @@ def main() -> None:
         "wind": "3s gust",
         "fundamental_basic_wind_speed": 36,
         "return_period": 50,
-        "terrain_category": "C",
+        "terrain_category": "B",
         "topographic_factor": 1.0,
-        "altitude": 1450,
+        "altitude": 1140,
     }
 
     # Filename of the existing JSON file
