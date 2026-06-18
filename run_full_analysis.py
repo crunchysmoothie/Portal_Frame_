@@ -43,7 +43,7 @@ def main() -> None:
         "wind": "3s gust",
         "fundamental_basic_wind_speed": 36,
         "return_period": 50,
-        "terrain_category": "B",
+        "terrain_category": "C",
         "topographic_factor": 1.0,
         "altitude": 140,
     }
