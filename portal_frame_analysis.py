@@ -290,10 +290,10 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
 
     data = import_data('input_data.json')
     r_total_m, c_total_m = get_member_lengths(data)
-    vert_limit = data.frame_data[0]['gable_width'] / 175
-    horiz_limit = data.frame_data[0]['eaves_height'] / 175
+    vert_limit = data.frame_data[0]['gable_width'] / 150
+    horiz_limit = data.frame_data[0]['eaves_height'] / 150
 
-    # ❶ Search by fixing rafters first, then columns
+    #  Search by fixing rafters first, then columns
     best_r = directional_search(
         'rafter',  # primary search direction
         r_list, c_list,  # candidate names

@@ -10,15 +10,15 @@ def main() -> None:
     # Update these values in THIS file as needed.
     building_roof = "Duo Pitched"     # "Mono Pitched" or "Duo Pitched"
     building_type = "Normal"          # "Normal" or "Canopy"
-    roof_accessibility = "Accessible" # "Accessible" or "Unaccessible"
+    roof_accessibility = "Unaccessible" # "Accessible" or "Unaccessible"
     blocking_factor = 0.0             # Canopy only: 0.0 (open) to 1.0 (fully blocked)
-    eaves_height = 4 * 1000
-    apex_height = 6 * 1000
-    gable_width = 12 * 1000
-    rafter_spacing = 5 * 1000
-    building_length = 20 * 1000
+    eaves_height = 7 * 1000
+    apex_height = 7.8 * 1000
+    gable_width = 22 * 1000
+    rafter_spacing = 6 * 1000
+    building_length = 54 * 1000
     col_bracing_spacing = 1
-    rafter_bracing_spacing = 4
+    rafter_bracing_spacing = 3
     steel_grade = "Steel_S355"
 
     roof_span = gable_width / 2 if building_roof == "Duo Pitched" else gable_width
@@ -43,9 +43,9 @@ def main() -> None:
         "wind": "3s gust",
         "fundamental_basic_wind_speed": 36,
         "return_period": 50,
-        "terrain_category": "C",
+        "terrain_category": "B",
         "topographic_factor": 1.0,
-        "altitude": 1450,
+        "altitude": 140,
     }
 
     json_filename = "input_data.json"
