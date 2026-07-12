@@ -49,6 +49,8 @@ class PortalFrame:
     wind_data: List[Dict] = field(default_factory=list)
     wind_zones_0U: List[Dict] = field(default_factory=list)
     wind_zones_0D: List[Dict] = field(default_factory=list)
+    wind_zones_0M1: List[Dict] = field(default_factory=list)
+    wind_zones_0M2: List[Dict] = field(default_factory=list)
     wind_zones_90: List[Dict] = field(default_factory=list)
 
 def load_portal_frame(path: str) -> 'PortalFrame':
@@ -91,5 +93,7 @@ def load_portal_frame(path: str) -> 'PortalFrame':
         wind_data=data.get('wind_data', []),
         wind_zones_0U=data.get('wind_zones_0U', []),
         wind_zones_0D=data.get('wind_zones_0D', []),
+        wind_zones_0M1=data.get('wind_zones_0M1', []),
+        wind_zones_0M2=data.get('wind_zones_0M2', []),
         wind_zones_90=data.get('wind_zones_90', [])
     )

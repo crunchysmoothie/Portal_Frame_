@@ -154,11 +154,11 @@ def analyze_combination(args):
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=MatrixRankWarning)
             frame.analyze(check_statics=False)
-    except (ValueError, RuntimeError):
-        return None
     except Exception as exc:
         if _is_instability_error(exc):
             return None
+        # Data errors and broken load cases must remain visible. Treating every
+        # ValueError/RuntimeError as a failed trial section can hide unsafe input.
         raise
 
     # --- deflection checks --------------------------------------------------

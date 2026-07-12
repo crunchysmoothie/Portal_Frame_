@@ -141,38 +141,63 @@ def add_materials():
 
     return materials
 
-def apply_unaccessible_roof_uls_rule(load_combinations, roof_accessibility):
-    """Set all ULS live-load factors to 0.0 when the roof is unaccessible."""
-    if roof_accessibility != "Unaccessible":
-        return load_combinations
-
-    adjusted = []
-    for combo in load_combinations:
-        new_combo = dict(combo)
-        factors = dict(combo.get("factors", {}))
-        if "L" in factors:
-            factors["L"] = 0.0
-        new_combo["factors"] = factors
-        adjusted.append(new_combo)
-    return adjusted
-
-def apply_unaccessible_roof_sls_rule(serviceability_load_combinations, roof_accessibility):
-    """Set all SLS live-load factors to 0.0 when the roof is unaccessible."""
-    if roof_accessibility != "Unaccessible":
-        return serviceability_load_combinations
-
-    adjusted = []
-    for combo in serviceability_load_combinations:
-        new_combo = dict(combo)
-        factors = dict(combo.get("factors", {}))
-        if "L" in factors:
-            factors["L"] = 0.0
-        new_combo["factors"] = factors
-        adjusted.append(new_combo)
-    return adjusted
+PRE_2019_COMBINATIONS = "Pre-2019"
+SANS_2019_COMBINATIONS = "SANS 10160-1:2019"
+LOAD_COMBINATION_STANDARDS = (PRE_2019_COMBINATIONS, SANS_2019_COMBINATIONS)
 
 
-def add_load_cases(roof_accessibility="Accessible"):
+def _wind_factor(load_combination_standard):
+    """Return the STR wind factor for the selected SANS 10160-1 edition."""
+    if load_combination_standard == PRE_2019_COMBINATIONS:
+        return 1.3
+    if load_combination_standard == SANS_2019_COMBINATIONS:
+        return 1.6
+    raise ValueError(
+        f"Unknown load-combination standard {load_combination_standard!r}. "
+        f"Choose one of {LOAD_COMBINATION_STANDARDS}."
+    )
+
+
+def _roof_accompanying_factor(roof_accessibility):
+    # SANS 10160-1 Table 2: category H = 0; category J = 0.3.
+    return 0.0 if roof_accessibility == "Unaccessible" else 0.3
+
+
+def _wind_combinations(wind_cases, roof_accessibility, load_combination_standard):
+    gamma_w = _wind_factor(load_combination_standard)
+    live_factor = 1.6 * _roof_accompanying_factor(roof_accessibility)
+    combinations = []
+    for case, action in wind_cases:
+        if action == "up":
+            combinations.append({
+                "name": f"0.9 DL + {gamma_w:g} {case}",
+                "factors": {"D": 0.9, "D_MIN": 0.9, case: gamma_w},
+            })
+        elif action == "down":
+            live_text = f" + {live_factor:g} LL" if live_factor else ""
+            factors = {"D": 1.2, "D_MAX": 1.2, case: gamma_w}
+            if live_factor:
+                factors["L"] = live_factor
+            combinations.append({
+                "name": f"1.2 DL{live_text} + {gamma_w:g} {case}",
+                "factors": factors,
+            })
+        else:  # Direction can vary over the frame: envelope both dead-load signs.
+            combinations.extend(_wind_combinations(
+                ((case, "up"), (case, "down")),
+                roof_accessibility,
+                load_combination_standard,
+            ))
+    return combinations
+
+
+def add_load_cases(
+    roof_accessibility="Accessible",
+    building_type="Normal",
+    load_combination_standard=SANS_2019_COMBINATIONS,
+    building_roof="Duo Pitched",
+):
+    """Return fixed load cases and edition-dependent SLS/ULS combinations."""
     load_cases = [
         {"name": "D_MIN", "type": "dead"},
         {"name": "D_MAX", "type": "dead"},
@@ -182,63 +207,69 @@ def add_load_cases(roof_accessibility="Accessible"):
         {"name": "W0_0.3U", "type": "wind"},
         {"name": "W0_0.3D", "type": "wind"},
         {"name": "W90_0.2", "type": "wind"},
-        {"name": "W90_0.3", "type": "wind"}
+        {"name": "W90_0.3", "type": "wind"},
     ]
+    include_mixed = building_type == "Normal" and building_roof == "Duo Pitched"
+    if include_mixed:
+        load_cases.extend(
+            {"name": name, "type": "wind"}
+            for name in ("W0_0.2M1", "W0_0.3M1", "W0_0.2M2", "W0_0.3M2")
+        )
 
+    psi_live = _roof_accompanying_factor(roof_accessibility)
     serviceability_load_combinations = [
         {"name": "1.1 DL", "factors": {"D": 1.1, "D_MAX": 1.1}},
         {"name": "1.1 DL + 1.0 LL", "factors": {"D": 1.1, "D_MAX": 1.1, "L": 1.0}},
-        {"name": "0.9 DL + 0.6 W0_0.2U", "factors": {"D": 0.9, "D_MIN": 0.9, "W0_0.2U": 0.6}},
-        {"name": "1.1 DL + 0.3 LL + 0.6 W0_0.2D", "factors": {"D": 1.1, "D_MAX": 1.1, "L": 0.3, "W0_0.2D": 0.6}},
-        {"name": "0.9 DL + 0.6 W0_0.3U", "factors": {"D": 0.9, "D_MIN": 0.9, "W0_0.3U": 0.6}},
-        {"name": "1.1 DL + 0.3 LL + 0.6 W0_0.3D", "factors": {"D": 1.1, "D_MAX": 1.1, "L": 0.3, "W0_0.3D": 0.6}},
-        {"name": "0.9 DL + 0.3 LL + 0.6 W90_0.2", "factors": {"D": 0.9, "D_MIN": 0.9, "L": 0.3, "W90_0.2": 0.6}},
-        {"name": "0.9 DL + 0.3 LL + 0.6 W90_0.3", "factors": {"D": 0.9, "D_MIN": 0.9, "L": 0.3, "W90_0.3": 0.6}}
     ]
+    wind_actions = [
+        ("W0_0.2U", "up"), ("W0_0.2D", "down"),
+        ("W0_0.3U", "up"), ("W0_0.3D", "down"),
+        ("W90_0.2", "variable"), ("W90_0.3", "variable"),
+    ]
+    if include_mixed:
+        wind_actions.extend((case, "variable") for case in (
+            "W0_0.2M1", "W0_0.3M1", "W0_0.2M2", "W0_0.3M2"
+        ))
+    for case, action in wind_actions:
+        if action in ("up", "variable"):
+            serviceability_load_combinations.append({
+                "name": f"1.0 DL + 0.6 {case}",
+                "factors": {"D": 1.0, "D_MIN": 1.0, case: 0.6},
+            })
+        if action in ("down", "variable"):
+            live_text = f" + {psi_live:g} LL" if psi_live else ""
+            factors = {"D": 1.1, "D_MAX": 1.1, case: 0.6}
+            if psi_live:
+                factors["L"] = psi_live
+            serviceability_load_combinations.append({
+                "name": f"1.1 DL{live_text} + 0.6 {case}",
+                "factors": factors,
+            })
 
     load_combinations = [
-        {"name": "1.5 DL", "factors": {"D": 1.5}},
-        {"name": "1.2 DL + 1.6 LL", "factors": {"D": 1.2, "L": 1.6}},
-        {"name": "0.9 DL + 1.3 W0_0.2U", "factors": {"D": 0.9, "W0_0.2U": 1.3}},
-        {"name": "1.1 DL + 0.5 LL + 1.3 W0_0.2D", "factors": {"D": 1.1, "L": 0.5, "W0_0.2D": 1.3}},
-        {"name": "0.9 DL + 1.3 W0_0.3U", "factors": {"D": 0.9, "W0_0.3U": 1.3}},
-        {"name": "1.1 DL + 0.5 LL + 1.3 W0_0.3D", "factors": {"D": 1.1, "L": 0.5, "W0_0.3D": 1.3}},
-        {"name": "0.9 DL + 1.3 W90_0.2", "factors": {"D": 1.1, "W90_0.2": 1.3}},
-        {"name": "0.9 DL + 1.3 W90_0.3", "factors": {"D": 1.1, "W90_0.3": 1.3}}
+        {"name": "1.35 DL", "factors": {"D": 1.35, "D_MAX": 1.35}},
+        {"name": "1.2 DL + 1.6 LL", "factors": {"D": 1.2, "D_MAX": 1.2, "L": 1.6}},
     ]
-
-    serviceability_load_combinations = apply_unaccessible_roof_sls_rule(
-        serviceability_load_combinations, roof_accessibility
-    )
-    load_combinations = apply_unaccessible_roof_uls_rule(load_combinations, roof_accessibility)
-
+    load_combinations.extend(_wind_combinations(
+        wind_actions,
+        roof_accessibility,
+        load_combination_standard,
+    ))
     return load_cases, serviceability_load_combinations, load_combinations
 
-def add_SLS():
-    serviceability_load_combinations = [
-        {"name": "1.1 DL", "factors": {"D": 1.1, "D_MAX": 1.1}},
-        {"name": "1.1 DL + 1.0 LL", "factors": {"D": 1.1, "D_MAX": 1.1, "L": 1.0}},
-        {"name": "0.9 DL + 0.6 W0_0.2U", "factors": {"D": 0.9, "D_MIN": 0.9, "W0_0.2U": 0.6}},
-        {"name": "1.1 DL + 0.3 LL + 0.6 W0_0.2D", "factors": {"D": 1.1, "D_MAX": 1.1, "L": 0.3, "W0_0.2D": 0.6}},
-        {"name": "0.9 DL + 0.6 W0_0.3U", "factors": {"D": 0.9, "D_MIN": 0.9, "W0_0.3U": 0.6}},
-        {"name": "1.1 DL + 0.3 LL + 0.6 W0_0.3D", "factors": {"D": 1.1, "D_MAX": 1.1, "L": 0.3, "W0_0.3D": 0.6}},
-        {"name": "0.9 DL + 0.3 LL + 0.6 W90_0.2", "factors": {"D": 0.9, "D_MIN": 0.9, "L": 0.3, "W90_0.2": 0.6}},
-        {"name": "0.9 DL + 0.3 LL + 0.6 W90_0.3", "factors": {"D": 0.9, "D_MIN": 0.9, "L": 0.3, "W90_0.3": 0.6}}
-    ]
-    return apply_unaccessible_roof_sls_rule(serviceability_load_combinations, "Accessible")
 
-def add_ULS(roof_accessibility="Accessible"):
-    load_combinations = [
-        {"name": "1.5 DL", "factors": {"D": 1.5}},
-        {"name": "1.2 DL + 1.6 LL", "factors": {"D": 1.2, "L": 1.6}},
-        {"name": "0.9 DL + 1.3 W0_0.2U", "factors": {"D": 0.9, "W0_0.2U": 1.3}},
-        {"name": "1.1 DL + 0.5 LL + 1.3 W0_0.2D", "factors": {"D": 1.1, "L": 0.5, "W0_0.2D": 1.3}},
-        {"name": "0.9 DL + 1.3 W0_0.3U", "factors": {"D": 0.9, "W0_0.3U": 1.3}},
-        {"name": "1.1 DL + 0.5 LL + 1.3 W0_0.3D", "factors": {"D": 1.1, "L": 0.5, "W0_0.3D": 1.3}},
-        {"name": "0.9 DL + 1.3 W90_0.2", "factors": {"D": 1.1, "W90_0.2": 1.3}},
-        {"name": "0.9 DL + 1.3 W90_0.3", "factors": {"D": 1.1, "W90_0.3": 1.3}}
-    ]
-    return apply_unaccessible_roof_uls_rule(load_combinations, roof_accessibility)
+def add_SLS(roof_accessibility="Accessible"):
+    return add_load_cases(roof_accessibility)[1]
+
+
+def add_ULS(
+    roof_accessibility="Accessible",
+    load_combination_standard=SANS_2019_COMBINATIONS,
+):
+    return add_load_cases(
+        roof_accessibility,
+        load_combination_standard=load_combination_standard,
+    )[2]
 
 def safe_load_json(path: str | Path) -> dict:
     try:
@@ -259,7 +290,15 @@ def update_json_file(json_filename, b_data, wind_data):
     nodal_loads         = generate_nodal_loads(new_nodes)
     materials           = add_materials()
     roof_accessibility = b_data.get("roof_accessibility", "Accessible")
-    LC, SLS, ULS        = add_load_cases(roof_accessibility)
+    load_combination_standard = b_data.get(
+        "load_combination_standard", SANS_2019_COMBINATIONS
+    )
+    LC, SLS, ULS = add_load_cases(
+        roof_accessibility,
+        b_data.get("building_type", "Normal"),
+        load_combination_standard,
+        b_data.get("building_roof", "Duo Pitched"),
+    )
     steel_props         = steel_prop(b_data['steel_grade'])
 
     # build wind_input without mutating caller's dict
@@ -374,6 +413,7 @@ def main() -> None:
     rafter_bracing_spacing = 3     # number of braced points per rafter
     steel_grade = "Steel_S355"     # "Steel_S355" or "Steel_S275"
     roof_accessibility = "Unaccessible"  # "Accessible" or "Unaccessible"
+    load_combination_standard = SANS_2019_COMBINATIONS  # or PRE_2019_COMBINATIONS
     blocking_factor = 0.0          # Canopy only: 0.0 (open) to 1.0 (fully blocked)
     roof_span = gable_width / 2 if building_roof == "Duo Pitched" else gable_width
 
@@ -388,6 +428,7 @@ def main() -> None:
         "col_bracing_spacing": col_bracing_spacing,
         "rafter_bracing_spacing": rafter_bracing_spacing,
         "roof_accessibility": roof_accessibility,
+        "load_combination_standard": load_combination_standard,
         "blocking_factor": blocking_factor,
         "roof_pitch": math.degrees(math.atan((apex_height - eaves_height) / roof_span)),
         "steel_grade": steel_grade,

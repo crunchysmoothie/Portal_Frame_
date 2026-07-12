@@ -81,6 +81,8 @@ def wind_data_duo_n():
 
     results_up = []
     results_down = []
+    results_mix_1 = []
+    results_mix_2 = []
     results_90 = []
 
     wind = data['wind_data'][0]
@@ -138,6 +140,14 @@ def wind_data_duo_n():
         "J": cpe_positive[4]
     }
 
+    # Table 10 Note 1 requires the windward F/G/H extrema to be combined
+    # independently with the leeward I/J extrema. The all-negative and
+    # all-positive arrangements above are supplemented by these two mixed cases.
+    zones_mix_1 = dict(zones_up)
+    zones_mix_1.update({"I": zones_down["I"], "J": zones_down["J"]})
+    zones_mix_2 = dict(zones_down)
+    zones_mix_2.update({"I": zones_up["I"], "J": zones_up["J"]})
+
     zones_90 = {
         "A": -1.2,
         "B": -0.8,
@@ -172,6 +182,19 @@ def wind_data_duo_n():
             "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2) * r_spacing / -1000, 5),
             "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3) * r_spacing / -1000, 5)
         })
+
+    for source, target in (
+        (zones_mix_1, results_mix_1),
+        (zones_mix_2, results_mix_2),
+    ):
+        for zone, cpe in source.items():
+            target.append({
+                "Zone": zone,
+                "cpe": round(cpe, 4),
+                "Length": zones[zone]["0_deg"],
+                "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2) * r_spacing / -1000, 5),
+                "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3) * r_spacing / -1000, 5),
+            })
 
     for zone, cpe in zones_90.items():
         results_90.append({
@@ -217,6 +240,8 @@ def wind_data_duo_n():
 
     data["wind_zones_0U"] = results_up
     data["wind_zones_0D"] = results_down
+    data["wind_zones_0M1"] = results_mix_1
+    data["wind_zones_0M2"] = results_mix_2
     data["wind_zones_90"] = results_90
 
     json_str = json.dumps(data, separators=(',', ':'))
@@ -237,20 +262,22 @@ def wind_data_duo_n():
 def wind_data_mono_n():
     angles = np.array([5, 15, 30, 45])
 
-    # Wind 0 Upward
+    # SANS 10160-3 Table 8. The suction envelope includes both theta=0
+    # and theta=180 so the direction is a fixed design requirement rather than
+    # a user-selected engineering judgement. Columns map to roof zones F/G/H.
     neg_w0 = np.array([
-        [-1.7, -1.2, -0.6, -0.6, -0.6],
-        [-0.9, -0.8, -0.3, -0.4, -1.0],
-        [-0.5, -0.5, -0.2, -0.4, -0.5],
-        [0, 0, 0, -0.2, -0.3]
+        [-2.3, -1.3, -0.8],
+        [-2.5, -1.3, -0.9],
+        [-1.1, -0.8, -0.8],
+        [-0.6, -0.7, -0.5],
     ])
 
-    # Wind 0 Downward
+    # Positive theta=0 values from Table 8.
     pos_w0 = np.array([
-        [0, 0, 0, -0.6, 0.2],
-        [0.2, 0.2, 0.2, 0, 0],
-        [0.7, 0.7, 0.4, 0, 0],
-        [0.7, 0.7, 0.6, 0, 0]
+        [0.0, 0.0, 0.0],
+        [0.2, 0.2, 0.2],
+        [0.7, 0.7, 0.4],
+        [0.7, 0.7, 0.6],
     ])
 
     # Wind 90 coefficients from SANS 10160-3 Table 9 (mono-pitch, cpe,10)
@@ -309,8 +336,8 @@ def wind_data_mono_n():
         "F": cpe_negative[0],
         "G": cpe_negative[1],
         "H": cpe_negative[2],
-        "I": cpe_negative[3],
-        "J": cpe_negative[4]
+        "I": cpe_negative[2],
+        "J": cpe_negative[2]
     }
 
     zones_down = {
@@ -322,8 +349,8 @@ def wind_data_mono_n():
         "F": cpe_positive[0],
         "G": cpe_positive[1],
         "H": cpe_positive[2],
-        "I": cpe_positive[3],
-        "J": cpe_positive[4]
+        "I": cpe_positive[2],
+        "J": cpe_positive[2]
     }
 
     zones_90 = {
