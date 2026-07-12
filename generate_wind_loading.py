@@ -85,14 +85,20 @@ def _process_0deg(zones: List[Dict[str, Any]], left_cols: List[Dict[str, Any]],
     for key, case in [("cpi=0.2", case_02), ("cpi=-0.3", case_03)]:
         # Left columns - Zone D (lengths converted to mm)
         _distribute(zd["D"]["Length"] * 1000, left_cols, zd["D"][key], case, loads)
-        # Roof zones along slope
-        idx, pos = 0, 0.0
-        for z in STRUCTURAL_ROOF_ZONES_0DEG:
-            # lay out zones sequentially along rafters
-            # convert horizontal zone length to mm of inclined rafter
-            length = zd[z]["Length"] * 1000 / math.cos(pitch)
-            idx, pos = _distribute(length, rafters, zd[z][key], case,
-                                   loads, idx, pos)
+        if roof_type == "Mono Pitched":
+            # Figure 10 zones F/G/H vary with portal position along the
+            # building, not along a single rafter. Design the repeated portal
+            # for the governing cpe,10 zone without asking for frame position.
+            intensity = max((zd[z][key] for z in ("F", "G", "H")), key=abs)
+            roof_len = sum(m["length"] for m in rafters) * 1000
+            _distribute(roof_len, rafters, intensity, case, loads)
+        else:
+            # Figure 11 interior-frame zones across the duo-pitch roof.
+            idx, pos = 0, 0.0
+            for z in STRUCTURAL_ROOF_ZONES_0DEG:
+                length = zd[z]["Length"] * 1000 / math.cos(pitch)
+                idx, pos = _distribute(length, rafters, zd[z][key], case,
+                                       loads, idx, pos)
         # Right columns - Zone E (lengths converted to mm)
         _distribute(zd["E"]["Length"] * 1000, right_cols, zd["E"][key], case, loads)
 
@@ -101,11 +107,14 @@ def _process_90deg(zones: List[Dict[str, Any]], left_cols: List[Dict[str, Any]],
                    rafters: List[Dict[str, Any]], right_cols: List[Dict[str, Any]],
                    case_02: str, case_03: str, loads: List[Dict[str, Any]]) -> None:
     zd = _zone_dict(zones)
-    roof_len = sum(m["length"] for m in rafters) * 1000  # total rafter length in mm
+    roof_len = sum(m["length"] for m in rafters) * 1000
     for key, case in [("cpi=0.2", case_02), ("cpi=-0.3", case_03)]:
-        _distribute(zd["A"]["Length"] * 1000, left_cols, zd["A"][key], case, loads)
-        _distribute(roof_len, rafters, zd["H"][key], case, loads)
-        _distribute(zd["A"]["Length"] * 1000, right_cols, zd["A"][key], case, loads)
+        # Figures 10/11: F/G/H/I vary along the building for theta=90.
+        # Apply the governing roof-zone envelope to the transverse portal.
+        # Longitudinal wall pressure belongs to the end-wall/bracing system and
+        # is not applied as an in-plane load to this 2D transverse frame.
+        intensity = max((zd[z][key] for z in ("F", "G", "H", "I")), key=abs)
+        _distribute(roof_len, rafters, intensity, case, loads)
 
 
 def _process_canopy_0deg(zones: List[Dict[str, Any]], rafters: List[Dict[str, Any]],
@@ -218,15 +227,15 @@ def _process_canopy_structural(wd: Dict[str, Any], rafters: List[Dict[str, Any]]
     # Mono-pitch: apply resultant at d/4 from windward edge by loading half-span.
     if roof_type == "Mono Pitched":
         # Windward from left -> first half loaded.
-        _distribute(roof_len / 2, rafters, w_up, "W0_0.2U", loads)
-        _distribute(roof_len / 2, rafters, w_up, "W0_0.3U", loads)
-        _distribute(roof_len / 2, rafters, w_down, "W0_0.2D", loads)
-        _distribute(roof_len / 2, rafters, w_down, "W0_0.3D", loads)
+        _distribute(roof_len / 2, rafters, 2 * w_up, "W0_0.2U", loads)
+        _distribute(roof_len / 2, rafters, 2 * w_up, "W0_0.3U", loads)
+        _distribute(roof_len / 2, rafters, 2 * w_down, "W0_0.2D", loads)
+        _distribute(roof_len / 2, rafters, 2 * w_down, "W0_0.3D", loads)
 
         # Windward from right -> second half loaded.
         i_mid, p_mid = _advance_position(rafters, roof_len / 2)
-        _distribute(roof_len / 2, rafters, w_down, "W90_0.2", loads, i_mid, p_mid)
-        _distribute(roof_len / 2, rafters, w_up, "W90_0.3", loads, i_mid, p_mid)
+        _distribute(roof_len / 2, rafters, 2 * w_down, "W90_0.2", loads, i_mid, p_mid)
+        _distribute(roof_len / 2, rafters, 2 * w_up, "W90_0.3", loads, i_mid, p_mid)
         return
 
     # Duo-pitch: one-pitch-loaded requirement.
@@ -234,12 +243,15 @@ def _process_canopy_structural(wd: Dict[str, Any], rafters: List[Dict[str, Any]]
     i_mid, p_mid = _advance_position(rafters, left_len)
 
     # Wind from left: load left pitch only.
-    _distribute(left_len, rafters, w_up, "W0_0.2U", loads)
-    _distribute(left_len, rafters, w_up, "W0_0.3U", loads)
-    _distribute(left_len, rafters, w_down, "W0_0.2D", loads)
-    _distribute(left_len, rafters, w_down, "W0_0.3D", loads)
+    # Main symmetric arrangement: both pitches carry the overall action.
+    _distribute(roof_len, rafters, w_up, "W0_0.2U", loads)
+    _distribute(roof_len, rafters, w_up, "W0_0.3U", loads)
+    _distribute(roof_len, rafters, w_down, "W0_0.2D", loads)
+    _distribute(roof_len, rafters, w_down, "W0_0.3D", loads)
 
     # Wind from right: load right pitch only.
+    # Additional one-pitch arrangement required by 8.4.6(b). For a symmetric
+    # portal the opposite pitch gives mirrored member effects and reactions.
     _distribute(left_len, rafters, w_down, "W90_0.2", loads, i_mid, p_mid)
     _distribute(left_len, rafters, w_up, "W90_0.3", loads, i_mid, p_mid)
  
@@ -260,6 +272,8 @@ def wind_loading(data: Optional[Union[PortalFrame, Dict[str, Any]]] = None) -> L
         wind_data = data.wind_data[0]
         zones_0u = data.wind_zones_0U
         zones_0d = data.wind_zones_0D
+        zones_0m1 = data.wind_zones_0M1
+        zones_0m2 = data.wind_zones_0M2
         zones_90 = data.wind_zones_90
     else:
         nodes = _get_nodes(data)
@@ -268,6 +282,8 @@ def wind_loading(data: Optional[Union[PortalFrame, Dict[str, Any]]] = None) -> L
         wind_data = data["wind_data"][0]
         zones_0u = data["wind_zones_0U"]
         zones_0d = data["wind_zones_0D"]
+        zones_0m1 = data.get("wind_zones_0M1", [])
+        zones_0m2 = data.get("wind_zones_0M2", [])
         zones_90 = data["wind_zones_90"]
 
     wd = wind_data
@@ -293,6 +309,9 @@ def wind_loading(data: Optional[Union[PortalFrame, Dict[str, Any]]] = None) -> L
     else:
         _process_0deg(zones_0u, left_cols, rafters, right_cols, pitch, "W0_0.2U", "W0_0.3U", loads, roof_type)
         _process_0deg(zones_0d, left_cols, rafters, right_cols, pitch, "W0_0.2D", "W0_0.3D", loads, roof_type)
+        if roof_type == "Duo Pitched":
+            _process_0deg(zones_0m1, left_cols, rafters, right_cols, pitch, "W0_0.2M1", "W0_0.3M1", loads, roof_type)
+            _process_0deg(zones_0m2, left_cols, rafters, right_cols, pitch, "W0_0.2M2", "W0_0.3M2", loads, roof_type)
         _process_90deg(zones_90, left_cols, rafters, right_cols, "W90_0.2", "W90_0.3", loads)
 
     return loads

@@ -11,6 +11,7 @@ def main() -> None:
     building_roof = "Duo Pitched"     # "Mono Pitched" or "Duo Pitched"
     building_type = "Normal"          # "Normal" or "Canopy"
     roof_accessibility = "Unaccessible" # "Accessible" or "Unaccessible"
+    load_combination_standard = "SANS 10160-1:2019"  # or "Pre-2019"
     blocking_factor = 0.0             # Canopy only: 0.0 (open) to 1.0 (fully blocked)
     eaves_height = 9.5 * 1000
     apex_height = 11.1 * 1000
@@ -27,6 +28,7 @@ def main() -> None:
         "building_type": building_type,
         "building_roof": building_roof,
         "roof_accessibility": roof_accessibility,
+        "load_combination_standard": load_combination_standard,
         "blocking_factor": blocking_factor,
         "eaves_height": eaves_height,
         "apex_height": apex_height,
