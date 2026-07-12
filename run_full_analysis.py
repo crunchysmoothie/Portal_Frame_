@@ -12,13 +12,13 @@ def main() -> None:
     building_type = "Normal"          # "Normal" or "Canopy"
     roof_accessibility = "Unaccessible" # "Accessible" or "Unaccessible"
     blocking_factor = 0.0             # Canopy only: 0.0 (open) to 1.0 (fully blocked)
-    eaves_height = 7 * 1000
-    apex_height = 7.8 * 1000
-    gable_width = 22 * 1000
-    rafter_spacing = 6 * 1000
-    building_length = 54 * 1000
+    eaves_height = 9.5 * 1000
+    apex_height = 11.1 * 1000
+    gable_width = 26 * 1000
+    rafter_spacing = 6.0 * 1000
+    building_length = 60 * 1000
     col_bracing_spacing = 1
-    rafter_bracing_spacing = 3
+    rafter_bracing_spacing = 4
     steel_grade = "Steel_S355"
 
     roof_span = gable_width / 2 if building_roof == "Duo Pitched" else gable_width
@@ -45,7 +45,7 @@ def main() -> None:
         "return_period": 50,
         "terrain_category": "B",
         "topographic_factor": 1.0,
-        "altitude": 140,
+        "altitude": 1140,
     }
 
     json_filename = "input_data.json"
