@@ -1,3 +1,4 @@
+import math
 import time
 import multiprocessing
 import warnings
@@ -169,6 +170,11 @@ def analyze_combination(args):
         for nd in frame.nodes.values():
             dx = abs(nd.DX[cn])
             dy = abs(nd.DY[cn])
+            # PyNite can complete a singular analysis with NaN results. Since
+            # comparisons with NaN are false, those models previously appeared
+            # to have zero deflection and were incorrectly accepted.
+            if not math.isfinite(float(dx)) or not math.isfinite(float(dy)):
+                return None
             if dy > worst_v:
                 worst_v, worst_v_combo = dy, cn
             if dx > worst_h:
@@ -361,7 +367,14 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
                             'Deflection in Y', 'Node'],
                    tablefmt='pretty'))
 
-    return best['frame'], best['dx_comb'], member_db, r_section_type, c_section_type, (best['r_name'], best['c_name'])
+    # A direction can legitimately have zero displacement in every combination,
+    # leaving its governing-combination name empty. Always return a real,
+    # analysed SLS combination for deformation rendering.
+    render_combo = best['dx_comb'] or best['dy_comb']
+    if not render_combo and data.serviceability_load_combinations:
+        render_combo = data.serviceability_load_combinations[0]['name']
+
+    return best['frame'], render_combo, member_db, r_section_type, c_section_type, (best['r_name'], best['c_name'])
 
 def internal_forces(frame, r_type, r_mem, c_type, c_mem, data: PortalFrame, combo, md):
     steel_grade = data.steel_grade
@@ -420,6 +433,10 @@ def member_design_checks(frame, r_type, r_mem, c_type, c_mem, data, md):
         results = internal_forces(frame, r_type, r_mem, c_type, c_mem,
                                  data, combo['name'], md)
         for res in results:
+            ratios = (res['CSS'], res['OMS'], res['LTB'][0], res['LTB'][1])
+            # Never interpret NaN or infinity as a passing utilisation ratio.
+            if not all(math.isfinite(float(ratio)) for ratio in ratios):
+                return False
             if (
                 res['CSS'] > 1
                 or res['OMS'] > 1
@@ -463,6 +480,29 @@ def uls_results(frame, r_type, r_mem, c_type, c_mem, data, md):
 
 def render_model(frame, combo):
     """Render the analysed model with nodal displacement labels and loads."""
+
+    available_combos = getattr(frame, "load_combos", {})
+
+    def _has_displacement_results(combo_name):
+        if not combo_name or combo_name not in available_combos:
+            return False
+        for node in frame.nodes.values():
+            displacements = getattr(node, "DX", {})
+            try:
+                if combo_name in displacements:
+                    return True
+            except TypeError:
+                continue
+        return False
+
+    if not _has_displacement_results(combo):
+        combo = next(
+            (name for name in available_combos if _has_displacement_results(name)),
+            None,
+        )
+    if combo is None:
+        print("Warning: No analysed load combination is available to render.")
+        return
 
     def _get_disp(comp, combo_name):
         try:
