@@ -10,16 +10,16 @@ def main() -> None:
     # Update these values in THIS file as needed.
     building_roof = "Duo Pitched"     # "Mono Pitched" or "Duo Pitched"
     building_type = "Normal"          # "Normal" or "Canopy"
-    roof_accessibility = "Unaccessible" # "Accessible" or "Unaccessible"
-    load_combination_standard = "SANS 10160-1:2019"  # or "Pre-2019"
+    roof_accessibility = "Inaccessible"  # "Accessible" or "Inaccessible"
+    load_combination_standard = "SANS 10160-1:2019"  # "SANS 10160-1:2019" or "Pre-2019"
     blocking_factor = 0.0             # Canopy only: 0.0 (open) to 1.0 (fully blocked)
-    eaves_height = 9.5 * 1000
-    apex_height = 11.1 * 1000
-    gable_width = 26 * 1000
-    rafter_spacing = 6.0 * 1000
-    building_length = 60 * 1000
+    eaves_height = 6.5 * 1000
+    apex_height = 8.09 * 1000
+    gable_width = 18 * 1000
+    rafter_spacing = 6 * 1000
+    building_length = 42 * 1000
     col_bracing_spacing = 1
-    rafter_bracing_spacing = 4
+    rafter_bracing_spacing = 3
     steel_grade = "Steel_S355"
 
     roof_span = gable_width / 2 if building_roof == "Duo Pitched" else gable_width
@@ -43,11 +43,11 @@ def main() -> None:
 
     wind_data = {
         "wind": "3s gust",
-        "fundamental_basic_wind_speed": 36,
+        "fundamental_basic_wind_speed": 32,
         "return_period": 50,
         "terrain_category": "B",
         "topographic_factor": 1.0,
-        "altitude": 1140,
+        "altitude": 830,
     }
 
     json_filename = "input_data.json"
@@ -57,7 +57,14 @@ def main() -> None:
     user_input.add_live_loads(json_filename)
     user_input.add_dead_loads(json_filename)
 
-    portal_frame_analysis.main()
+    snapshot_path = portal_frame_analysis.main()
+    if snapshot_path is not None:
+        print(
+            "Stored analysis is ready for reporting. Run "
+            "'.\\.venv314\\Scripts\\python.exe design_calculations.py' to "
+            "generate the report without "
+            "reanalysing the frame."
+        )
 
 
 if __name__ == "__main__":

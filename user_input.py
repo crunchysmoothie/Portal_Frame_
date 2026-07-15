@@ -160,7 +160,7 @@ def _wind_factor(load_combination_standard):
 
 def _roof_accompanying_factor(roof_accessibility):
     # SANS 10160-1 Table 2: category H = 0; category J = 0.3.
-    return 0.0 if roof_accessibility == "Unaccessible" else 0.3
+    return 0.0 if roof_accessibility == "Inaccessible" else 0.3
 
 
 def _wind_combinations(wind_cases, roof_accessibility, load_combination_standard):
@@ -412,7 +412,7 @@ def main() -> None:
     col_bracing_spacing = 1        # number of braced points per column
     rafter_bracing_spacing = 3     # number of braced points per rafter
     steel_grade = "Steel_S355"     # "Steel_S355" or "Steel_S275"
-    roof_accessibility = "Unaccessible"  # "Accessible" or "Unaccessible"
+    roof_accessibility = "Inaccessible"  # "Accessible" or "Inaccessible"
     load_combination_standard = SANS_2019_COMBINATIONS  # or PRE_2019_COMBINATIONS
     blocking_factor = 0.0          # Canopy only: 0.0 (open) to 1.0 (fully blocked)
     roof_span = gable_width / 2 if building_roof == "Duo Pitched" else gable_width
