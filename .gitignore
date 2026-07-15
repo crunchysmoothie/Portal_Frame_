@@ -3,6 +3,8 @@
 /workspace.xml
 /input_data.json
 /input_data(BU).json
+/output
+/tmp
 /.idea
 /.codes
 .idea/

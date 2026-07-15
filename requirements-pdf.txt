@@ -1,0 +1,3 @@
+# PDF calculation-sheet export (ReportLab 5.0.0 corrupts the current math tables)
+reportlab==4.4.9
+matplotlib==3.10.8

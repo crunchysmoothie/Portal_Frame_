@@ -2,36 +2,78 @@ import math
 import member_database as mdb
 import json
 
-def member_class_check(Cu, member_prop, grade):
-    fy = grade[0]['fy']
+def member_class_details(Cu, member_prop, grade):
+    """Return the flange/web classification calculation and governing class."""
+    fy = grade[0]['fy'] if isinstance(grade, (list, tuple)) else grade['fy']
     b, h, tf, tw = member_prop['b'], member_prop['h'], member_prop['tf'], member_prop['tw']
     # Flange Class
-    ratio = b / (2 * tf)
-    limits = [145 / math.sqrt(fy), 170 / math.sqrt(fy), 200 / math.sqrt(fy)]
-    fl_cl = next((i + 1 for i, limit in enumerate(limits) if ratio < limit), 4)
+    flange_ratio = b / (2 * tf)
+    flange_limits = [145 / math.sqrt(fy), 170 / math.sqrt(fy), 200 / math.sqrt(fy)]
+    fl_cl = next((i + 1 for i, limit in enumerate(flange_limits) if flange_ratio < limit), 4)
 
     # Web Class
     cy = member_prop['A'] * fy
     web_ratio = (h - 2 * tf) / tw
-    limits = [(1100, 0.39), (1700, 0.61), (1900, 0.65)]
-    cl_w = next((j + 1 for j, (limit, coeff) in enumerate(limits) if
-                 web_ratio < (limit / math.sqrt(fy)) * (1 - coeff * (Cu / (0.9 * cy)))), 4)
+    web_coefficients = [(1100, 0.39), (1700, 0.61), (1900, 0.65)]
+    # Axial tension must not reduce the allowable web slenderness through a
+    # negative compression ratio. For combined tension and bending, section
+    # classification is based on the flexural compression component here.
+    compression = max(float(Cu), 0.0)
+    compression_ratio = compression / (0.9 * cy)
+    web_limits = [
+        (limit / math.sqrt(fy)) * (1 - coeff * compression_ratio)
+        for limit, coeff in web_coefficients
+    ]
+    cl_w = next((j + 1 for j, limit in enumerate(web_limits) if web_ratio < limit), 4)
 
-    return max(fl_cl, cl_w)
+    return {
+        'flange_ratio': flange_ratio,
+        'flange_limits': flange_limits,
+        'flange_class': fl_cl,
+        'web_ratio': web_ratio,
+        'web_limits': web_limits,
+        'web_class': cl_w,
+        'compression_ratio': compression_ratio,
+        'class': max(fl_cl, cl_w),
+    }
 
-def element_properties(Mx_max, Mx_top, Mx_bot):
+
+def member_class_check(Cu, member_prop, grade):
+    return member_class_details(Cu, member_prop, grade)['class']
+
+def element_property_details(Mx_max, Mx_top, Mx_bot):
+    """Return the moment-gradient quantities used for omega1 and omega2."""
     # X-axis Checks
     m_min = min(Mx_top, Mx_bot, key=abs)
     m_max = max(Mx_top, Mx_bot, key=abs)
-    k = -1 * m_min / m_max
+    kappa = -m_min / m_max if abs(m_max) > 1e-12 else 0.0
 
+    # Clause 13.8.5: the analysed members carry transverse distributed loads.
     w1 = 1.0
-    if Mx_max > abs(Mx_top) * 1.1 and Mx_max > abs(Mx_bot) * 1.1:
+    intermediate_peak = Mx_max > abs(Mx_top) * 1.1 and Mx_max > abs(Mx_bot) * 1.1
+    if intermediate_peak:
         w2 = 1.0
+        w2_uncapped = 1.0
     else:
-        w2 = min(1.75 + 1.05 * k + 0.3 * k ** 2, 2.5)
+        w2_uncapped = 1.75 + 1.05 * kappa + 0.3 * kappa ** 2
+        w2 = min(w2_uncapped, 2.5)
 
-    return w1, round(w2, 4)
+    return {
+        'm_min': m_min,
+        'm_max': m_max,
+        'kappa': kappa,
+        'omega1': w1,
+        'omega1_reason': 'transverse distributed load between supports',
+        'omega2': round(w2, 4),
+        'omega2_uncapped': w2_uncapped,
+        'intermediate_peak': intermediate_peak,
+    }
+
+
+def element_properties(Mx_max, Mx_top, Mx_bot):
+    details = element_property_details(Mx_max, Mx_top, Mx_bot)
+
+    return details['omega1'], details['omega2']
 
 def section_properties(mb, mem, mat_prop):
     fy = mat_prop['fy']
@@ -56,7 +98,8 @@ def section_properties(mb, mem, mat_prop):
     Cey = math.pi ** 2 * E * Iy / (Kly ** 2)
     Mrx = 0.9 * fy * Zx / 1000
     Mry = 0.9 * fy * Zy / 1000
-    Mrx_ltb = ltb_moment(mem, mb, mat_prop)
+    ltb = ltb_properties(mem, mb, mat_prop)
+    Mrx_ltb = ltb['Mrx_ltb']
 
     sec_prop = {
         'Cr': Cr,
@@ -66,14 +109,21 @@ def section_properties(mb, mem, mat_prop):
         'Cey': Cey,
         'Mrx': Mrx,
         'Mry': Mry,
+        'Tr': Cr,
         'Mrx_ltb': Mrx_ltb,
+        'Mcr': ltb['Mcr'],
+        'Mp': ltb['Mp'],
+        'My': ltb['My'],
+        'omega2': ltb['omega2'],
+        'Zx': Zx,
+        'A': mb['A'],
         'lamda_x': lamda_x,
         'lamda_y': lamda_y
     }
 
     return sec_prop
 
-def ltb_moment(mem, mem_prop, mat_prop):
+def ltb_properties(mem, mem_prop, mat_prop):
     G = mat_prop['G']
     fy = mat_prop['fy']
     E = mat_prop['E']
@@ -100,7 +150,19 @@ def ltb_moment(mem, mem_prop, mat_prop):
     else:
         Mr = 0.9 * Mcr
 
-    return Mr
+    return {
+        'omega2': w2,
+        'Mcr': Mcr,
+        'Mp': Mp,
+        'My': My,
+        'Mi': Mi,
+        'Mrx_ltb': Mr,
+    }
+
+
+def ltb_moment(mem, mem_prop, mat_prop):
+    """Return the factored laterally unsupported moment resistance."""
+    return ltb_properties(mem, mem_prop, mat_prop)['Mrx_ltb']
 
 def cross_sectional_strength(mem, sec_props):
     cl = mem['Class']
@@ -142,7 +204,7 @@ def lateral_torsional_buckling(mem, sec_props):
 
     Cr = sec_props['Cry']
     Cex = sec_props['Cex']
-    Mrx = sec_props['Mrx']
+    Mrx = sec_props['Mrx_ltb']
 
     U1x = max(1, w1 / (1 - (Cu / Cex)))
     m_fac = 0.85 if cl < 3 else 1.0
@@ -153,8 +215,31 @@ def lateral_torsional_buckling(mem, sec_props):
 
     return Check1, Check2
 
+
+def tension_and_bending(mem, sec_props):
+    """SANS 10162-1 clause 13.9 combined axial tension and bending."""
+    Tu = abs(float(mem['Cu']))
+    Mx = abs(float(mem['Mx_max']))
+    Tr = sec_props['Tr']
+    Mr_yield = sec_props['Mrx']
+    Mr_ltb = sec_props['Mrx_ltb']
+    area = sec_props['A']
+    zx = sec_props['Zx']
+
+    # Clause 13.9(a): tension is additive and can never reduce utilisation.
+    cross_section = Tu / Tr + Mx / Mr_yield
+
+    # Clause 13.9(b): tension relieves compressive bending stress. Preserve the
+    # code check but do not report a negative utilisation. The additive check
+    # above remains part of the governing envelope.
+    ltb_stress = max(0.0, Mx / Mr_ltb - Tu * zx / (Mr_ltb * area))
+    bending = Mx / Mr_ltb
+    return cross_section, cross_section, (ltb_stress, bending)
+
 def member_design(mb, mem, mat_prop):
     sec_props = section_properties(mb, mem, mat_prop)
+    if float(mem['Cu']) < 0:
+        return tension_and_bending(mem, sec_props)
     CSS = cross_sectional_strength(mem, sec_props)
     OMS = overall_member_strength(mem, sec_props)
     LTB = lateral_torsional_buckling(mem, sec_props)

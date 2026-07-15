@@ -105,7 +105,7 @@ class WindLoadingGenerationTests(unittest.TestCase):
         ):
             with self.subTest(standard=standard):
                 _, sls, uls = user_input.add_load_cases(
-                    "Unaccessible", "Normal", standard
+                    "Inaccessible", "Normal", standard
                 )
                 wind_factors = {
                     factors[case]

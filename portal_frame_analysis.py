@@ -327,14 +327,14 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
         return None, None, None, None, None
 
     best = min(candidates, key=lambda d: d['weight'])
-    print(f"► Lightest combination:")
+    print("Lightest combination:")
     print(f"   Rafter: {best['r_name']}")
     print(f"   Column: {best['c_name']}")
     print(f"   Total steel: {best['weight']:.1f} kg")
-    print(f"   Max Δy: {best['dy']:.2f} mm   (limit {vert_limit:.2f})")
-    print(f"   Δy Load Combination: {best['dy_comb']}")
-    print(f"   Max Δx: {best['dx']:.2f} mm   (limit {horiz_limit:.2f})")
-    print(f"   Δx Load Combination: {best['dx_comb']}")
+    print(f"   Max dy: {best['dy']:.2f} mm   (limit {vert_limit:.2f})")
+    print(f"   dy Load Combination: {best['dy_comb']}")
+    print(f"   Max dx: {best['dx']:.2f} mm   (limit {horiz_limit:.2f})")
+    print(f"   dx Load Combination: {best['dx_comb']}")
     print(f"   Search time: {time.time() - start:.3f} s")
 
     # --- Output the worst deflections for each SLS load case ---------------------
@@ -376,15 +376,15 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
 
     return best['frame'], render_combo, member_db, r_section_type, c_section_type, (best['r_name'], best['c_name'])
 
-def internal_forces(frame, r_type, r_mem, c_type, c_mem, data: PortalFrame, combo, md):
+def extract_member_actions(frame, r_type, r_mem, c_type, c_mem,
+                           data: PortalFrame, combo):
+    """Extract final member actions once for analysis and downstream reports."""
+
     steel_grade = data.steel_grade
     fr = data.frame_data[0]
     rafter_span = fr['gable_width'] / (2 if fr['building_roof'] == "Duo Pitched" else 1)
-    col_kx = 1.2 * data.frame_data[0]['eaves_height']
     raf_kx = rafter_span
     internal_loads = []
-    member_des = []
-    mat_props = data.steel_grade
 
     for mem in data.members:
         l = mem.length
@@ -398,11 +398,19 @@ def internal_forces(frame, r_type, r_mem, c_type, c_mem, data: PortalFrame, comb
         Mx_bot = round(frame.members[mem.name].moment('Mz', l * 999, combo)/1000, 3)
 
         w1, w2 = element_properties(Mx_max, Mx_top, Mx_bot)
+        lx = (raf_kx if mem_type == 'rafter' else data.frame_data[0]['eaves_height']) / 1000
+        kx = 1.0 if mem_type == 'rafter' else 1.2
+        ly = l
+        ky = 1.0
 
         internal_loads.append({
             'Name': mem.name,
-            'kly': l,
-            'klx': (raf_kx if mem_type == 'rafter' else col_kx)/1000,
+            'kly': ky * ly,
+            'klx': kx * lx,
+            'kx': kx,
+            'lx': lx,
+            'ky': ky,
+            'ly': ly,
             'type': mem_type,
             'section_type': sec_type,
             'section': t_sec,
@@ -414,6 +422,16 @@ def internal_forces(frame, r_type, r_mem, c_type, c_mem, data: PortalFrame, comb
             'w1': w1,
             'w2': w2
         })
+
+    return internal_loads
+
+
+def internal_forces(frame, r_type, r_mem, c_type, c_mem, data: PortalFrame, combo, md):
+    internal_loads = extract_member_actions(
+        frame, r_type, r_mem, c_type, c_mem, data, combo
+    )
+    member_des = []
+    mat_props = data.steel_grade
 
     for memb in internal_loads:
         mem_props = mdb.member_properties(memb['section_type'], memb['section'], md)
@@ -446,8 +464,34 @@ def member_design_checks(frame, r_type, r_mem, c_type, c_mem, data, md):
                 return False
     return True
 
-def uls_results(frame, r_type, r_mem, c_type, c_mem, data, md):
-    """Print ULS design ratios for each member and load combination."""
+def uls_results(frame, r_type, r_mem, c_type, c_mem, data, md,
+                calculation_results=None):
+    """Print stored ULS results, falling back to direct calculation if needed."""
+
+    if calculation_results is not None:
+        table = [
+            [
+                result.member,
+                result.load_combination,
+                result.axial_action,
+                result.governing_check,
+                round(result.governing_ratio, 3),
+                result.status,
+            ]
+            for result in calculation_results
+        ]
+        print(
+            tabulate(
+                table,
+                headers=[
+                    'Member', 'Load Case', 'Axial Action',
+                    'Governing Check', 'Utilisation', 'Status',
+                ],
+                tablefmt='pretty',
+            )
+        )
+        return
+
     table = []
     for combo in data.load_combinations:
         results = internal_forces(
@@ -575,7 +619,9 @@ def render_model(frame, combo):
         for key, dist_loads in original_member_dist_loads.items():
             frame.members[key].DistLoads = dist_loads
 
-def main():
+def main(render=True, snapshot_path="output/analysis/analysis_results.json"):
+    """Run one analysis, store its complete results, and optionally render it."""
+
     preferred_section = 'Yes'      # or 'No', based on user preference
     r_section_type = 'I-Sections'  # or 'H-Sections', based on user preference
     c_section_type = 'I-Sections'  # or 'H-Sections', based on user preference
@@ -587,10 +633,51 @@ def main():
         data = import_data('input_data.json')
         r_mem = mdb.member_properties(r_section_typ, best_section[0], member_db)
         c_mem = mdb.member_properties(c_section_typ, best_section[1], member_db)
-        uls_results(frame, r_section_typ, r_mem, c_section_typ, c_mem, data, member_db)
-        render_model(frame, combo)
+        actions_by_combination = {
+            load_combination['name']: extract_member_actions(
+                frame,
+                r_section_typ,
+                r_mem,
+                c_section_typ,
+                c_mem,
+                data,
+                load_combination['name'],
+            )
+            for load_combination in data.load_combinations
+        }
+
+        # Import locally so multiprocessing section-search workers do not load
+        # report/export dependencies. The snapshot is written before rendering.
+        from analysis_snapshot import create_analysis_snapshot, write_analysis_snapshot
+        from design_calculations import build_calculation_sheet_data_from_frame
+
+        calculation_data = build_calculation_sheet_data_from_frame(
+            frame=frame,
+            data=data,
+            member_db=member_db,
+            actions_by_combination=actions_by_combination,
+            rafter_section_type=r_section_typ,
+            column_section_type=c_section_typ,
+            rafter_section=best_section[0],
+            column_section=best_section[1],
+            input_path='input_data.json',
+        )
+        snapshot = create_analysis_snapshot(
+            'input_data.json', calculation_data.to_dict()
+        )
+        written_snapshot = write_analysis_snapshot(snapshot, snapshot_path)
+        print(f"Analysis results written to {written_snapshot.resolve()}")
+
+        uls_results(
+            frame, r_section_typ, r_mem, c_section_typ, c_mem, data, member_db,
+            calculation_results=calculation_data.members,
+        )
+        if render:
+            render_model(frame, combo)
+        return written_snapshot
     else:
         print("Unable to find acceptable sections.")
+        return None
 
 if __name__ == "__main__":
     main()
