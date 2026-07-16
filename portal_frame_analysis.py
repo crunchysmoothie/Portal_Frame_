@@ -296,8 +296,8 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
 
     data = import_data('input_data.json')
     r_total_m, c_total_m = get_member_lengths(data)
-    vert_limit = data.frame_data[0]['gable_width'] / 150
-    horiz_limit = data.frame_data[0]['eaves_height'] / 150
+    vert_limit = data.frame_data[0]['gable_width'] / 180
+    horiz_limit = data.frame_data[0]['eaves_height'] / 210
 
     #  Search by fixing rafters first, then columns
     best_r = directional_search(
@@ -649,7 +649,10 @@ def main(render=True, snapshot_path="output/analysis/analysis_results.json"):
         # Import locally so multiprocessing section-search workers do not load
         # report/export dependencies. The snapshot is written before rendering.
         from analysis_snapshot import create_analysis_snapshot, write_analysis_snapshot
+        from bracing_design import design_bracing_system
         from design_calculations import build_calculation_sheet_data_from_frame
+
+        bracing_results = design_bracing_system(data, member_db)
 
         calculation_data = build_calculation_sheet_data_from_frame(
             frame=frame,
@@ -660,6 +663,7 @@ def main(render=True, snapshot_path="output/analysis/analysis_results.json"):
             column_section_type=c_section_typ,
             rafter_section=best_section[0],
             column_section=best_section[1],
+            bracing_design=bracing_results,
             input_path='input_data.json',
         )
         snapshot = create_analysis_snapshot(

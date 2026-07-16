@@ -6,6 +6,7 @@ from wind_loads import (
     calculate_terrain_roughness,
     calculate_peak_wind_pressure,
 )
+from internal_pressure import normalize_design_mode
 
 # Zone F is kept for local sheeting/fixings checks only.
 # Structural frame loading excludes zone F by default.
@@ -307,12 +308,15 @@ def wind_loading(data: Optional[Union[PortalFrame, Dict[str, Any]]] = None) -> L
     if wd.get("building_type") == "Canopy":
         _process_canopy_structural(wd, rafters, loads)
     else:
-        _process_0deg(zones_0u, left_cols, rafters, right_cols, pitch, "W0_0.2U", "W0_0.3U", loads, roof_type)
-        _process_0deg(zones_0d, left_cols, rafters, right_cols, pitch, "W0_0.2D", "W0_0.3D", loads, roof_type)
+        final_wind = normalize_design_mode(wd.get("wind_design_mode")) == "Final design"
+        positive = "CPI_MAX" if final_wind else "0.2"
+        negative = "CPI_MIN" if final_wind else "0.3"
+        _process_0deg(zones_0u, left_cols, rafters, right_cols, pitch, f"W0_{positive}U", f"W0_{negative}U", loads, roof_type)
+        _process_0deg(zones_0d, left_cols, rafters, right_cols, pitch, f"W0_{positive}D", f"W0_{negative}D", loads, roof_type)
         if roof_type == "Duo Pitched":
-            _process_0deg(zones_0m1, left_cols, rafters, right_cols, pitch, "W0_0.2M1", "W0_0.3M1", loads, roof_type)
-            _process_0deg(zones_0m2, left_cols, rafters, right_cols, pitch, "W0_0.2M2", "W0_0.3M2", loads, roof_type)
-        _process_90deg(zones_90, left_cols, rafters, right_cols, "W90_0.2", "W90_0.3", loads)
+            _process_0deg(zones_0m1, left_cols, rafters, right_cols, pitch, f"W0_{positive}M1", f"W0_{negative}M1", loads, roof_type)
+            _process_0deg(zones_0m2, left_cols, rafters, right_cols, pitch, f"W0_{positive}M2", f"W0_{negative}M2", loads, roof_type)
+        _process_90deg(zones_90, left_cols, rafters, right_cols, f"W90_{positive}", f"W90_{negative}", loads)
 
     return loads
 

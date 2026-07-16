@@ -2,6 +2,8 @@ import json
 import math
 import numpy as np
 
+from internal_pressure import pressure_coefficients
+
 
 def import_data(file):
     with open(file) as f:
@@ -86,6 +88,8 @@ def wind_data_duo_n():
     results_90 = []
 
     wind = data['wind_data'][0]
+    cpi_0_positive, cpi_0_negative = pressure_coefficients(wind, "0")
+    cpi_90_positive, cpi_90_negative = pressure_coefficients(wind, "90")
     bs = calculate_basic_wind_speed(wind['fundamental_basic_wind_speed'], wind['return_period'])
     roughness = calculate_terrain_roughness(wind['apex_height'], wind['terrain_category'])
     peak_pressure = calculate_peak_wind_pressure(wind['topographic_factor'], bs, roughness, wind['altitude'])
@@ -169,8 +173,8 @@ def wind_data_duo_n():
             "Zone": zone,
             "cpe": round(cpe, 4),
             "Length": zones[zone]["0_deg"],
-            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2) * r_spacing / -1000, 5),
-            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3) * r_spacing / -1000, 5)
+            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, cpi_0_positive) * r_spacing / -1000, 5),
+            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, cpi_0_negative) * r_spacing / -1000, 5)
         })
 
 
@@ -179,8 +183,8 @@ def wind_data_duo_n():
             "Zone": zone,
             "cpe": round(cpe, 4),
             "Length": zones[zone]["0_deg"],
-            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2) * r_spacing / -1000, 5),
-            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3) * r_spacing / -1000, 5)
+            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, cpi_0_positive) * r_spacing / -1000, 5),
+            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, cpi_0_negative) * r_spacing / -1000, 5)
         })
 
     for source, target in (
@@ -192,8 +196,8 @@ def wind_data_duo_n():
                 "Zone": zone,
                 "cpe": round(cpe, 4),
                 "Length": zones[zone]["0_deg"],
-                "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2) * r_spacing / -1000, 5),
-                "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3) * r_spacing / -1000, 5),
+                "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, cpi_0_positive) * r_spacing / -1000, 5),
+                "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, cpi_0_negative) * r_spacing / -1000, 5),
             })
 
     for zone, cpe in zones_90.items():
@@ -201,8 +205,8 @@ def wind_data_duo_n():
             "Zone": zone,
             "cpe": round(cpe, 4),
             "Length": zones[zone]["90_deg"],
-            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2) * r_spacing / -1000, 5),
-            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3) * r_spacing / -1000, 5)
+            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, cpi_90_positive) * r_spacing / -1000, 5),
+            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, cpi_90_negative) * r_spacing / -1000, 5)
         })
 
     print("Wind Upward Pressures")
@@ -299,6 +303,8 @@ def wind_data_mono_n():
     results_90 = []
 
     wind = normalize_wind_data(data)
+    cpi_0_positive, cpi_0_negative = pressure_coefficients(wind, "0")
+    cpi_90_positive, cpi_90_negative = pressure_coefficients(wind, "90")
     bs = calculate_basic_wind_speed(wind['fundamental_basic_wind_speed'], wind['return_period'])
     roughness = calculate_terrain_roughness(wind['apex_height'], wind['terrain_category'])
     peak_pressure = calculate_peak_wind_pressure(wind['topographic_factor'], bs, roughness, wind['altitude'])
@@ -373,8 +379,8 @@ def wind_data_mono_n():
             "Zone": zone,
             "cpe": round(cpe, 4),
             "Length": zones[zone]["0_deg"],
-            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2) * r_spacing / -1000, 5),
-            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3) * r_spacing / -1000, 5)
+            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, cpi_0_positive) * r_spacing / -1000, 5),
+            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, cpi_0_negative) * r_spacing / -1000, 5)
         })
 
     for zone, cpe in zones_down.items():
@@ -382,8 +388,8 @@ def wind_data_mono_n():
             "Zone": zone,
             "cpe": round(cpe, 4),
             "Length": zones[zone]["0_deg"],
-            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2) * r_spacing / -1000, 5),
-            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3) * r_spacing / -1000, 5)
+            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, cpi_0_positive) * r_spacing / -1000, 5),
+            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, cpi_0_negative) * r_spacing / -1000, 5)
         })
 
     for zone, cpe in zones_90.items():
@@ -391,8 +397,8 @@ def wind_data_mono_n():
             "Zone": zone,
             "cpe": round(cpe, 4),
             "Length": zones[zone]["90_deg"],
-            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, 0.2) * r_spacing / -1000, 5),
-            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, -0.3) * r_spacing / -1000, 5)
+            "cpi=0.2": round(calculate_pressure(peak_pressure, cpe, cpi_90_positive) * r_spacing / -1000, 5),
+            "cpi=-0.3": round(calculate_pressure(peak_pressure, cpe, cpi_90_negative) * r_spacing / -1000, 5)
         })
 
     data["wind_zones_0U"] = results_up
