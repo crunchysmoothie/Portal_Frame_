@@ -8,7 +8,7 @@ import user_input
 
 
 class WindLoadingGenerationTests(unittest.TestCase):
-    def _generate(self, building_type, roof_type):
+    def _generate(self, building_type, roof_type, building_updates=None):
         eaves = 6_000.0
         apex = 6_800.0
         width = 16_000.0
@@ -28,6 +28,7 @@ class WindLoadingGenerationTests(unittest.TestCase):
             "roof_pitch": math.degrees(math.atan((apex - eaves) / roof_span)),
             "steel_grade": "Steel_S355",
         }
+        building.update(building_updates or {})
         wind = {
             "wind": "3s gust",
             "fundamental_basic_wind_speed": 36,
@@ -120,6 +121,29 @@ class WindLoadingGenerationTests(unittest.TestCase):
                 leading_live = next(c for c in uls if c["name"] == "1.2 DL + 1.6 LL")
                 self.assertEqual(leading_live["factors"]["L"], 1.6)
                 self.assertTrue(any(c["factors"].get("D") == 1.0 for c in sls))
+
+    def test_final_design_cpi_is_stored_and_used_in_wind_pressures(self):
+        final = self._generate("Normal", "Duo Pitched", {
+            "wind_design_mode": "Final design",
+            "opening_areas_m2": {
+                "side_1": 0.5, "side_2": 0.5,
+                "gable_1": 3.0, "gable_2": 0.5,
+            },
+        })
+        prelim = self._generate("Normal", "Duo Pitched")
+        internal = final["wind_data"][0]["internal_pressure"]
+        self.assertEqual(internal["mode"], "Final design")
+        self.assertEqual(
+            internal["directions"]["90"]["senses"][0]["dominant_face"],
+            "gable_1",
+        )
+        final_zone_d = next(item for item in final["wind_zones_90"] if item["Zone"] == "D")
+        prelim_zone_d = next(item for item in prelim["wind_zones_90"] if item["Zone"] == "D")
+        self.assertNotEqual(final_zone_d["cpi=0.2"], prelim_zone_d["cpi=0.2"])
+        generated = {load["case"] for load in final["member_loads"]}
+        self.assertIn("W90_CPI_MAX", generated)
+        self.assertIn("W90_CPI_MIN", generated)
+        self.assertNotIn("W90_0.2", generated)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 # Portal Frame Project Function and Folder Reference
 
+For step-by-step operating instructions, see `USER_MANUAL.md`.
+
 This document describes the project as it exists on the `feature/calculation_sheets` branch on 2026-07-13. It is a code-navigation reference, not a substitute for an engineering design review.
 
 ## Status terminology

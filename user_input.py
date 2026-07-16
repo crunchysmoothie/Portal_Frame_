@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import math
 from wind_loads import wind_out
+from internal_pressure import normalize_design_mode, resolve_internal_pressure
 
 # Function to generate nodes based on the portal frame structure with static values
 def generate_nodes(b_data):
@@ -196,24 +197,33 @@ def add_load_cases(
     building_type="Normal",
     load_combination_standard=SANS_2019_COMBINATIONS,
     building_roof="Duo Pitched",
+    wind_design_mode="Prelim",
 ):
     """Return fixed load cases and edition-dependent SLS/ULS combinations."""
+    final_wind = normalize_design_mode(wind_design_mode) == "Final design"
+    positive = "CPI_MAX" if final_wind else "0.2"
+    negative = "CPI_MIN" if final_wind else "0.3"
+    w0_positive = {suffix: f"W0_{positive}{suffix}" for suffix in ("U", "D", "M1", "M2")}
+    w0_negative = {suffix: f"W0_{negative}{suffix}" for suffix in ("U", "D", "M1", "M2")}
+    w90_positive = f"W90_{positive}"
+    w90_negative = f"W90_{negative}"
     load_cases = [
         {"name": "D_MIN", "type": "dead"},
         {"name": "D_MAX", "type": "dead"},
         {"name": "L", "type": "live"},
-        {"name": "W0_0.2U", "type": "wind"},
-        {"name": "W0_0.2D", "type": "wind"},
-        {"name": "W0_0.3U", "type": "wind"},
-        {"name": "W0_0.3D", "type": "wind"},
-        {"name": "W90_0.2", "type": "wind"},
-        {"name": "W90_0.3", "type": "wind"},
+        {"name": w0_positive["U"], "type": "wind"},
+        {"name": w0_positive["D"], "type": "wind"},
+        {"name": w0_negative["U"], "type": "wind"},
+        {"name": w0_negative["D"], "type": "wind"},
+        {"name": w90_positive, "type": "wind"},
+        {"name": w90_negative, "type": "wind"},
     ]
     include_mixed = building_type == "Normal" and building_roof == "Duo Pitched"
     if include_mixed:
         load_cases.extend(
             {"name": name, "type": "wind"}
-            for name in ("W0_0.2M1", "W0_0.3M1", "W0_0.2M2", "W0_0.3M2")
+            for name in (w0_positive["M1"], w0_negative["M1"],
+                         w0_positive["M2"], w0_negative["M2"])
         )
 
     psi_live = _roof_accompanying_factor(roof_accessibility)
@@ -222,13 +232,14 @@ def add_load_cases(
         {"name": "1.1 DL + 1.0 LL", "factors": {"D": 1.1, "D_MAX": 1.1, "L": 1.0}},
     ]
     wind_actions = [
-        ("W0_0.2U", "up"), ("W0_0.2D", "down"),
-        ("W0_0.3U", "up"), ("W0_0.3D", "down"),
-        ("W90_0.2", "variable"), ("W90_0.3", "variable"),
+        (w0_positive["U"], "up"), (w0_positive["D"], "down"),
+        (w0_negative["U"], "up"), (w0_negative["D"], "down"),
+        (w90_positive, "variable"), (w90_negative, "variable"),
     ]
     if include_mixed:
         wind_actions.extend((case, "variable") for case in (
-            "W0_0.2M1", "W0_0.3M1", "W0_0.2M2", "W0_0.3M2"
+            w0_positive["M1"], w0_negative["M1"],
+            w0_positive["M2"], w0_negative["M2"]
         ))
     for case, action in wind_actions:
         if action in ("up", "variable"):
@@ -298,6 +309,7 @@ def update_json_file(json_filename, b_data, wind_data):
         b_data.get("building_type", "Normal"),
         load_combination_standard,
         b_data.get("building_roof", "Duo Pitched"),
+        b_data.get("wind_design_mode", "Prelim"),
     )
     steel_props         = steel_prop(b_data['steel_grade'])
 
@@ -306,6 +318,7 @@ def update_json_file(json_filename, b_data, wind_data):
         "eaves_height","apex_height","gable_width",
         "rafter_spacing","building_length"} else v)
         for k, v in b_data.items()}
+    wind_input["internal_pressure"] = resolve_internal_pressure(wind_input)
 
     # --- load (or initialise) the JSON --------------------------------------
     data = safe_load_json(json_filename)
@@ -404,6 +417,7 @@ def main() -> None:
     # Static inputs for eaves, apex, and rafter span (converted to mm)
     building_roof = "Duo Pitched"  # "Mono Pitched" or "Duo Pitched"
     building_type = "Normal"       # "Normal" or "Canopy"
+    wind_design_mode = "Prelim"    # "Prelim" uses +0.2/-0.3; "Final design" uses wall openings.
     eaves_height = 6 * 1000        # Convert to mm
     apex_height = 6.8 * 1000         # Convert to mm
     gable_width = 16 * 1000        # Convert to mm
@@ -411,6 +425,11 @@ def main() -> None:
     building_length = 72 * 1000    # Convert to mm
     col_bracing_spacing = 1        # number of braced points per column
     rafter_bracing_spacing = 3     # number of braced points per rafter
+    # One gable end: 1, 3, 5, ... columns. The apex column is mandatory and
+    # each increment adds a symmetric pair at the next roof brace nodes.
+    gable_column_count = 3
+    # Number of equal laterally-unbraced intervals along each gable column.
+    gable_column_brace_intervals = 2
     steel_grade = "Steel_S355"     # "Steel_S355" or "Steel_S275"
     roof_accessibility = "Inaccessible"  # "Accessible" or "Inaccessible"
     load_combination_standard = SANS_2019_COMBINATIONS  # or PRE_2019_COMBINATIONS
@@ -419,6 +438,15 @@ def main() -> None:
 
     building_data = {
         "building_type": building_type,
+        "wind_design_mode": wind_design_mode,
+        # Required in Final design mode. Areas are the total openings on each
+        # physical wall face in m2; the two side walls run along the ridge.
+        "opening_areas_m2": {
+            "side_1": 0.0,
+            "side_2": 0.0,
+            "gable_1": 0.0,
+            "gable_2": 0.0,
+        },
         "building_roof": building_roof,
         "eaves_height": eaves_height,
         "apex_height": apex_height,
@@ -427,6 +455,8 @@ def main() -> None:
         "building_length": building_length,
         "col_bracing_spacing": col_bracing_spacing,
         "rafter_bracing_spacing": rafter_bracing_spacing,
+        "gable_column_count": gable_column_count,
+        "gable_column_brace_intervals": gable_column_brace_intervals,
         "roof_accessibility": roof_accessibility,
         "load_combination_standard": load_combination_standard,
         "blocking_factor": blocking_factor,
