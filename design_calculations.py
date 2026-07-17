@@ -723,25 +723,34 @@ def _build_steel_mass_breakdown(data, member_db, portal_mass_per_frame, bracing)
     roof_points = bracing.get("roof_layout", {}).get("roof_points", [])
     if roof_brace and len(roof_points) >= 2:
         angle_mass = auxiliary_mass(roof_brace["section_family"], roof_brace["section"])
+        panels = bracing.get("roof_layout", {}).get("brace_panels", [])
+        if not panels:  # Backward compatibility for older snapshots.
+            panels = [
+                {"start_index": index, "end_index": index + 1}
+                for index in range(len(roof_points) - 1)
+            ]
         diagonal_length_one_bay_m = 2 * sum(
             math.hypot(
                 spacing_m,
                 math.hypot(
-                    float(right["x_mm"]) - float(left["x_mm"]),
-                    float(right["y_mm"]) - float(left["y_mm"]),
+                    float(roof_points[item["end_index"]]["x_mm"]) - float(roof_points[item["start_index"]]["x_mm"]),
+                    float(roof_points[item["end_index"]]["y_mm"]) - float(roof_points[item["start_index"]]["y_mm"]),
                 ) / 1000,
             )
-            for left, right in zip(roof_points, roof_points[1:])
+            for item in panels
         )
         roof_bracing_mass = diagonal_length_one_bay_m * braced_bay_count * angle_mass
 
     side_brace = bracing_by_type.get("Longitudinal side-wall brace")
     if side_brace:
-        chs_mass = auxiliary_mass(side_brace["section_family"], side_brace["section"])
-        # One T/C diagonal on each long wall in every end braced bay.
+        side_section_mass = auxiliary_mass(side_brace["section_family"], side_brace["section"])
+        members_per_wall = int(
+            bracing.get("column_bracing_layout", {}).get("members_per_wall", 1)
+        )
+        # The selected topology is repeated on both long walls in every end bay.
         side_bracing_mass = (
             float(side_brace["length_mm"]) / 1000
-            * 2 * braced_bay_count * chs_mass
+            * members_per_wall * 2 * braced_bay_count * side_section_mass
         )
     bracing_mass = roof_bracing_mass + side_bracing_mass
 
@@ -752,12 +761,14 @@ def _build_steel_mass_breakdown(data, member_db, portal_mass_per_frame, bracing)
             raise ValueError("No lipped-channel purlins are available for the quantity estimate.")
         purlin_section = lipped[0]["Designation"]
     purlin_mass_per_m = auxiliary_mass("Lipped Channels", purlin_section)
-    rafter_nodes = {
-        node_name
-        for member in data.members if member.type == "rafter"
-        for node_name in (member.i_node, member.j_node)
-    }
-    purlin_line_count = len(rafter_nodes)
+    purlin_line_count = len(bracing.get("roof_layout", {}).get("roof_points", []))
+    if not purlin_line_count:
+        rafter_nodes = {
+            node_name
+            for member in data.members if member.type == "rafter"
+            for node_name in (member.i_node, member.j_node)
+        }
+        purlin_line_count = len(rafter_nodes)
     purlin_mass = purlin_line_count * length_m * purlin_mass_per_m
 
     total = portal_mass + bracing_mass + gable_mass + purlin_mass
@@ -873,8 +884,16 @@ def build_calculation_sheet_data_from_frame(
         "eaves_height_mm": frame_data.get("eaves_height", 0),
         "apex_height_mm": frame_data.get("apex_height", 0),
         "rafter_spacing_mm": frame_data.get("rafter_spacing", 0),
+        "building_length_mm": frame_data.get("building_length", 0),
+        "roof_pitch_deg": frame_data.get("roof_pitch", 0),
         "rafter_section": rafter_section,
         "column_section": column_section,
+        "column_bracing_type": frame_data.get("column_bracing_type", "X"),
+        "purlin_section": frame_data.get("purlin_section", ""),
+        "purlin_max_spacing_mm": frame_data.get("purlin_max_spacing_mm", 0),
+        "roof_bracing_purlin_interval": frame_data.get("roof_bracing_purlin_interval", 1),
+        "girt_section": frame_data.get("girt_section", ""),
+        "girt_max_spacing_mm": frame_data.get("girt_max_spacing_mm", 0),
     }
     assumptions = [
         "Two-dimensional transverse portal-frame analysis.",
@@ -1095,7 +1114,106 @@ def _html_table(headers, rows, classes=""):
     return f'<table class="{classes}"><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>'
 
 
-def _bracing_html(bracing):
+def _building_layout_html(project, bracing):
+    """Return annotated roof plan and typical transverse portal section SVGs."""
+
+    span = max(float(project.get("gable_width_mm", 0)), 1.0)
+    length = max(float(project.get("building_length_mm", 0)), 1.0)
+    spacing = max(float(project.get("rafter_spacing_mm", 0)), 1.0)
+    eaves = max(float(project.get("eaves_height_mm", 0)), 0.0)
+    apex = max(float(project.get("apex_height_mm", 0)), eaves, 1.0)
+    roof_type = str(project.get("roof_type", ""))
+    column_section = escape(str(project.get("column_section", "")))
+    rafter_section = escape(str(project.get("rafter_section", "")))
+    members = {item["member_type"]: item for item in bracing.get("bracing_members", [])}
+    roof_brace = escape(str(members.get("Roof X-brace", {}).get("section", "")))
+    purlin = escape(str(bracing.get("pynite_roof_model", {}).get("stiffness_purlin_section", "")))
+
+    px = lambda value: 70 + 560 * float(value) / length
+    py = lambda value: 55 + 180 * float(value) / span
+    frame_lines = []
+    frame_count = max(1, int(round(length / spacing)))
+    frame_positions = [min(index * spacing, length) for index in range(frame_count + 1)]
+    if frame_positions[-1] < length - 1e-6:
+        frame_positions.append(length)
+    for grid_index, position in enumerate(frame_positions, 1):
+        x = px(position)
+        frame_lines.append(
+            f'<line x1="{x:.1f}" y1="42" x2="{x:.1f}" y2="248" stroke="#8c98a4" stroke-dasharray="5 4"/>'
+            f'<circle cx="{x:.1f}" cy="35" r="10" fill="#fff" stroke="#59636e"/>'
+            f'<text x="{x:.1f}" y="39" text-anchor="middle">{grid_index}</text>'
+        )
+    brace_lines = []
+    roof_layout = bracing.get("roof_layout", {})
+    roof_points = roof_layout.get("roof_points", [])
+    brace_panels = roof_layout.get("brace_panels", [])
+    if len(frame_positions) >= 2:
+        for left_pos, right_pos in (
+            (frame_positions[0], frame_positions[1]),
+            (frame_positions[-2], frame_positions[-1]),
+        ):
+            left, right = px(left_pos), px(right_pos)
+            for panel in brace_panels:
+                y_start = py(roof_points[panel["start_index"]]["x_mm"])
+                y_end = py(roof_points[panel["end_index"]]["x_mm"])
+                brace_lines.extend((
+                    f'<line x1="{left:.1f}" y1="{y_start:.1f}" x2="{right:.1f}" y2="{y_end:.1f}" stroke="#174f78" stroke-width="3"/>',
+                    f'<line x1="{left:.1f}" y1="{y_end:.1f}" x2="{right:.1f}" y2="{y_start:.1f}" stroke="#174f78" stroke-width="3"/>',
+                ))
+    transverse_grid_lines = []
+    for grid_index, point in enumerate(roof_points):
+        y = py(point["x_mm"])
+        grid_label = chr(ord("A") + grid_index)
+        transverse_grid_lines.append(
+            f'<circle cx="52" cy="{y:.1f}" r="10" fill="#fff" stroke="#59636e"/>'
+            f'<text x="52" y="{y + 4:.1f}" text-anchor="middle">{grid_label}</text>'
+        )
+    roof_plan = f"""
+    <h3>Roof plan and bracing arrangement</h3>
+    <svg class="layout" viewBox="0 0 700 320" role="img" aria-label="Dimensioned roof bracing plan">
+      <rect x="70" y="55" width="560" height="180" fill="none" stroke="#17202a" stroke-width="2"/>
+      {''.join(frame_lines)}{''.join(brace_lines)}{''.join(transverse_grid_lines)}
+      <line x1="70" y1="265" x2="630" y2="265" stroke="#17202a"/><line x1="70" y1="258" x2="70" y2="272" stroke="#17202a"/><line x1="630" y1="258" x2="630" y2="272" stroke="#17202a"/>
+      <text x="350" y="285" text-anchor="middle">Building length {_fmt(length, 0)} mm</text>
+      <line x1="42" y1="55" x2="42" y2="235" stroke="#17202a"/><line x1="35" y1="55" x2="49" y2="55" stroke="#17202a"/><line x1="35" y1="235" x2="49" y2="235" stroke="#17202a"/>
+      <text x="25" y="145" text-anchor="middle" transform="rotate(-90 25 145)">Span {_fmt(span, 0)} mm</text>
+      <text x="350" y="18" text-anchor="middle">Typical portal spacing {_fmt(spacing, 0)} mm</text>
+      <text x="350" y="305" text-anchor="middle">Roof X-bracing {roof_brace}: continuous eave-to-eave; each panel spans half a rafter slope; purlin/strut {purlin}</text>
+    </svg>"""
+
+    sx = lambda value: 80 + 540 * float(value) / span
+    sy = lambda value: 270 - 215 * float(value) / apex
+    if roof_type == "Mono Pitched":
+        roof_points = f"80,{sy(eaves):.1f} 620,{sy(apex):.1f}"
+        rafter_label_x = 440
+    else:
+        roof_points = f"80,{sy(eaves):.1f} 350,{sy(apex):.1f} 620,{sy(eaves):.1f}"
+        rafter_label_x = 455
+    portal_section = f"""
+    <h3>Typical portal-frame section</h3>
+    <svg class="layout" viewBox="0 0 700 340" role="img" aria-label="Dimensioned typical portal frame section">
+      <line x1="80" y1="270" x2="80" y2="{sy(eaves):.1f}" stroke="#174f78" stroke-width="4"/>
+      <line x1="620" y1="270" x2="620" y2="{sy(apex if roof_type == 'Mono Pitched' else eaves):.1f}" stroke="#174f78" stroke-width="4"/>
+      <polyline points="{roof_points}" fill="none" stroke="#174f78" stroke-width="4"/>
+      <line x1="65" y1="270" x2="635" y2="270" stroke="#17202a"/>
+      <line x1="80" y1="35" x2="80" y2="290" stroke="#8c98a4" stroke-dasharray="5 4"/>
+      <line x1="620" y1="35" x2="620" y2="290" stroke="#8c98a4" stroke-dasharray="5 4"/>
+      <circle cx="80" cy="315" r="11" fill="#fff" stroke="#59636e"/><text x="80" y="319" text-anchor="middle">A</text>
+      <circle cx="620" cy="315" r="11" fill="#fff" stroke="#59636e"/><text x="620" y="319" text-anchor="middle">B</text>
+      <line x1="80" y1="300" x2="620" y2="300" stroke="#17202a"/><line x1="80" y1="293" x2="80" y2="307" stroke="#17202a"/><line x1="620" y1="293" x2="620" y2="307" stroke="#17202a"/>
+      <text x="350" y="322" text-anchor="middle">Portal span {_fmt(span, 0)} mm (grid A-B)</text>
+      <line x1="48" y1="270" x2="48" y2="{sy(eaves):.1f}" stroke="#17202a"/><line x1="41" y1="270" x2="55" y2="270" stroke="#17202a"/><line x1="41" y1="{sy(eaves):.1f}" x2="55" y2="{sy(eaves):.1f}" stroke="#17202a"/>
+      <text x="30" y="{(270 + sy(eaves))/2:.1f}" text-anchor="middle" transform="rotate(-90 30 {(270 + sy(eaves))/2:.1f})">Eaves {_fmt(eaves, 0)} mm</text>
+      <line x1="652" y1="270" x2="652" y2="{sy(apex):.1f}" stroke="#17202a"/><line x1="645" y1="270" x2="659" y2="270" stroke="#17202a"/><line x1="645" y1="{sy(apex):.1f}" x2="659" y2="{sy(apex):.1f}" stroke="#17202a"/>
+      <text x="674" y="{(270 + sy(apex))/2:.1f}" text-anchor="middle" transform="rotate(-90 674 {(270 + sy(apex))/2:.1f})">Apex {_fmt(apex, 0)} mm</text>
+      <text x="128" y="175" transform="rotate(-90 128 175)">Columns: {column_section}</text>
+      <text x="{rafter_label_x}" y="80" text-anchor="middle">Rafters: {rafter_section}</text>
+      <text x="350" y="25" text-anchor="middle">Roof pitch {_fmt(project.get('roof_pitch_deg', 0), 2)} degrees</text>
+    </svg>"""
+    return roof_plan + portal_section
+
+
+def _bracing_html(bracing, project=None):
     if not bracing:
         return "<p>No gable/bracing design results were stored.</p>"
     columns = bracing.get("gable_columns", [])
@@ -1116,13 +1234,19 @@ def _bracing_html(bracing):
     gable_lines = [
         f'<polyline points="35,{eaves_y:.1f} 350,{apex_y:.1f} 665,{eaves_y:.1f}" fill="none" stroke="#174f78" stroke-width="3"/>',
         '<line x1="35" y1="270" x2="665" y2="270" stroke="#17202a"/>',
+        '<line x1="35" y1="20" x2="35" y2="290" stroke="#8c98a4" stroke-dasharray="5 4"/>',
+        '<line x1="665" y1="20" x2="665" y2="290" stroke="#8c98a4" stroke-dasharray="5 4"/>',
+        '<circle cx="35" cy="292" r="10" fill="#fff" stroke="#59636e"/><text x="35" y="296" text-anchor="middle">A</text>',
+        '<circle cx="665" cy="292" r="10" fill="#fff" stroke="#59636e"/><text x="665" y="296" text-anchor="middle">B</text>',
     ]
+    columns_by_name = {item["name"]: item for item in columns}
     for item in gable.get("columns", []):
         x = gx(item["x_mm"])
         y = gy(item["height_mm"])
+        result = columns_by_name.get(item["name"], {})
         gable_lines.append(
             f'<line x1="{x:.1f}" y1="270" x2="{x:.1f}" y2="{y:.1f}" stroke="#a21f2d" stroke-width="3"/>'
-            f'<text x="{x:.1f}" y="288" text-anchor="middle">{escape(str(item["name"]))}</text>'
+            f'<text x="{x + 14:.1f}" y="{(270 + y)/2:.1f}" transform="rotate(-90 {x + 14:.1f} {(270 + y)/2:.1f})" text-anchor="middle">{escape(str(item["name"]))}: {escape(str(result.get("section", "")))}</text>'
         )
 
     roof_points = roof.get("roof_points", [])
@@ -1138,11 +1262,68 @@ def _bracing_html(bracing):
         plan_lines.append(f'<line x1="{x:.1f}" y1="35" x2="{x:.1f}" y2="185" stroke="#8c98a4"/>')
         if item["name"] in loaded:
             plan_lines.append(f'<circle cx="{x:.1f}" cy="35" r="5" fill="#a21f2d"/>')
-    for left, right in zip(xs, xs[1:]):
+    brace_panels = roof.get("brace_panels", [])
+    if not brace_panels:
+        brace_panels = [
+            {"start_index": index, "end_index": index + 1}
+            for index in range(len(xs) - 1)
+        ]
+    roof_section = escape(str(next(
+        (item.get("section", "") for item in members if item["member_type"] == "Roof X-brace"),
+        "",
+    )))
+    for panel in brace_panels:
+        left, right = xs[panel["start_index"]], xs[panel["end_index"]]
         plan_lines.append(
             f'<line x1="{left:.1f}" y1="35" x2="{right:.1f}" y2="185" stroke="#174f78" stroke-width="2"/>'
             f'<line x1="{right:.1f}" y1="35" x2="{left:.1f}" y2="185" stroke="#174f78" stroke-width="2"/>'
+            f'<text x="{(left + right)/2:.1f}" y="24" text-anchor="middle" fill="#a21f2d">{roof_section}</text>'
         )
+    plan_lines.extend((
+        '<text x="18" y="40" text-anchor="middle">1</text>',
+        '<text x="18" y="190" text-anchor="middle">2</text>',
+    ))
+    plan_lines.extend(
+        f'<text x="{x:.1f}" y="212" text-anchor="middle">{chr(ord("A") + index)}</text>'
+        for index, x in enumerate(xs)
+    )
+
+    column_layout = bracing.get("column_bracing_layout", {})
+    column_bracing_type = str(column_layout.get("type", "X"))
+    side_member = next(
+        (item for item in members if item["member_type"] == "Longitudinal side-wall brace"),
+        {},
+    )
+    side_lines = [
+        '<line x1="100" y1="45" x2="100" y2="245" stroke="#17202a" stroke-width="3"/>',
+        '<line x1="600" y1="45" x2="600" y2="245" stroke="#17202a" stroke-width="3"/>',
+    ]
+    panel_count = max(1, int(column_layout.get("panel_count", 1)))
+    panel_ys = [45 + 200 * index / panel_count for index in range(panel_count + 1)]
+    side_lines.extend(
+        f'<line x1="100" y1="{y:.1f}" x2="600" y2="{y:.1f}" stroke="#17202a" stroke-width="{2 if index in (0, panel_count) else 1}"/>'
+        for index, y in enumerate(panel_ys)
+    )
+    brace_segments = []
+    for top, bottom in zip(panel_ys, panel_ys[1:]):
+        middle = (top + bottom) / 2
+        if column_bracing_type == "A":
+            brace_segments.extend(((100,bottom,350,top),(600,bottom,350,top)))
+        elif column_bracing_type == "K":
+            brace_segments.extend(((100,top,600,middle),(100,bottom,600,middle)))
+        else:
+            brace_segments.extend(((100,bottom,600,top),(100,top,600,bottom)))
+    side_lines.extend(
+        f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="#a21f2d" stroke-width="4"/>'
+        for x1, y1, x2, y2 in brace_segments
+    )
+    side_lines.append(
+        f'<text x="350" y="280" text-anchor="middle">{escape(column_bracing_type)}-bracing: {escape(str(side_member.get("section", "")))}; {panel_count} panel(s) at {_fmt(column_layout.get("panel_height_mm", 0), 0)} mm; bay {_fmt(column_layout.get("bay_width_mm", 0), 0)} mm</text>'
+    )
+    side_lines.extend((
+        '<circle cx="100" cy="270" r="10" fill="#fff" stroke="#59636e"/><text x="100" y="274" text-anchor="middle">1</text>',
+        '<circle cx="600" cy="270" r="10" fill="#fff" stroke="#59636e"/><text x="600" y="274" text-anchor="middle">2</text>',
+    ))
 
     column_rows = [(
         escape(item["name"]), escape(item["roof_node"]), escape(item["section"]),
@@ -1150,28 +1331,111 @@ def _bracing_html(bracing):
         _fmt(item["major_moment_knm"]), _fmt(item["mcr_knm"]),
         _fmt(item["bending_resistance_knm"]), _fmt(item["utilisation"]),
     ) for item in columns]
+    gable_calculation_rows = []
+    wind_factor = float(bracing.get("wind_uls_factor", 0))
+    for item in columns:
+        name = escape(item["name"])
+        pressure = float(item.get("characteristic_pressure_kpa", 0))
+        tributary_m = float(item.get("tributary_width_mm", 0)) / 1000
+        height_m = float(item.get("height_mm", 0)) / 1000
+        line_load = float(item.get("factored_line_load_kn_m", 0))
+        moment = float(item.get("major_moment_knm", 0))
+        shear = float(item.get("top_shear_kn", 0))
+        unbraced_m = float(item.get("unbraced_length_mm", 0)) / 1000
+        mi = (
+            float(item.get("plastic_moment_knm", 0))
+            if int(item.get("section_class", 4)) < 3
+            else float(item.get("yield_moment_knm", 0))
+        )
+        gable_calculation_rows.extend((
+            (name, "GC-01", "Factored line load", "wu = p btr gammaw", f"{_fmt(pressure)} x {_fmt(tributary_m, 3)} x {_fmt(wind_factor)}", f"{_fmt(line_load)} kN/m"),
+            (name, "GC-02", "Pinned-column moment", "M* = wu L^2 / 8", f"{_fmt(line_load)} x {_fmt(height_m, 3)}^2 / 8", f"{_fmt(moment)} kNm"),
+            (name, "GC-03", "Top shear", "V* = wu L / 2", f"{_fmt(line_load)} x {_fmt(height_m, 3)} / 2", f"{_fmt(shear)} kN"),
+            (name, "GC-04", "Unbraced length", "Lu = L / n", f"{_fmt(height_m, 3)} / {int(item.get('brace_intervals', 1))}", f"{_fmt(unbraced_m, 3)} m"),
+            (name, "GC-05", "Elastic critical moment", "Mcr = (omega2 pi/Lu) sqrt[EIyGJ + (pi E/Lu)^2 IyCw]", f"omega2={_fmt(item.get('omega2', 0))}; Iy={_fmt(item.get('iy_cm4', 0))}; J={_fmt(item.get('torsional_constant_cm4', 0))}; Cw={_fmt(item.get('warping_constant', 0))}", f"{_fmt(item.get('mcr_knm', 0))} kNm"),
+            (name, "GC-06", "LTB bending resistance", "Mr = clause 13.6(Mcr, Mi)", f"Mcr={_fmt(item.get('mcr_knm', 0))}; Mi={_fmt(mi)}", f"{_fmt(item.get('bending_resistance_knm', 0))} kNm"),
+            (name, "GC-07", "Utilisation", "U = M* / Mr", f"{_fmt(moment)} / {_fmt(item.get('bending_resistance_knm', 0))}", _fmt(item.get("utilisation", 0))),
+        ))
     member_rows = [(
         escape(item["member_type"]), escape(item["section"]), escape(item["behaviour"]),
-        _fmt(item["design_force_kn"]), _fmt(item["resistance_kn"]), _fmt(item["utilisation"]),
+        _fmt(item["design_force_kn"]), _fmt(item["resistance_kn"]),
+        _fmt(item.get("resistance_utilisation", item["utilisation"])),
+        escape(str(item.get("slenderness_axis", "x-x"))),
+        _fmt(item.get("slenderness_ratio", 0)), _fmt(item.get("slenderness_limit", 0)),
+        _fmt(item.get("slenderness_utilisation", 0)), _fmt(item["utilisation"]),
     ) for item in members]
+    calculation_rows = []
+    total_shear = float(bracing.get("total_gable_top_shear_kn", 0))
+    bay_length = float(roof.get("bay_length_mm", 0))
+    for item in members:
+        name = escape(item["member_type"])
+        force_projection = (
+            float(column_layout.get("horizontal_projection_mm", bay_length))
+            if item["member_type"] == "Longitudinal side-wall brace" else bay_length
+        )
+        calculation_rows.append((
+            name, "Brace force", "T* = (V*/2)(Ld/b)",
+            f"({_fmt(total_shear)}/2)({_fmt(item.get('length_mm', 0), 1)}/{_fmt(force_projection, 1)})",
+            f"{_fmt(item.get('design_force_kn', 0))} kN",
+        ))
+        length_mm = float(item.get("length_mm", 0))
+        slenderness_limit = item.get("slenderness_limit", 0)
+        if "Angles" in str(item.get("section_family", "")):
+            for axis, factor, radius_key, ratio_key in (
+                ("x-x", 1.0, "rx_mm", "slenderness_xx"),
+                ("y-y", 1.0, "ry_mm", "slenderness_yy"),
+                ("v-v", 0.5, "rv_mm", "slenderness_vv"),
+            ):
+                calculation_rows.append((
+                    name, f"Slenderness {axis}", "K L / r",
+                    f"{_fmt(factor, 1)} x {_fmt(length_mm, 1)} / {_fmt(item.get(radius_key, 0), 2)}",
+                    f"{_fmt(item.get(ratio_key, 0))} &le; {_fmt(slenderness_limit, 0)}",
+                ))
+        else:
+            factor = float(item.get("effective_length_factor", 1.0))
+            calculation_rows.append((
+                name, "Slenderness", "K L / r",
+                f"{_fmt(factor, 1)} x {_fmt(length_mm, 1)} / {_fmt(item.get('radius_of_gyration_mm', 0), 2)}",
+                f"{_fmt(item.get('slenderness_ratio', 0))} &le; {_fmt(slenderness_limit, 0)}",
+            ))
+        if item.get("behaviour") == "tension-only":
+            equation = "Tr = &phi;Ag fy"
+            substitution = f"0.9({_fmt(item.get('area_mm2', 0), 1)})({_fmt(item.get('fy_mpa', 0), 0)})/1000"
+        else:
+            equation = "Cr = &phi;Ag fy[1 + &lambda;^(2n)]^(-1/n)"
+            substitution = (
+                f"0.9({_fmt(item.get('area_mm2', 0), 1)})({_fmt(item.get('fy_mpa', 0), 0)})"
+                f"[1 + {_fmt(item.get('nondimensional_slenderness', 0))}^(2x1.34)]^(-1/1.34)/1000"
+            )
+        calculation_rows.append((
+            name, "Member resistance", equation, substitution,
+            f"{_fmt(item.get('resistance_kn', 0))} kN",
+        ))
     pressure_rows = [(
         escape(item["case"]), escape(item["zone"]), _fmt(item.get("cpi")),
         _fmt(item["pressure_kpa"]),
     ) for item in bracing.get("pressure_cases", [])]
     roof_model = bracing.get("pynite_roof_model", {})
     return f"""
+    {_building_layout_html(project or {}, bracing) if project else ''}
     <p><b>Governing gable pressure:</b> {_fmt(bracing.get('governing_characteristic_pressure_kpa', 0))} kPa;
     <b>ULS factor:</b> {_fmt(bracing.get('wind_uls_factor', 0))};
     <b>total top shear:</b> {_fmt(bracing.get('total_gable_top_shear_kn', 0))} kN.</p>
     {_html_table(("Case", "Wall zone", "cpi", "|Pressure| (kPa)"), pressure_rows)}
     <h3>Gable-end elevation</h3><svg class="layout" viewBox="0 0 700 300" role="img" aria-label="Gable column layout">{''.join(gable_lines)}</svg>
     {_html_table(("Column", "Roof node", "Section", "Tributary width (mm)", "Top shear (kN)", "M (kNm)", "Mcr (kNm)", "Mr (kNm)", "Util."), column_rows)}
+    <h3>Gable-column design calculations</h3>
+    {_html_table(("Column", "Ref.", "Calculation", "Equation", "Substitution", "Result"), gable_calculation_rows, "details")}
     <h3>Roof-bracing plan - first braced bay</h3><svg class="layout" viewBox="0 0 700 220" role="img" aria-label="Roof X bracing layout">{''.join(plan_lines)}</svg>
     <p><b>Roof PyNite model:</b> {escape(str(roof_model.get('analysis', '')))};
     {int(roof_model.get('node_count', 0))} nodes, {int(roof_model.get('member_count', 0))} members,
     {int(roof_model.get('x_brace_count', 0))} tension-only X-braces. Purlin stiffness section
     {escape(str(roof_model.get('stiffness_purlin_section', '')))}; resistance check deferred.</p>
-    {_html_table(("Member", "Section", "Behaviour", "Force (kN)", "Resistance (kN)", "Util."), member_rows)}
+    <h3>Typical longitudinal column-bracing bay</h3><svg class="layout" viewBox="0 0 700 300" role="img" aria-label="Selected longitudinal column bracing layout">{''.join(side_lines)}</svg>
+    <h3>Bracing design calculations</h3>
+    <p>Brace force is calculated from <i>T* = (V*/2)(L<sub>d</sub>/b)</i>. Tension resistance is <i>T<sub>r</sub> = &phi;A<sub>g</sub>f<sub>y</sub></i>; the CHS compression resistance additionally uses the SANS column curve already implemented by the analysis.</p>
+    {_html_table(("Member", "Check", "Equation", "Substitution", "Result"), calculation_rows)}
+    {_html_table(("Member", "Section", "Behaviour", "Force (kN)", "Resistance (kN)", "Resistance util.", "Gov. axis", "Gov. KL/r", "Limit", "Slenderness util.", "Governing util."), member_rows)}
     <ul>{''.join(f'<li>{escape(item)}</li>' for item in bracing.get('assumptions', []))}</ul>
     """
 
@@ -1409,7 +1673,7 @@ footer {{ margin-top:28px; border-top:1px solid var(--line); padding-top:8px; co
 {_html_table(("Node", "Combination", "Fx", "Fy", "Fz", "Mx", "My", "Mz"), reaction_rows)}
 <h2>7. Member design calculations</h2>
 {''.join(member_sections)}
-{('<h2>8. Gable columns and longitudinal bracing</h2>' + _bracing_html(data.bracing_design)) if data.bracing_design else ''}
+{('<h2>8. Gable columns and longitudinal bracing</h2>' + _bracing_html(data.bracing_design, data.project)) if data.bracing_design else ''}
 <footer>This calculation sheet is generated from the current analysis implementation and is subject to independent engineering review.</footer>
 </body></html>"""
     output_path.write_text(html, encoding="utf-8")
@@ -1700,6 +1964,68 @@ def write_pdf_from_json(json_path, output_path):
     bracing = source.get("bracing_design", {})
     if bracing:
         story += [PageBreak(), Paragraph("8. Gable columns and longitudinal bracing", styles["CalcH2"])]
+        project = source.get("project", {})
+        building_length = max(float(project.get("building_length_mm", 0)), 1)
+        building_span = max(float(project.get("gable_width_mm", 0)), 1)
+        portal_spacing = max(float(project.get("rafter_spacing_mm", 0)), 1)
+        story += [Paragraph("Roof plan and bracing arrangement", styles["CalcH4"])]
+        roof_plan = Drawing(170*mm, 72*mm)
+        plan_x = lambda value: 12*mm + 146*mm*float(value)/building_length
+        plan_y0, plan_y1 = 14*mm, 58*mm
+        roof_plan.add(Line(plan_x(0),plan_y0,plan_x(building_length),plan_y0,strokeColor=colors.black,strokeWidth=1.2))
+        roof_plan.add(Line(plan_x(0),plan_y1,plan_x(building_length),plan_y1,strokeColor=colors.black,strokeWidth=1.2))
+        frame_count = max(1, int(round(building_length / portal_spacing)))
+        frame_positions = [min(index * portal_spacing, building_length) for index in range(frame_count + 1)]
+        if frame_positions[-1] < building_length - 1e-6:
+            frame_positions.append(building_length)
+        for grid_index, position in enumerate(frame_positions, 1):
+            x = plan_x(position)
+            roof_plan.add(Line(x,plan_y0-3*mm,x,plan_y1+3*mm,strokeColor=colors.HexColor("#8c98a4"),strokeDashArray=[2,2]))
+            roof_plan.add(String(x-1.5*mm,plan_y1+4*mm,str(grid_index),fontSize=6))
+        stored_roof = bracing.get("roof_layout", {})
+        stored_points = stored_roof.get("roof_points", [])
+        stored_panels = stored_roof.get("brace_panels", [])
+        roof_y = lambda value: plan_y0 + (plan_y1-plan_y0)*float(value)/building_span
+        if len(frame_positions) >= 2:
+            for left_position, right_position in ((frame_positions[0],frame_positions[1]),(frame_positions[-2],frame_positions[-1])):
+                left, right = plan_x(left_position), plan_x(right_position)
+                for panel in stored_panels:
+                    ya = roof_y(stored_points[panel["start_index"]]["x_mm"])
+                    yb = roof_y(stored_points[panel["end_index"]]["x_mm"])
+                    roof_plan.add(Line(left,ya,right,yb,strokeColor=colors.HexColor("#174f78"),strokeWidth=1.5))
+                    roof_plan.add(Line(left,yb,right,ya,strokeColor=colors.HexColor("#174f78"),strokeWidth=1.5))
+        for grid_index, point in enumerate(stored_points):
+            roof_plan.add(String(5*mm,roof_y(point["x_mm"])-1*mm,chr(ord("A")+grid_index),fontSize=7))
+        roof_plan.add(String(55*mm,63*mm,f"Portal spacing {_fmt(portal_spacing,0)} mm",fontSize=6.5))
+        roof_plan.add(String(55*mm,4*mm,f"Length {_fmt(building_length,0)} mm; span {_fmt(building_span,0)} mm",fontSize=6.5))
+        brace_by_type = {item["member_type"]: item for item in bracing.get("bracing_members", [])}
+        roof_plan.add(String(31*mm,67*mm,f"Roof brace {brace_by_type.get('Roof X-brace',{}).get('section','')} continuous eave-eave; each panel half-slope; purlin/strut {bracing.get('pynite_roof_model',{}).get('stiffness_purlin_section','')}",fontSize=6.5))
+        story += [roof_plan, Paragraph("Typical portal-frame section", styles["CalcH4"])]
+
+        eaves_height = max(float(project.get("eaves_height_mm", 0)), 0)
+        apex_height = max(float(project.get("apex_height_mm", 0)), eaves_height, 1)
+        section = Drawing(170*mm, 72*mm)
+        sec_x = lambda value: 15*mm + 140*mm*float(value)/building_span
+        sec_y = lambda value: 10*mm + 48*mm*float(value)/apex_height
+        roof_type = project.get("roof_type", "")
+        section.add(Line(sec_x(0),sec_y(0),sec_x(0),sec_y(eaves_height),strokeColor=colors.HexColor("#174f78"),strokeWidth=2))
+        right_top = apex_height if roof_type == "Mono Pitched" else eaves_height
+        section.add(Line(sec_x(building_span),sec_y(0),sec_x(building_span),sec_y(right_top),strokeColor=colors.HexColor("#174f78"),strokeWidth=2))
+        if roof_type == "Mono Pitched":
+            points = [sec_x(0),sec_y(eaves_height),sec_x(building_span),sec_y(apex_height)]
+        else:
+            points = [sec_x(0),sec_y(eaves_height),sec_x(building_span/2),sec_y(apex_height),sec_x(building_span),sec_y(eaves_height)]
+        section.add(PolyLine(points,strokeColor=colors.HexColor("#174f78"),strokeWidth=2))
+        section.add(Line(sec_x(0),sec_y(0),sec_x(building_span),sec_y(0),strokeColor=colors.black))
+        section.add(Line(sec_x(0),sec_y(0)-2*mm,sec_x(0),sec_y(apex_height)+4*mm,strokeColor=colors.HexColor("#8c98a4"),strokeDashArray=[2,2]))
+        section.add(Line(sec_x(building_span),sec_y(0)-2*mm,sec_x(building_span),sec_y(apex_height)+4*mm,strokeColor=colors.HexColor("#8c98a4"),strokeDashArray=[2,2]))
+        section.add(String(sec_x(0)-2*mm,2*mm,"A",fontSize=7))
+        section.add(String(sec_x(building_span)-2*mm,2*mm,"B",fontSize=7))
+        section.add(String(55*mm,2*mm,f"Span {_fmt(building_span,0)} mm",fontSize=6.5))
+        section.add(String(2*mm,30*mm,f"Eaves {_fmt(eaves_height,0)}",fontSize=6.2,angle=90))
+        section.add(String(162*mm,27*mm,f"Apex {_fmt(apex_height,0)}",fontSize=6.2,angle=90))
+        section.add(String(20*mm,61*mm,f"Columns {project.get('column_section','')}; rafters {project.get('rafter_section','')}; pitch {_fmt(project.get('roof_pitch_deg',0),2)} deg",fontSize=6.5))
+        story += [section]
         story += [Paragraph(
             f"Governing characteristic pressure {_fmt(bracing.get('governing_characteristic_pressure_kpa', 0))} kPa; "
             f"ULS wind factor {_fmt(bracing.get('wind_uls_factor', 0))}; total gable top shear "
@@ -1710,7 +2036,9 @@ def write_pdf_from_json(json_path, output_path):
         ] for item in bracing.get("pressure_cases", [])]
         pressure_table = Table(pressure_rows, colWidths=[45*mm, 25*mm, 25*mm, 40*mm], repeatRows=1)
         pressure_table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#174f78")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),0.3,colors.HexColor("#cbd2d9")),("FONTSIZE",(0,0),(-1,-1),7)]))
-        story += [pressure_table, Paragraph("Gable-end elevation", styles["CalcH4"])]
+        story += [pressure_table, Paragraph("Bracing design assumptions", styles["CalcH4"])]
+        story += [Paragraph(f"- {escape(item)}", styles["Small"]) for item in bracing.get("assumptions", [])]
+        story += [PageBreak(), Paragraph("Gable-end elevation", styles["CalcH4"])]
 
         layout = bracing.get("gable_layout", {})
         width = max(float(layout.get("width_mm", 1)), 1)
@@ -1721,10 +2049,17 @@ def write_pdf_from_json(json_path, output_path):
         eaves_y = gy(layout.get("eaves_height_mm", 0))
         drawing.add(PolyLine([gx(0),eaves_y,gx(width/2),gy(apex),gx(width),eaves_y], strokeColor=colors.HexColor("#174f78"), strokeWidth=2))
         drawing.add(Line(gx(0),7*mm,gx(width),7*mm,strokeColor=colors.black))
+        drawing.add(Line(gx(0),3*mm,gx(0),60*mm,strokeColor=colors.HexColor("#8c98a4"),strokeDashArray=[2,2]))
+        drawing.add(Line(gx(width),3*mm,gx(width),60*mm,strokeColor=colors.HexColor("#8c98a4"),strokeDashArray=[2,2]))
+        drawing.add(String(gx(0)-2*mm,0,"A",fontSize=6))
+        drawing.add(String(gx(width)-2*mm,0,"B",fontSize=6))
+        gable_by_name = {item["name"]: item for item in bracing.get("gable_columns", [])}
         for item in layout.get("columns", []):
             x = gx(item["x_mm"])
             drawing.add(Line(x,7*mm,x,gy(item["height_mm"]),strokeColor=colors.HexColor("#a21f2d"),strokeWidth=2))
+            result = gable_by_name.get(item["name"], {})
             drawing.add(String(x-4*mm,2*mm,item["name"],fontSize=6))
+            drawing.add(String(x+3.5*mm,(7*mm+gy(item["height_mm"]))/2,f"{result.get('section','')}",fontSize=5.5,angle=90))
         story += [drawing]
 
         column_rows = [["Column","Node","Section","Trib. mm","V kN","M kNm","Mcr","Mr","Util."]] + [[
@@ -1734,26 +2069,66 @@ def write_pdf_from_json(json_path, output_path):
         ] for item in bracing.get("gable_columns", [])]
         column_table = Table(column_rows, colWidths=[15*mm,15*mm,25*mm,20*mm,18*mm,18*mm,18*mm,18*mm,15*mm], repeatRows=1)
         column_table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#174f78")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),0.3,colors.HexColor("#cbd2d9")),("FONTSIZE",(0,0),(-1,-1),6.2)]))
-        story += [column_table, Paragraph("Roof-bracing plan - first braced bay", styles["CalcH4"])]
+        story += [column_table, Paragraph("Gable-column design calculations", styles["CalcH4"])]
+        gable_calc_rows = [["Column","Ref.","Calculation","Equation","Substitution","Result"]]
+        wind_factor = float(bracing.get("wind_uls_factor", 0))
+        for item in bracing.get("gable_columns", []):
+            pressure = float(item.get("characteristic_pressure_kpa", 0))
+            tributary_m = float(item.get("tributary_width_mm", 0))/1000
+            height_m = float(item.get("height_mm", 0))/1000
+            line_load = float(item.get("factored_line_load_kn_m", 0))
+            moment = float(item.get("major_moment_knm", 0))
+            shear = float(item.get("top_shear_kn", 0))
+            mi = (
+                float(item.get("plastic_moment_knm", 0))
+                if int(item.get("section_class", 4)) < 3
+                else float(item.get("yield_moment_knm", 0))
+            )
+            gable_calc_rows.extend([
+                [item["name"],"GC-01","Factored line load","wu = p btr gammaw",f"{_fmt(pressure)}x{_fmt(tributary_m,3)}x{_fmt(wind_factor)}",f"{_fmt(line_load)} kN/m"],
+                [item["name"],"GC-02","Pinned moment","M* = wu L^2/8",f"{_fmt(line_load)}x{_fmt(height_m,3)}^2/8",f"{_fmt(moment)} kNm"],
+                [item["name"],"GC-03","Top shear","V* = wu L/2",f"{_fmt(line_load)}x{_fmt(height_m,3)}/2",f"{_fmt(shear)} kN"],
+                [item["name"],"GC-04","Unbraced length","Lu = L/n",f"{_fmt(height_m,3)}/{int(item.get('brace_intervals',1))}",f"{_fmt(float(item.get('unbraced_length_mm',0))/1000,3)} m"],
+                [item["name"],"GC-05","Elastic critical moment","Mcr=(w2*pi/Lu)sqrt[EIyGJ+(piE/Lu)^2IyCw]",f"w2={_fmt(item.get('omega2',0))}; Iy={_fmt(item.get('iy_cm4',0))}; J={_fmt(item.get('torsional_constant_cm4',0))}; Cw={_fmt(item.get('warping_constant',0))}",f"{_fmt(item.get('mcr_knm',0))} kNm"],
+                [item["name"],"GC-06","LTB resistance","Mr = clause 13.6(Mcr,Mi)",f"Mcr={_fmt(item.get('mcr_knm',0))}; Mi={_fmt(mi)}",f"{_fmt(item.get('bending_resistance_knm',0))} kNm"],
+                [item["name"],"GC-07","Utilisation","U = M*/Mr",f"{_fmt(moment)}/{_fmt(item.get('bending_resistance_knm',0))}",_fmt(item.get('utilisation',0))],
+            ])
+        gable_calc_formatted = [gable_calc_rows[0]] + [
+            [Paragraph(escape(str(value)), styles["Tiny"]) for value in row]
+            for row in gable_calc_rows[1:]
+        ]
+        gable_calc_table = Table(gable_calc_formatted,colWidths=[14*mm,14*mm,32*mm,39*mm,57*mm,25*mm],repeatRows=1)
+        gable_calc_table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#174f78")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),0.3,colors.HexColor("#cbd2d9")),("FONTSIZE",(0,0),(-1,-1),5.5),("VALIGN",(0,0),(-1,-1),"TOP")]))
+        story += [gable_calc_table]
 
-        roof = bracing.get("roof_layout", {})
+        column_layout = bracing.get("column_bracing_layout", {})
         roof_model = bracing.get("pynite_roof_model", {})
-        plan = Drawing(170*mm, 52*mm)
-        y0, y1 = 8*mm, 44*mm
-        plan.add(Line(gx(0),y0,gx(width),y0,strokeColor=colors.black,strokeWidth=1.5))
-        plan.add(Line(gx(0),y1,gx(width),y1,strokeColor=colors.black,strokeWidth=1.5))
-        points = roof.get("roof_points", [])
-        loaded = set(roof.get("loaded_nodes", []))
-        x_values = []
-        for item in points:
-            x = gx(item["x_mm"]); x_values.append(x)
-            plan.add(Line(x,y0,x,y1,strokeColor=colors.HexColor("#8c98a4")))
-            if item["name"] in loaded:
-                plan.add(Circle(x,y0,2.2*mm,fillColor=colors.HexColor("#a21f2d"),strokeColor=None))
-        for left, right in zip(x_values, x_values[1:]):
-            plan.add(Line(left,y0,right,y1,strokeColor=colors.HexColor("#174f78"),strokeWidth=1.2))
-            plan.add(Line(right,y0,left,y1,strokeColor=colors.HexColor("#174f78"),strokeWidth=1.2))
-        story += [plan]
+        side = Drawing(170*mm, 48*mm)
+        x0, x1, y0, y1, ym = 25*mm, 145*mm, 8*mm, 40*mm, 24*mm
+        side.add(Line(x0,y0,x0,y1,strokeColor=colors.black,strokeWidth=1.5))
+        side.add(Line(x1,y0,x1,y1,strokeColor=colors.black,strokeWidth=1.5))
+        side_type = str(column_layout.get("type", "X"))
+        panel_count = max(1, int(column_layout.get("panel_count", 1)))
+        levels = [y0 + (y1-y0)*index/panel_count for index in range(panel_count+1)]
+        for level in levels:
+            side.add(Line(x0,level,x1,level,strokeColor=colors.black,strokeWidth=0.7))
+        segments = []
+        for bottom, top in zip(levels, levels[1:]):
+            middle = (bottom + top)/2
+            if side_type == "A":
+                segments.extend(((x0,bottom,(x0+x1)/2,top),(x1,bottom,(x0+x1)/2,top)))
+            elif side_type == "K":
+                segments.extend(((x0,top,x1,middle),(x0,bottom,x1,middle)))
+            else:
+                segments.extend(((x0,bottom,x1,top),(x0,top,x1,bottom)))
+        for xa, ya, xb, yb in segments:
+            side.add(Line(xa,ya,xb,yb,strokeColor=colors.HexColor("#a21f2d"),strokeWidth=2))
+        side_member = next((item for item in bracing.get("bracing_members", []) if item["member_type"] == "Longitudinal side-wall brace"), {})
+        side.add(String(42*mm,2*mm,f"{side_type}-bracing: {side_member.get('section','')}; {panel_count} panels at {_fmt(column_layout.get('panel_height_mm',0),0)} mm; bay {_fmt(column_layout.get('bay_width_mm',0),0)} mm",fontSize=6.5))
+        story += [KeepTogether([
+            Paragraph("Typical longitudinal column-bracing bay", styles["CalcH4"]),
+            side,
+        ])]
         story += [Paragraph(
             f"Roof PyNite model: {escape(str(roof_model.get('analysis', '')))}; "
             f"{int(roof_model.get('node_count', 0))} nodes, {int(roof_model.get('member_count', 0))} members, "
@@ -1761,14 +2136,70 @@ def write_pdf_from_json(json_path, output_path):
             f"Purlin stiffness section {escape(str(roof_model.get('stiffness_purlin_section', '')))}; "
             "resistance check deferred.", styles["Small"]
         )]
-        member_rows = [["Member","Section","Behaviour","Force kN","Resistance kN","Util."]] + [[
+        story += [Paragraph("Bracing design calculations", styles["CalcH4"])]
+        story += [Paragraph(
+            "Brace force T* = (V*/2)(Ld/b). Tension resistance Tr = phi Ag fy. "
+            "The CHS compression resistance also uses the implemented SANS column curve.",
+            styles["Small"],
+        )]
+        calculation_rows = [["Member","Check","Equation","Substitution","Result"]]
+        total_shear = float(bracing.get("total_gable_top_shear_kn", 0))
+        bay_length = float(bracing.get("roof_layout", {}).get("bay_length_mm", 0))
+        for item in bracing.get("bracing_members", []):
+            force_projection = (
+                float(column_layout.get("horizontal_projection_mm", bay_length))
+                if item["member_type"] == "Longitudinal side-wall brace" else bay_length
+            )
+            calculation_rows.append([
+                item["member_type"], "Brace force", "T* = (V*/2)(Ld/b)",
+                f"({_fmt(total_shear)}/2)({_fmt(item.get('length_mm',0),1)}/{_fmt(force_projection,1)})",
+                f"{_fmt(item.get('design_force_kn',0))} kN",
+            ])
+            length_mm = float(item.get("length_mm", 0))
+            slenderness_limit = item.get("slenderness_limit", 0)
+            if "Angles" in str(item.get("section_family", "")):
+                for axis, factor, radius_key, ratio_key in (
+                    ("x-x", 1.0, "rx_mm", "slenderness_xx"),
+                    ("y-y", 1.0, "ry_mm", "slenderness_yy"),
+                    ("v-v", 0.5, "rv_mm", "slenderness_vv"),
+                ):
+                    calculation_rows.append([
+                        item["member_type"], f"Slenderness {axis}", "K L / r",
+                        f"{_fmt(factor,1)} x {_fmt(length_mm,1)} / {_fmt(item.get(radius_key,0),2)}",
+                        f"{_fmt(item.get(ratio_key,0))} <= {_fmt(slenderness_limit,0)}",
+                    ])
+            else:
+                factor = float(item.get("effective_length_factor", 1.0))
+                calculation_rows.append([
+                    item["member_type"], "Slenderness", "K L / r",
+                    f"{_fmt(factor,1)} x {_fmt(length_mm,1)} / {_fmt(item.get('radius_of_gyration_mm',0),2)}",
+                    f"{_fmt(item.get('slenderness_ratio',0))} <= {_fmt(slenderness_limit,0)}",
+                ])
+            if item.get("behaviour") == "tension-only":
+                equation = "Tr = phi Ag fy"
+                substitution = f"0.9({_fmt(item.get('area_mm2',0),1)})({_fmt(item.get('fy_mpa',0),0)})/1000"
+            else:
+                equation = "Cr = phi Ag fy [1 + lambda^(2n)]^(-1/n)"
+                substitution = (
+                    f"0.9({_fmt(item.get('area_mm2',0),1)})({_fmt(item.get('fy_mpa',0),0)})"
+                    f"[1+{_fmt(item.get('nondimensional_slenderness',0))}^(2x1.34)]^(-1/1.34)/1000"
+                )
+            calculation_rows.append([
+                item["member_type"], "Resistance", equation, substitution,
+                f"{_fmt(item.get('resistance_kn',0))} kN",
+            ])
+        calculation_table = Table(calculation_rows, colWidths=[36*mm,24*mm,39*mm,55*mm,20*mm], repeatRows=1)
+        calculation_table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#174f78")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),0.3,colors.HexColor("#cbd2d9")),("FONTSIZE",(0,0),(-1,-1),5.8),("VALIGN",(0,0),(-1,-1),"TOP")]))
+        story += [calculation_table]
+        member_rows = [["Member","Section","Behaviour","Force","Resistance","R util.","Axis / KLr","Slender util.","Gov. util."]] + [[
             item["member_type"],item["section"],item["behaviour"],_fmt(item["design_force_kn"]),
-            _fmt(item["resistance_kn"]),_fmt(item["utilisation"]),
+            _fmt(item["resistance_kn"]),_fmt(item.get("resistance_utilisation",item["utilisation"])),
+            f"{item.get('slenderness_axis','x-x')} / {_fmt(item.get('slenderness_ratio',0))}",
+            _fmt(item.get("slenderness_utilisation",0)),_fmt(item["utilisation"]),
         ] for item in bracing.get("bracing_members", [])]
-        member_table = Table(member_rows, colWidths=[42*mm,28*mm,38*mm,23*mm,28*mm,18*mm], repeatRows=1)
+        member_table = Table(member_rows, colWidths=[33*mm,23*mm,27*mm,15*mm,19*mm,14*mm,20*mm,19*mm,18*mm], repeatRows=1)
         member_table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#174f78")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),0.3,colors.HexColor("#cbd2d9")),("FONTSIZE",(0,0),(-1,-1),6.5)]))
         story += [member_table]
-        story += [Paragraph(f"- {escape(item)}", styles["Small"]) for item in bracing.get("assumptions", [])]
     doc.build(story)
     return output_path
 

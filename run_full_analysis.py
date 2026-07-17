@@ -20,6 +20,14 @@ def main(render: bool = True) -> None:
     rafter_spacing = 6 * 1000
     building_length = 42 * 1000
     col_bracing_spacing = 1
+    column_bracing_type = "X"       # "X" uses angles; "K" or "A" uses CHS
+    # CFLC format: depth x flange x lip x thickness, e.g. 125x50x20x2.5.
+    purlin_section = "175x65x20x2.5"
+    purlin_max_spacing_mm = 1536
+    roof_bracing_purlin_interval = 3  # 1=every purlin, 2=every second, etc.
+    girt_section = "175x65x20x2.5"
+    girt_max_spacing_mm = 1536
+    # Recalculated from purlin_max_spacing_mm by update_json_file().
     rafter_bracing_spacing = 2
     # Gable-column count for one gable end. Use 1, 3, 5, ...: the apex column
     # is always present and each increase adds one symmetric column per side.
@@ -50,7 +58,13 @@ def main(render: bool = True) -> None:
         "rafter_spacing": rafter_spacing,
         "building_length": building_length,
         "col_bracing_spacing": col_bracing_spacing,
+        "column_bracing_type": column_bracing_type,
         "rafter_bracing_spacing": rafter_bracing_spacing,
+        "purlin_section": purlin_section,
+        "purlin_max_spacing_mm": purlin_max_spacing_mm,
+        "roof_bracing_purlin_interval": roof_bracing_purlin_interval,
+        "girt_section": girt_section,
+        "girt_max_spacing_mm": girt_max_spacing_mm,
         "gable_column_count": gable_column_count,
         "gable_column_brace_intervals": gable_column_brace_intervals,
         "roof_pitch": math.degrees(math.atan((apex_height - eaves_height) / roof_span)),

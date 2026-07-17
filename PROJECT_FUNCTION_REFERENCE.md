@@ -434,3 +434,10 @@ Do not delete this file solely from this reference. First confirm that no extern
 | Calculation report model/export | `design_calculations.py` |
 
 This separation will allow a UI to call stable functions without copying engineering logic into button handlers or screen code.
+## Draughtsman markup
+
+| Function | Purpose |
+|---|---|
+| `even_positions(total_mm, maximum_spacing_mm)` | Divides a roof slope or wall height evenly without exceeding the entered maximum spacing. |
+| `build_markup_html(data)` | Builds the four-sheet A1 SVG/HTML markup from a completed calculation report. |
+| `write_markup(data, output_dir, create_pdf)` | Writes the standalone HTML and prints that same HTML to PDF through Edge or Chrome when available. |

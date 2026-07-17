@@ -15,7 +15,7 @@ For a normal enclosed building, the program covers:
 - Preliminary or opening-based final internal wind pressure.
 - Pinned gable columns loaded about their strong axis and checked using the `Mcr` calculation.
 - Roof X-bracing using tension-only angle members.
-- Longitudinal side-wall bracing using CHS members in tension and compression.
+- User-selected longitudinal side-wall bracing: tension-only angle X-bracing, or CHS K-/A-bracing in tension and compression.
 - A provisional lipped-channel purlin section used as the roof-bracing strut.
 - A building-level steel mass summary for portal frames, bracing, gable columns and purlins.
 
@@ -135,13 +135,61 @@ The building-level portal-frame quantity is calculated as the number of longitud
 ```python
 col_bracing_spacing = 1
 rafter_bracing_spacing = 2
+column_bracing_type = "X"
 ```
 
 - `col_bracing_spacing` is the number of equal modelled intervals over each portal column. It must be at least 1.
+- The selected X, K or A wall-bracing topology is repeated in every one of
+  these vertical intervals. For example, `col_bracing_spacing = 2` creates a
+  restraint at column midheight and two stacked bracing panels.
 - For a duo-pitched roof, `rafter_bracing_spacing` is the number of equal intervals on each roof slope. Increasing it creates additional rafter nodes and possible purlin/gable-column connection points.
 - A mono-pitched roof currently uses four fixed rafter divisions regardless of this input.
 
 These values are integer counts, not distances in millimetres.
+
+`column_bracing_type` selects the longitudinal bracing between portal columns:
+
+- `"X"` selects tension-only angle cross-bracing. Angles must satisfy the reported tension/slenderness checks and cannot be smaller than 50x50x5.
+- `"K"` selects CHS K-bracing checked in tension and compression.
+- `"A"` selects CHS A-bracing checked in tension and compression.
+
+The selected arrangement, member section and bay dimensions are shown in the calculation report.
+Roof X-bracing continues across the complete roof width in each end braced bay.
+Its transverse panel width is controlled by the purlin interval described below.
+
+### 6.4 Define purlins, girts and the draughtsman markup layout
+
+```python
+purlin_section = "125x50x20x2.5"
+purlin_max_spacing_mm = 1500
+roof_bracing_purlin_interval = 3
+girt_section = "125x50x20x2.5"
+girt_max_spacing_mm = 1800
+```
+
+Cold-formed lipped-channel designations use `depthxflangexlipxthickness`, in
+millimetres. The entered purlin must exist under `Lipped Channels` in
+`bracing_member_database.csv`.
+
+`purlin_max_spacing_mm` and `girt_max_spacing_mm` are maximum spacings. The
+markup divides each roof slope and wall height into equal spaces no greater
+than those values. `roof_bracing_purlin_interval` controls the roof X-brace
+panel width: `1` braces every purlin space, `2` every second space, and so on.
+The final panel approaching the ridge or eave is shortened where necessary.
+
+The haunch length is fixed at `portal span / 15`, measured horizontally from
+the column centreline. The markup identifies the tapered haunch as cut from
+the selected rafter section.
+
+After the design calculation report has been generated, create the standalone
+A1 markup with:
+
+```powershell
+.\.venv314\Scripts\python.exe draughtsman_markup.py
+```
+
+This writes a printable HTML file and, when Microsoft Edge or Google Chrome is
+available, prints the same HTML directly to PDF under `output/markup/`.
 
 ### 6.4 Define the gable columns
 
@@ -494,4 +542,3 @@ Before issuing a report, confirm:
 - Excluded secondary steel and connections are designed and quantified separately.
 - The report input-verification status is current, not stale.
 - The final PDF has been reviewed and signed according to the organisation’s quality system.
-
