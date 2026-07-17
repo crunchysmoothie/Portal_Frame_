@@ -73,7 +73,7 @@ def main(render: bool = True) -> None:
 
     wind_data = {
         "wind": "3s gust",
-        "fundamental_basic_wind_speed": 32,
+        "fundamental_basic_wind_speed": 36,
         "return_period": 50,
         "terrain_category": "B",
         "topographic_factor": 1.0,
