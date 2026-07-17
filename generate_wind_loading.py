@@ -109,13 +109,24 @@ def _process_90deg(zones: List[Dict[str, Any]], left_cols: List[Dict[str, Any]],
                    case_02: str, case_03: str, loads: List[Dict[str, Any]]) -> None:
     zd = _zone_dict(zones)
     roof_len = sum(m["length"] for m in rafters) * 1000
+    column_height = max(
+        sum(m["length"] for m in columns) * 1000
+        for columns in (left_cols, right_cols)
+    )
+    # For wind parallel to the ridge, the repeated portal is governed by the
+    # longitudinal side-wall zone. Use Zone B for an interior building length;
+    # where the zoning calculation has no B strip, Zone A is the only wall
+    # zone available. The generated pressure already includes rafter spacing.
+    wall_zone = zd.get("B") if zd.get("B", {}).get("Length", 0) > 0 else zd["A"]
     for key, case in [("cpi=0.2", case_02), ("cpi=-0.3", case_03)]:
         # Figures 10/11: F/G/H/I vary along the building for theta=90.
         # Apply the governing roof-zone envelope to the transverse portal.
-        # Longitudinal wall pressure belongs to the end-wall/bracing system and
-        # is not applied as an in-plane load to this 2D transverse frame.
         intensity = max((zd[z][key] for z in ("F", "G", "H", "I")), key=abs)
         _distribute(roof_len, rafters, intensity, case, loads)
+        # Apply the governing repeated side-wall zone to both portal column
+        # lines. This is the wall action requested for the portal design.
+        _distribute(column_height, left_cols, wall_zone[key], case, loads)
+        _distribute(column_height, right_cols, wall_zone[key], case, loads)
 
 
 def _process_canopy_0deg(zones: List[Dict[str, Any]], rafters: List[Dict[str, Any]],

@@ -90,6 +90,8 @@ A future cleanup should keep the reusable functions in `user_input.py` but move 
 pythonProject/
 |-- run_full_analysis.py              Preferred full-analysis entry point
 |-- user_input.py                     Geometry, load cases and JSON generation
+|-- crawl_beam_inputs.py              Crawl library and operating-mode inputs
+|-- crawl_beam_loading.py             Crawl/hoist actions and rafter placement
 |-- wind_loads.py                     Wind pressure and zone calculations
 |-- generate_wind_loading.py          Converts zones into member line loads
 |-- frame_model.py                    Typed in-memory input model and JSON loader
@@ -162,7 +164,14 @@ The code relies on these scaling conventions. Changing the database units withou
 
 | Function | Status and caller | Uses | Output / action | Assumptions |
 |---|---|---|---|---|
-| `main()` | **Entry point** | Hard-coded building/wind inputs; `user_input`; `portal_frame_analysis` | Rebuilds `input_data.json`, runs one analysis, stores `analysis_results.json`, prints results and opens the visualiser | Values are edited in this file; dimensions are entered in mm; roof type is exactly `Duo Pitched` or `Mono Pitched` |
+| `main()` | **Entry point** | Hard-coded building/wind inputs; crawl enable/mode selections; `user_input`; `portal_frame_analysis` | Rebuilds `input_data.json`, runs one analysis, stores `analysis_results.json`, prints results and opens the visualiser | Crawl definitions are maintained separately in `crawl_beam_inputs.py`; dimensions are entered in mm |
+
+### `crawl_beam_inputs.py`
+
+| Function | Status and caller | Uses | Output / action | Assumptions |
+|---|---|---|---|---|
+| `crawl_beam_library()` | **Editable project input**; `run_full_analysis.main()` | One dictionary per installed crawl | Returns the complete crawl library | Library entries remain in place when the main switch is `No` |
+| `resolve_crawl_selection(...)` | **Active**; `update_json_file()` | `Yes/No`, operating mode and library | Validates and normalises the selection | Modes are exactly `One at a time` or `All at the same time`; names must be unique |
 
 ### `analysis_snapshot.py`
 
@@ -184,8 +193,9 @@ Data classes:
 |---|---|
 | `NodeLoad` | Direction, magnitude and optional load case for one node load |
 | `MemberLoad` | Direction, start/end intensity, optional positions and load case for one member load |
+| `MemberPointLoad` | Direction, magnitude, local member position and optional load case |
 | `Node` | Node coordinates plus attached `NodeLoad` objects |
-| `Member` | Connectivity, material, type, length and attached `MemberLoad` objects |
+| `Member` | Connectivity, material, type, length and attached distributed/point loads |
 | `PortalFrame` | Complete typed representation of the JSON input model |
 
 | Function | Status and caller | Uses | Output / action | Assumptions |
@@ -204,16 +214,17 @@ Data classes:
 | Function | Status and caller | Uses | Output / action | Assumptions |
 |---|---|---|---|---|
 | `generate_nodes(b_data)` | **Active**; `update_json_file()` | Geometry, roof type and bracing-spacing counts | Returns ordered node dictionaries | `col_bracing_spacing >= 1`; duo-pitch rafters use the rafter spacing count, but mono-pitch currently uses four hard-coded rafter divisions |
-| `generate_supports(nodes)` | **Active** | First and last nodes | Returns two supports with translations fixed and rotations free | Bases are the first/last nodes |
+| `generate_base_supports(...)` | **Active**; `update_json_file()` | First/last nodes, `Pinned`/`Fixed`/`Spring` condition and optional rotational stiffness | Returns support restraints and optional RZ springs | User stiffness is entered in kN.m/rad and converted to kN.mm/rad; both bases share the setting |
+| `generate_supports(nodes)` | **Compatibility wrapper** | First and last nodes | Returns the previous spring-base support restraints | Defaults to rotationally released supports with separate springs |
 | `generate_members(nodes)` | **Active** | Ordered nodes | Returns members between every consecutive node | Vertical segments are columns; all others rafters; material name is hard-coded as `Steel_S355` |
-| `generate_spring_supports(nodes)` | **Active** | First and last nodes | Returns two base `RZ` springs of `10E6` | Semi-rigid base stiffness is fixed, not user-configurable |
-| `generate_nodal_loads(nodes)` | **Active**, but resulting case is not in current combinations | Middle node | Returns a `-10 kN` apex load in case `CR` | No current SLS/ULS combination includes `CR`, so it does not affect the present design results |
+| `generate_spring_supports(nodes)` | **Compatibility wrapper** | First and last nodes | Returns two base `RZ` springs of `10E6` | Preserves the former 10 000 kN.m/rad default |
+| `generate_nodal_loads(nodes)` | **Active** | Generated nodes | Returns an empty list pending explicit nodal-load inputs | Crawl actions are member point loads, not a fixed apex load |
 | `steel_prop(grade)` | **Active** | `Steel_S355` or `Steel_S275` | Returns strength-check material values | Exact key required; `G=77` differs from `add_materials()` |
 | `add_materials()` | **Active** | No arguments | Returns PyNite material definitions | Defines `G=80`; both grades are always returned |
 | `_wind_factor(standard)` | **Active** | `Pre-2019` or `SANS 10160-1:2019` | Returns ULS wind factor `1.3` or `1.6` | Any other string raises `ValueError` |
 | `_roof_accompanying_factor(accessibility)` | **Active** | Accessibility string | Returns `0.0` for `Inaccessible`, otherwise `0.3` | Any misspelling or unknown value is treated as accessible |
 | `_wind_combinations(...)` | **Active** | Wind cases, accessibility and selected standard | Returns wind ULS combinations | Up/down/variable action labels determine `D_MIN`, `D_MAX` and live-load inclusion |
-| `add_load_cases(...)` | **Active** | Building/roof type, accessibility and standard | Returns `(load_cases, SLS combinations, ULS combinations)` | Mixed M1/M2 cases only apply to normal duo-pitch buildings; factors are code-defined rather than user-entered |
+| `add_load_cases(...)` | **Active** | Building/roof type, accessibility, standard, crawl library and operating mode | Returns `(load_cases, SLS combinations, ULS combinations)` | Each crawl has unique vertical/horizontal cases; one-at-a-time scenarios remain isolated; all-at-once scenarios retain every vertical load and envelope at most two horizontal actions |
 | `add_SLS(accessibility)` | **Compatibility wrapper**; no current runtime caller | `add_load_cases()` | Returns only SLS combinations | Uses other `add_load_cases()` defaults |
 | `add_ULS(accessibility, standard)` | **Compatibility wrapper**; no current runtime caller | `add_load_cases()` | Returns only ULS combinations | Uses other `add_load_cases()` defaults |
 | `safe_load_json(path)` | **Active** | JSON path | Returns decoded dict, or `{}` for missing/invalid JSON | Invalid JSON is treated as an empty file rather than raising |
@@ -415,9 +426,8 @@ Do not delete this file solely from this reference. First confirm that no extern
 4. **Review unused wrappers/helpers.** Current no-caller functions are `user_input.add_SLS`, `user_input.add_ULS`, `wind_loads.interpolate_cpe_roof`, `wind_loads.print_zones`, `generate_wind_loading._process_canopy_0deg`, and `_process_canopy_90deg`.
 5. **Remove hard-coded default-file coupling.** Several wind functions always read/write `input_data.json`, even when a filename argument exists higher in the call stack.
 6. **Resolve duplicated material definitions.** `steel_prop()` uses `G=77`, `add_materials()` uses `G=80`, and `generate_members()` hard-codes `Steel_S355`.
-7. **Decide whether case `CR` is required.** The apex load is generated but absent from all current combinations.
-8. **Consider one section-search pass.** The rafter-first and column-first searches currently evaluate the same section-pair set.
-9. **Add a complete dependency file.** The current requirements file only documents PDF export.
+7. **Consider one section-search pass.** The rafter-first and column-first searches currently evaluate the same section-pair set.
+8. **Add a complete dependency file.** The current requirements file only documents PDF export.
 
 ## Recommended ownership boundaries for the future UI
 

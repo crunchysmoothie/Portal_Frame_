@@ -17,6 +17,13 @@ class MemberLoad:
     case: Optional[str] = None
 
 @dataclass
+class MemberPointLoad:
+    direction: str
+    magnitude: float
+    x: float
+    case: Optional[str] = None
+
+@dataclass
 class Node:
     name: str
     x: float
@@ -33,6 +40,7 @@ class Member:
     type: str
     length: float
     loads: List[MemberLoad] = field(default_factory=list)
+    point_loads: List[MemberPointLoad] = field(default_factory=list)
 
 @dataclass
 class PortalFrame:
@@ -78,6 +86,13 @@ def load_portal_frame(path: str) -> 'PortalFrame':
         if target:
             target.loads.append(MemberLoad(ml['direction'], ml['w1'], ml['w2'],
                                           ml.get('x1'), ml.get('x2'), ml.get('case')))
+
+    for pl in data.get('member_point_loads', []):
+        target = next((m for m in members if m.name == pl['member']), None)
+        if target:
+            target.point_loads.append(MemberPointLoad(
+                pl['direction'], pl['magnitude'], pl['x'], pl.get('case')
+            ))
 
     return PortalFrame(
         frame_data=data.get('frame_data', []),

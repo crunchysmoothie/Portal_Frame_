@@ -1,6 +1,11 @@
 import unittest
 
-from draughtsman_markup import _brace_pairs, build_markup_html, even_positions
+from draughtsman_markup import (
+    _brace_pairs,
+    _wall_view_geometry,
+    build_markup_html,
+    even_positions,
+)
 from user_input import generate_nodes
 
 
@@ -16,6 +21,12 @@ class DraughtsmanMarkupTests(unittest.TestCase):
             _brace_pairs(15, 3, apex_index=7),
             [(0, 3), (3, 6), (6, 7), (7, 10), (10, 13), (13, 14)],
         )
+
+    def test_side_wall_uses_one_horizontal_and_vertical_scale(self):
+        x0, x1, yt, yb, scale = _wall_view_geometry(144_000, 10_000)
+        self.assertAlmostEqual((x1 - x0) / 144_000, scale)
+        self.assertAlmostEqual((yb - yt) / 10_000, scale)
+        self.assertAlmostEqual((x1 - x0) / (yb - yt), 14.4)
 
     def test_markup_contains_four_a1_views_and_required_callouts(self):
         data = {

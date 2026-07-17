@@ -124,35 +124,37 @@ def _roof_candidates(data) -> list[dict[str, Any]]:
 
 
 def select_gable_nodes(data, count: int) -> list[dict[str, Any]]:
-    """Select the apex and successive symmetric braced-node pairs."""
+    """Return evenly spaced internal gable-column roof points.
+
+    ``count`` internal columns divide the complete gable width into
+    ``count + 1`` equal bays. The points need not coincide with portal-analysis
+    rafter nodes; roof-bracing loads are transferred to the nearest purlin
+    point later in the design workflow.
+    """
 
     if count < 1 or count % 2 == 0:
         raise ValueError("gable_column_count must be a positive odd number (1, 3, 5, ...).")
+    frame = data.frame_data[0]
+    width = _float(frame["gable_width"])
+    eaves = _float(frame["eaves_height"])
+    apex = _float(frame["apex_height"])
+    roof_type = frame.get("building_roof", "Duo Pitched")
+    spacing = width / (count + 1)
+
+    def roof_height(x: float) -> float:
+        if roof_type == "Mono Pitched":
+            return eaves + (apex - eaves) * x / width
+        centre = width / 2
+        return eaves + (apex - eaves) * (1 - abs(x - centre) / centre)
+
     candidates = _roof_candidates(data)
-    if count > len(candidates):
-        raise ValueError(
-            f"gable_column_count={count} exceeds the {len(candidates)} internal roof "
-            "brace points. Increase rafter_bracing_spacing or reduce the count."
-        )
-    centre = _float(data.frame_data[0]["gable_width"]) / 2
-    apex = min(candidates, key=lambda item: abs(item["x"] - centre))
-    if abs(apex["x"] - centre) > 1e-6:
-        raise ValueError("The generated roof geometry does not contain an apex brace node.")
-    selected = [apex]
-    by_x = {round(item["x"], 6): item for item in candidates}
-    offsets = sorted(
-        {round(abs(item["x"] - centre), 6) for item in candidates if item is not apex}
-    )
-    for offset in offsets:
-        if len(selected) >= count:
-            break
-        left = by_x.get(round(centre - offset, 6))
-        right = by_x.get(round(centre + offset, 6))
-        if left and right:
-            selected.extend((left, right))
-    if len(selected) != count:
-        raise ValueError("The available roof brace nodes cannot form the requested symmetric layout.")
-    return sorted(selected, key=lambda item: item["x"])
+    selected = []
+    for index in range(1, count + 1):
+        x = spacing * index
+        nearest = min(candidates, key=lambda item: abs(item["x"] - x))
+        name = nearest["name"] if abs(nearest["x"] - x) <= 1e-6 else f"GCP{index}"
+        selected.append({"name": name, "x": x, "y": roof_height(x)})
+    return selected
 
 
 def tributary_widths(x_positions: Iterable[float], width_mm: float) -> dict[float, float]:

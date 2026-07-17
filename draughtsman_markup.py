@@ -62,6 +62,24 @@ def _brace_pairs(count, interval, apex_index=None):
     return pairs
 
 
+def _wall_view_geometry(length_mm, height_mm):
+    """Fit a wall elevation using one common horizontal/vertical scale."""
+    length = float(length_mm)
+    height = float(height_mm)
+    if length <= 0 or height <= 0:
+        raise ValueError("Wall length and height must both be greater than zero.")
+    left, right = 180.0, 1500.0
+    top, bottom = 260.0, 850.0
+    scale = min((right - left) / length, (bottom - top) / height)
+    drawn_width = length * scale
+    drawn_height = height * scale
+    x0 = (left + right - drawn_width) / 2
+    x1 = x0 + drawn_width
+    yt = (top + bottom - drawn_height) / 2
+    yb = yt + drawn_height
+    return x0, x1, yt, yb, scale
+
+
 class Svg:
     def __init__(self, title, sheet_no):
         self.title = title
@@ -187,7 +205,7 @@ def _roof_sheet(c):
 def _wall_sheet(c):
     p=c["p"]; length=float(p["building_length_mm"]); height=float(p["eaves_height_mm"]); spacing=float(p["rafter_spacing_mm"])
     frames=_frame_positions(length,spacing); girts,actual=even_positions(height,c["girt_max"]); s=Svg("LONGITUDINAL WALL BRACING ELEVATION",3)
-    x0,x1,yb,yt=180,1500,900,210; X=lambda v:x0+(x1-x0)*v/length; Y=lambda v:yb-(yb-yt)*v/height
+    x0,x1,yt,yb,scale=_wall_view_geometry(length,height); X=lambda v:x0+scale*v; Y=lambda v:yb-scale*v
     for i,v in enumerate(frames,1): x=X(v); s.line(x,yb,x,yt,"primary"); s.grid(x,yt-70,i)
     for v in girts[1:]: s.line(x0,Y(v),x1,Y(v),"secondary")
     layout=c["b"].get("column_bracing_layout",{}); typ=str(layout.get("type",p.get("column_bracing_type","X")))
@@ -202,8 +220,10 @@ def _wall_sheet(c):
             elif typ=="A": seg=((xa,y_bottom,(xa+xb)/2,y_top),(xb,y_bottom,(xa+xb)/2,y_top))
             else: seg=((xa,y_bottom,xb,y_top),(xa,y_top,xb,y_bottom))
             for q in seg: s.line(*q,"brace")
-    s.dim_h(x0,x1,970,f"BUILDING LENGTH {length:,.0f} mm"); s.dim_v(110,yt,yb,f"EAVES {height:,.0f} mm")
+    dimension_y=min(970,yb+70)
+    s.dim_h(x0,x1,dimension_y,f"BUILDING LENGTH {length:,.0f} mm"); s.dim_v(x0-70,yt,yb,f"EAVES {height:,.0f} mm")
     s.text(840,115,"TYPICAL SIDE-WALL ELEVATION", "viewtitle")
+    s.text(840,155,"HORIZONTAL AND VERTICAL GEOMETRY SHOWN AT THE SAME SCALE", "small")
     s.text(840,1015,f"GIRTS {c['girt']} CFLC AT {actual:,.0f} mm ACTUAL (MAX {c['girt_max']:,.0f} mm); {typ}-BRACING {c['wall_brace']} IN {panel_count} VERTICAL PANELS", "note")
     return s
 

@@ -9,3 +9,5 @@
 /.codes
 .idea/
 __pycache__
+references/*.pdf
+references/*.PDF

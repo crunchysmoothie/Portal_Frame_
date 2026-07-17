@@ -82,9 +82,17 @@ class WindLoadingGenerationTests(unittest.TestCase):
                         if load["case"].startswith("W90")
                     ]
                     self.assertTrue(loads_90)
-                    self.assertTrue(all(
-                        member_types[load["member"]] == "rafter" for load in loads_90
-                    ))
+                    if building_type == "Normal":
+                        self.assertTrue(any(
+                            member_types[load["member"]] == "column" for load in loads_90
+                        ))
+                        self.assertTrue(any(
+                            member_types[load["member"]] == "rafter" for load in loads_90
+                        ))
+                    else:
+                        self.assertTrue(all(
+                            member_types[load["member"]] == "rafter" for load in loads_90
+                        ))
 
                     if building_type == "Canopy":
                         w0_members = {
@@ -98,6 +106,21 @@ class WindLoadingGenerationTests(unittest.TestCase):
                             self.assertEqual(w0_members, rafter_names)
                         else:
                             self.assertLess(len(w0_members), len(rafter_names))
+
+    def test_wind_90_uses_zone_b_for_repeated_portal_columns(self):
+        data = self._generate("Normal", "Duo Pitched")
+        member_types = {member["name"]: member["type"] for member in data["members"]}
+        zone_b = next(zone for zone in data["wind_zones_90"] if zone["Zone"] == "B")
+        column_loads = [
+            load for load in data["member_loads"]
+            if load["case"] == "W90_0.2"
+            and member_types[load["member"]] == "column"
+        ]
+        self.assertTrue(column_loads)
+        self.assertTrue(all(
+            math.isclose(load["w1"], zone_b["cpi=0.2"])
+            for load in column_loads
+        ))
 
     def test_load_combination_standard_selects_wind_factor(self):
         for standard, expected in (
