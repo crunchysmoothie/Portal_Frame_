@@ -293,6 +293,8 @@ def safe_load_json(path: str | Path) -> dict:
 def update_json_file(json_filename, b_data, wind_data):
     json_filename = Path(json_filename)
 
+    b_data = dict(b_data)
+
     # --- generate fresh data -------------------------------------------------
     new_nodes           = generate_nodes(b_data)
     new_members         = generate_members(new_nodes)
@@ -424,6 +426,7 @@ def main() -> None:
     rafter_spacing = 6 * 1000      # Convert to mm
     building_length = 72 * 1000    # Convert to mm
     col_bracing_spacing = 1        # number of braced points per column
+    column_bracing_type = "X"     # "X" uses angles; "K" or "A" uses CHS
     rafter_bracing_spacing = 3     # number of braced points per rafter
     # One gable end: 1, 3, 5, ... columns. The apex column is mandatory and
     # each increment adds a symmetric pair at the next roof brace nodes.
@@ -454,6 +457,7 @@ def main() -> None:
         "rafter_spacing": rafter_spacing,
         "building_length": building_length,
         "col_bracing_spacing": col_bracing_spacing,
+        "column_bracing_type": column_bracing_type,
         "rafter_bracing_spacing": rafter_bracing_spacing,
         "gable_column_count": gable_column_count,
         "gable_column_brace_intervals": gable_column_brace_intervals,

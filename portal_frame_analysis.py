@@ -15,7 +15,9 @@ from strength_checks import (
 )
 from frame_model import load_portal_frame, PortalFrame
 
-num_cores = multiprocessing.cpu_count()
+# Weight-ordered early exit keeps the search small and avoids importing a
+# complete PyNite/Matplotlib stack in many worker processes.
+num_cores = min(5, multiprocessing.cpu_count())
 
 
 def _is_instability_error(exc: Exception) -> bool:
@@ -238,15 +240,28 @@ def directional_search(primary, r_list, c_list, r_section_type, c_section_type,
     if not tasks:          # nothing to do
         return None
 
+    tasks.sort(key=lambda task: (
+        member_db[task[0]][task[1]]["m"] * r_total_m
+        + member_db[task[2]][task[3]]["m"] * c_total_m
+    ))
 
     acceptable = []
     workers = max(1, num_core - 4)
-    with ProcessPoolExecutor(max_workers=workers) as ex:
-        futures = [ex.submit(analyze_combination, t) for t in tasks]
-        for fut in as_completed(futures):
-            result = fut.result()
+    if workers == 1:
+        for task in tasks:
+            result = analyze_combination(task)
             if result is not None:
                 acceptable.append(result)
+                # The first passing pair is globally lightest because the
+                # candidate matrix is ordered by total steel mass.
+                break
+    else:
+        with ProcessPoolExecutor(max_workers=workers) as ex:
+            futures = [ex.submit(analyze_combination, t) for t in tasks]
+            for fut in as_completed(futures):
+                result = fut.result()
+                if result is not None:
+                    acceptable.append(result)
 
     if not acceptable:
         return None
@@ -297,9 +312,9 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
     data = import_data('input_data.json')
     r_total_m, c_total_m = get_member_lengths(data)
     vert_limit = data.frame_data[0]['gable_width'] / 180
-    horiz_limit = data.frame_data[0]['eaves_height'] / 210
+    horiz_limit = data.frame_data[0]['eaves_height'] / 180
 
-    #  Search by fixing rafters first, then columns
+    # Search the full rafter/column matrix once in ascending mass order.
     best_r = directional_search(
         'rafter',  # primary search direction
         r_list, c_list,  # candidate names
@@ -311,17 +326,7 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
     )
 
     # ❷ Search by fixing columns first, then rafters
-    best_c = directional_search(
-        'column',
-        r_list, c_list,
-        r_section_type, c_section_type,
-        member_db, data,
-        r_total_m, c_total_m,
-        vert_limit, horiz_limit,
-        num_cores
-    )
-
-    candidates = [b for b in (best_r, best_c) if b]
+    candidates = [best_r] if best_r else []
     if not candidates:
         print("No acceptable section found that satisfies the serviceability limits.")
         return None, None, None, None, None

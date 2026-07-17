@@ -21,6 +21,11 @@ from strength_checks import member_class_check, member_design, section_propertie
 
 PHI = 0.9
 BUCKLING_EXPONENT = 1.34
+TENSION_SLENDERNESS_LIMIT = 300.0
+COMPRESSION_SLENDERNESS_LIMIT = 200.0
+MIN_ANGLE_LEG_MM = 50.0
+MIN_ANGLE_THICKNESS_MM = 5.0
+COLUMN_BRACING_TYPES = {"X", "K", "A"}
 
 
 @dataclass(frozen=True)
@@ -40,6 +45,13 @@ class GableColumnResult:
     major_moment_knm: float
     mcr_knm: float
     bending_resistance_knm: float
+    section_class: int
+    omega2: float
+    iy_cm4: float
+    torsional_constant_cm4: float
+    warping_constant: float
+    plastic_moment_knm: float
+    yield_moment_knm: float
     utilisation: float
 
 
@@ -50,7 +62,23 @@ class BracingMemberResult:
     section: str
     design_force_kn: float
     length_mm: float
+    area_mm2: float
+    fy_mpa: float
     resistance_kn: float
+    resistance_utilisation: float
+    radius_of_gyration_mm: float
+    effective_length_factor: float
+    slenderness_axis: str
+    rx_mm: float
+    ry_mm: float
+    rv_mm: float
+    slenderness_xx: float
+    slenderness_yy: float
+    slenderness_vv: float
+    slenderness_ratio: float
+    nondimensional_slenderness: float
+    slenderness_limit: float
+    slenderness_utilisation: float
     utilisation: float
     behaviour: str
 
@@ -227,14 +255,63 @@ def _select_gable_section(member_db, demands, brace_intervals, material):
     raise ValueError("No I/H section passes the gable-column Mcr design envelope.")
 
 
-def _select_angle(database, force_kn, fy):
+def _angle_slenderness(section, length_mm):
+    """Return angle slenderness about x-x, y-y and v-v (Kv = 0.5)."""
+
+    rx = _float(section.get("rx"))
+    ry = _float(section.get("ry")) or rx  # Equal-angle tables omit duplicate ry.
+    rv = _float(section.get("rv"))
+    if min(rx, ry, rv) <= 0:
+        return None
+    checks = {
+        "x-x": {"k": 1.0, "radius": rx, "ratio": length_mm / rx},
+        "y-y": {"k": 1.0, "radius": ry, "ratio": length_mm / ry},
+        "v-v": {"k": 0.5, "radius": rv, "ratio": 0.5 * length_mm / rv},
+    }
+    axis = max(checks, key=lambda name: checks[name]["ratio"])
+    return {
+        "axis": axis,
+        "governing": checks[axis],
+        "checks": checks,
+        "rx": rx,
+        "ry": ry,
+        "rv": rv,
+    }
+
+
+def _angle_meets_minimum_size(section):
+    """Apply the practical bolted-brace minimum of 50 x 50 x 5."""
+
+    return (
+        _float(section.get("h")) >= MIN_ANGLE_LEG_MM
+        and _float(section.get("b")) >= MIN_ANGLE_LEG_MM
+        and _float(section.get("t")) >= MIN_ANGLE_THICKNESS_MM
+    )
+
+
+def _select_angle(database, force_kn, length_mm, fy):
     choices = database.get("Equal Angles", []) + database.get("Unequal Angles", [])
     choices.sort(key=lambda item: _float(item.get("m"), math.inf))
     for section in choices:
+        if not _angle_meets_minimum_size(section):
+            continue
+        slenderness = _angle_slenderness(section, length_mm)
+        if slenderness is None:
+            continue
         resistance = PHI * _float(section.get("A")) * 1000 * fy / 1000
-        if resistance >= force_kn:
-            return section, resistance
-    raise ValueError("No angle in the supplied database passes the roof X-brace tension check.")
+        if (
+            resistance >= force_kn
+            and all(
+                check["ratio"] <= TENSION_SLENDERNESS_LIMIT
+                for check in slenderness["checks"].values()
+            )
+        ):
+            return section, resistance, slenderness
+    raise ValueError(
+        "No angle in the supplied database passes the roof X-brace tension, "
+        "KL/r <= 300 about x-x and y-y with K=1.0 and about v-v with K=0.5, "
+        "and minimum 50x50x5 checks."
+    )
 
 
 def _select_chs(database, force_kn, length_mm, material):
@@ -245,15 +322,109 @@ def _select_chs(database, force_kn, length_mm, material):
         radius = _float(section.get("rx"))
         if area <= 0 or radius <= 0:
             continue
-        slenderness = (length_mm / radius) * math.sqrt(fy / (math.pi ** 2 * e))
+        slenderness_ratio = length_mm / radius
+        slenderness = slenderness_ratio * math.sqrt(fy / (math.pi ** 2 * e))
         compression = PHI * area * fy * (
             1 + slenderness ** (2 * BUCKLING_EXPONENT)
         ) ** (-1 / BUCKLING_EXPONENT) / 1000
         tension = PHI * area * fy / 1000
         resistance = min(compression, tension)
-        if resistance >= force_kn:
-            return section, resistance
-    raise ValueError("No CHS in the supplied database passes the longitudinal brace check.")
+        if resistance >= force_kn and slenderness_ratio <= COMPRESSION_SLENDERNESS_LIMIT:
+            return section, resistance, radius, slenderness_ratio
+    raise ValueError(
+        "No CHS in the supplied database passes the longitudinal brace resistance "
+        "and KL/r <= 200 checks."
+    )
+
+
+def _column_brace_geometry(bracing_type, bay_mm, height_mm, panel_count=1):
+    """Return one brace-member geometry for the selected side-wall topology."""
+
+    bracing_type = str(bracing_type).strip().upper()
+    panel_count = int(panel_count)
+    if bracing_type not in COLUMN_BRACING_TYPES:
+        raise ValueError("column_bracing_type must be X, K, or A.")
+    if panel_count < 1:
+        raise ValueError("col_bracing_spacing must be at least 1.")
+    panel_height = height_mm / panel_count
+    if bracing_type == "X":
+        horizontal = bay_mm
+        vertical = panel_height
+    elif bracing_type == "K":
+        horizontal = bay_mm
+        vertical = panel_height / 2
+    else:  # A: diagonals rise from the column bases to the bay centre.
+        horizontal = bay_mm / 2
+        vertical = panel_height
+    return {
+        "type": bracing_type,
+        "bay_width_mm": float(bay_mm),
+        "height_mm": float(height_mm),
+        "panel_count": panel_count,
+        "panel_height_mm": float(panel_height),
+        "horizontal_projection_mm": float(horizontal),
+        "member_length_mm": float(math.hypot(horizontal, vertical)),
+        "members_per_panel": 2,
+        "members_per_wall": 2 * panel_count,
+    }
+
+
+def _roof_brace_panels(roof_points, roof_type, purlin_interval=1):
+    """Locate continuous X-brace panels at the selected purlin interval."""
+
+    if len(roof_points) < 3:
+        raise ValueError("Roof X-bracing requires eave and rafter-midspan nodes.")
+
+    interval = int(purlin_interval)
+    if interval < 1:
+        raise ValueError("roof_bracing_purlin_interval must be at least 1.")
+
+    def panels_between(start_index, end_index):
+        return [
+            (start, min(start + interval, end_index))
+            for start in range(start_index, end_index, interval)
+        ]
+
+    if str(roof_type) == "Duo Pitched":
+        centre_x = (roof_points[0]["x_mm"] + roof_points[-1]["x_mm"]) / 2
+        apex_index = min(
+            range(1, len(roof_points) - 1),
+            key=lambda item: abs(roof_points[item]["x_mm"] - centre_x),
+        )
+        return panels_between(0, apex_index) + panels_between(
+            apex_index, len(roof_points) - 1
+        )
+
+    return panels_between(0, len(roof_points) - 1)
+
+
+def _roof_purlin_points(frame):
+    """Return roof-plan connection rows without splitting the portal model."""
+
+    span = _float(frame["gable_width"])
+    eaves = _float(frame["eaves_height"])
+    apex = _float(frame["apex_height"])
+    maximum = _float(frame.get("purlin_max_spacing_mm"))
+    roof_type = str(frame.get("building_roof"))
+    if maximum <= 0:
+        return []
+
+    run = span / 2 if roof_type == "Duo Pitched" else span
+    rise = apex - eaves
+    divisions = max(1, math.ceil(math.hypot(run, rise) / maximum))
+    coordinates = [
+        (run * index / divisions, eaves + rise * index / divisions)
+        for index in range(divisions + 1)
+    ]
+    if roof_type == "Duo Pitched":
+        coordinates.extend(
+            (span - run * index / divisions, eaves + rise * index / divisions)
+            for index in range(divisions - 1, -1, -1)
+        )
+    return [
+        {"name": f"P{index}", "x_mm": x, "y_mm": y}
+        for index, (x, y) in enumerate(coordinates, 1)
+    ]
 
 
 def _analyse_gable_columns_pynite(columns, selections, material):
@@ -300,7 +471,7 @@ def _analyse_gable_columns_pynite(columns, selections, material):
 
 
 def _analyse_roof_bracing_pynite(
-    roof_points, loaded_shears, bay_mm, angle, purlin, material
+    roof_points, brace_panels, loaded_shears, bay_mm, angle, purlin, material
 ):
     """Build and solve the first roof-bracing bay with tension-only X members.
 
@@ -330,13 +501,13 @@ def _analyse_roof_bracing_pynite(
                 model.def_support(name, False, False, False, True, True, True)
     for index in range(len(roof_points)):
         model.add_member(f"S{index}", f"R0_{index}", f"R1_{index}", "STEEL", "PURLIN")
-    for index in range(len(roof_points) - 1):
+    for panel_index, (start_index, end_index) in enumerate(brace_panels):
         model.add_member(
-            f"XB{index}A", f"R0_{index}", f"R1_{index + 1}",
+            f"XB{panel_index}A", f"R0_{start_index}", f"R1_{end_index}",
             "STEEL", "ANGLE", tension_only=True,
         )
         model.add_member(
-            f"XB{index}B", f"R0_{index + 1}", f"R1_{index}",
+            f"XB{panel_index}B", f"R0_{end_index}", f"R1_{start_index}",
             "STEEL", "ANGLE", tension_only=True,
         )
     point_index = {point["name"]: index for index, point in enumerate(roof_points)}
@@ -348,7 +519,7 @@ def _analyse_roof_bracing_pynite(
     return model, {
         "node_count": len(model.nodes),
         "member_count": len(model.members),
-        "x_brace_count": 2 * (len(roof_points) - 1),
+        "x_brace_count": 2 * len(brace_panels),
         "tension_only_x_braces": True,
         "analysis": "PyNite nonlinear tension-only",
         "stiffness_purlin_section": purlin["Designation"],
@@ -367,6 +538,9 @@ def design_bracing_system(data, member_db, database_path="bracing_member_databas
     if frame.get("building_type") == "Canopy":
         return {}
     count = int(frame.get("gable_column_count", 1))
+    column_bracing_type = str(frame.get("column_bracing_type", "X")).strip().upper()
+    if column_bracing_type not in COLUMN_BRACING_TYPES:
+        raise ValueError("column_bracing_type must be X, K, or A.")
     brace_intervals = int(frame.get("gable_column_brace_intervals", 1))
     if brace_intervals < 1:
         raise ValueError("gable_column_brace_intervals must be at least 1.")
@@ -412,37 +586,96 @@ def design_bracing_system(data, member_db, database_path="bracing_member_databas
             factored_line_load_kn_m=demand["line_load_kn_m"],
             top_shear_kn=float(fe_action["top_shear_kn"]),
             major_moment_knm=float(fe_action["moment_knm"]), mcr_knm=float(sec["Mcr"]),
-            bending_resistance_knm=float(sec["Mrx_ltb"]), utilisation=float(ratio),
+            bending_resistance_knm=float(sec["Mrx_ltb"]),
+            section_class=int(member_class_check(0.0, props, material)),
+            omega2=float(sec["omega2"]), iy_cm4=_float(props.get("Iy")),
+            torsional_constant_cm4=_float(props.get("J")),
+            warping_constant=_float(props.get("Cw")),
+            plastic_moment_knm=float(sec["Mp"]), yield_moment_knm=float(sec["My"]),
+            utilisation=float(ratio),
         ))
 
     database = load_bracing_database(database_path)
     total_shear = sum(item.top_shear_kn for item in columns)
     bay_mm = _float(frame["rafter_spacing"])
-    rafter_node_names = {
-        node_name
-        for member in data.members if member.type == "rafter"
-        for node_name in (member.i_node, member.j_node)
-    }
-    roof_points = [
-        {"name": name, "x_mm": node.x, "y_mm": node.y}
-        for name, node in sorted(data.nodes.items(), key=lambda pair: pair[1].x)
-        if name in rafter_node_names
+    roof_points = _roof_purlin_points(frame)
+    if not roof_points:
+        rafter_node_names = {
+            node_name
+            for member in data.members if member.type == "rafter"
+            for node_name in (member.i_node, member.j_node)
+        }
+        roof_points = [
+            {"name": name, "x_mm": node.x, "y_mm": node.y}
+            for name, node in sorted(data.nodes.items(), key=lambda pair: pair[1].x)
+            if name in rafter_node_names
+        ]
+    purlin_interval = int(frame.get("roof_bracing_purlin_interval", 1))
+    brace_panels = _roof_brace_panels(
+        roof_points, frame.get("building_roof"), purlin_interval
+    )
+    roof_panel_widths = [
+        math.hypot(
+            roof_points[end]["x_mm"] - roof_points[start]["x_mm"],
+            roof_points[end]["y_mm"] - roof_points[start]["y_mm"],
+        )
+        for start, end in brace_panels
     ]
-    roof_cell_widths = [
-        math.hypot(b["x_mm"] - a["x_mm"], b["y_mm"] - a["y_mm"])
-        for a, b in zip(roof_points, roof_points[1:])
-    ]
-    longest_roof_brace = max(math.hypot(bay_mm, width) for width in roof_cell_widths)
+    longest_roof_brace = max(math.hypot(bay_mm, width) for width in roof_panel_widths)
     roof_force = total_shear / 2 * longest_roof_brace / bay_mm
-    angle, angle_resistance = _select_angle(database, roof_force, _float(material["fy"]))
+    angle, angle_resistance, angle_slenderness = _select_angle(
+        database, roof_force, longest_roof_brace, _float(material["fy"])
+    )
 
-    side_length = math.hypot(bay_mm, _float(frame["eaves_height"]))
-    side_force = total_shear / 2 * side_length / bay_mm
-    chs, chs_resistance = _select_chs(database, side_force, side_length, material)
-    purlin = database.get("Lipped Channels", [])[0]
+    column_layout = _column_brace_geometry(
+        column_bracing_type, bay_mm, _float(frame["eaves_height"]),
+        int(frame.get("col_bracing_spacing", 1)),
+    )
+    side_length = column_layout["member_length_mm"]
+    side_force = (
+        total_shear / 2 * side_length /
+        column_layout["horizontal_projection_mm"]
+    )
+    if column_bracing_type == "X":
+        side_section, side_resistance, side_slenderness = _select_angle(
+            database, side_force, side_length, _float(material["fy"])
+        )
+        side_behaviour = "tension-only"
+        side_slenderness_limit = TENSION_SLENDERNESS_LIMIT
+    else:
+        side_section, side_resistance, side_radius, side_ratio = _select_chs(
+            database, side_force, side_length, material
+        )
+        side_slenderness = {
+            "axis": "x-x",
+            "governing": {"k": 1.0, "radius": side_radius, "ratio": side_ratio},
+            "checks": {"x-x": {"k": 1.0, "radius": side_radius, "ratio": side_ratio}},
+            "rx": side_radius, "ry": side_radius, "rv": 0.0,
+        }
+        side_behaviour = "tension and compression"
+        side_slenderness_limit = COMPRESSION_SLENDERNESS_LIMIT
+    purlins = database.get("Lipped Channels", [])
+    purlin_designation = str(frame.get("purlin_section", "")).strip()
+    if purlin_designation:
+        purlin = next(
+            (item for item in purlins if item.get("Designation") == purlin_designation),
+            None,
+        )
+        if purlin is None:
+            raise ValueError(
+                f"purlin_section {purlin_designation!r} is not in the Lipped Channels database. "
+                "Use depthxflangexlipxthickness, for example 125x50x20x2.5."
+            )
+    else:
+        purlin = purlins[0]
+    loaded_shears = {}
+    for column in columns:
+        point = min(roof_points, key=lambda item: abs(item["x_mm"] - column.x_mm))
+        loaded_shears[point["name"]] = loaded_shears.get(point["name"], 0.0) + column.top_shear_kn
     _, roof_model_summary = _analyse_roof_bracing_pynite(
         roof_points,
-        {column.roof_node: column.top_shear_kn for column in columns},
+        brace_panels,
+        loaded_shears,
         bay_mm,
         angle,
         purlin,
@@ -452,14 +685,59 @@ def design_bracing_system(data, member_db, database_path="bracing_member_databas
         BracingMemberResult(
             member_type="Roof X-brace", section_family=angle["section_type"],
             section=angle["Designation"], design_force_kn=float(roof_force),
-            length_mm=longest_roof_brace, resistance_kn=angle_resistance,
-            utilisation=float(roof_force / angle_resistance), behaviour="tension-only",
+            length_mm=longest_roof_brace, area_mm2=_float(angle["A"]) * 1000,
+            fy_mpa=_float(material["fy"]), resistance_kn=angle_resistance,
+            resistance_utilisation=float(roof_force / angle_resistance),
+            radius_of_gyration_mm=float(angle_slenderness["governing"]["radius"]),
+            effective_length_factor=float(angle_slenderness["governing"]["k"]),
+            slenderness_axis=angle_slenderness["axis"],
+            rx_mm=float(angle_slenderness["rx"]), ry_mm=float(angle_slenderness["ry"]),
+            rv_mm=float(angle_slenderness["rv"]),
+            slenderness_xx=float(angle_slenderness["checks"]["x-x"]["ratio"]),
+            slenderness_yy=float(angle_slenderness["checks"]["y-y"]["ratio"]),
+            slenderness_vv=float(angle_slenderness["checks"]["v-v"]["ratio"]),
+            slenderness_ratio=float(angle_slenderness["governing"]["ratio"]),
+            nondimensional_slenderness=float(
+                angle_slenderness["governing"]["ratio"] * math.sqrt(
+                    _float(material["fy"]) /
+                    (math.pi ** 2 * _float(material["E"]) * 1000)
+                )
+            ),
+            slenderness_limit=TENSION_SLENDERNESS_LIMIT,
+            slenderness_utilisation=float(angle_slenderness["governing"]["ratio"] / TENSION_SLENDERNESS_LIMIT),
+            utilisation=float(max(
+                roof_force / angle_resistance,
+                angle_slenderness["governing"]["ratio"] / TENSION_SLENDERNESS_LIMIT,
+            )), behaviour="tension-only",
         ),
         BracingMemberResult(
-            member_type="Longitudinal side-wall brace", section_family="CHS",
-            section=chs["Designation"], design_force_kn=float(side_force),
-            length_mm=side_length, resistance_kn=chs_resistance,
-            utilisation=float(side_force / chs_resistance), behaviour="tension and compression",
+            member_type="Longitudinal side-wall brace",
+            section_family=side_section["section_type"],
+            section=side_section["Designation"], design_force_kn=float(side_force),
+            length_mm=side_length, area_mm2=_float(side_section["A"]) * 1000,
+            fy_mpa=_float(material["fy"]), resistance_kn=side_resistance,
+            resistance_utilisation=float(side_force / side_resistance),
+            radius_of_gyration_mm=float(side_slenderness["governing"]["radius"]),
+            effective_length_factor=float(side_slenderness["governing"]["k"]),
+            slenderness_axis=side_slenderness["axis"],
+            rx_mm=float(side_slenderness["rx"]), ry_mm=float(side_slenderness["ry"]),
+            rv_mm=float(side_slenderness["rv"]),
+            slenderness_xx=float(side_slenderness["checks"].get("x-x", {}).get("ratio", 0)),
+            slenderness_yy=float(side_slenderness["checks"].get("y-y", {}).get("ratio", 0)),
+            slenderness_vv=float(side_slenderness["checks"].get("v-v", {}).get("ratio", 0)),
+            slenderness_ratio=float(side_slenderness["governing"]["ratio"]),
+            nondimensional_slenderness=float(
+                side_slenderness["governing"]["ratio"] * math.sqrt(
+                    _float(material["fy"]) /
+                    (math.pi ** 2 * _float(material["E"]) * 1000)
+                )
+            ),
+            slenderness_limit=side_slenderness_limit,
+            slenderness_utilisation=float(side_slenderness["governing"]["ratio"] / side_slenderness_limit),
+            utilisation=float(max(
+                side_force / side_resistance,
+                side_slenderness["governing"]["ratio"] / side_slenderness_limit,
+            )), behaviour=side_behaviour,
         ),
     ]
     internal = data.wind_data[0].get("internal_pressure", {}) if data.wind_data else {}
@@ -469,7 +747,11 @@ def design_bracing_system(data, member_db, database_path="bracing_member_databas
             "gable_column_count": count,
             "gable_column_brace_intervals": brace_intervals,
             "rafter_bracing_spacing_count": int(frame["rafter_bracing_spacing"]),
+            "purlin_section": purlin["Designation"],
+            "purlin_max_spacing_mm": _float(frame.get("purlin_max_spacing_mm")),
+            "roof_bracing_purlin_interval": purlin_interval,
             "column_bracing_spacing_count": int(frame["col_bracing_spacing"]),
+            "column_bracing_type": column_bracing_type,
         },
         "pressure_cases": pressure_cases,
         "governing_characteristic_pressure_kpa": pressure,
@@ -486,9 +768,19 @@ def design_bracing_system(data, member_db, database_path="bracing_member_databas
         "roof_layout": {
             "bay_length_mm": bay_mm,
             "roof_points": roof_points,
-            "loaded_nodes": [c.roof_node for c in columns],
+            "loaded_nodes": list(loaded_shears),
+            "brace_panels": [
+                {
+                    "start": roof_points[start]["name"],
+                    "end": roof_points[end]["name"],
+                    "start_index": start,
+                    "end_index": end,
+                }
+                for start, end in brace_panels
+            ],
             "x_bracing": True,
         },
+        "column_bracing_layout": column_layout,
         "pynite_roof_model": roof_model_summary,
         "assumptions": [
             "The maximum absolute W90 zone D/E pressure from the stored internal-pressure envelope governs both gable ends "
@@ -497,6 +789,13 @@ def design_bracing_system(data, member_db, database_path="bracing_member_databas
             "Gable columns are pinned at base and roof, bend about their strong axis, and use Mcr with equal unbraced intervals.",
             "The selected internal gable columns conservatively carry the full gable-wall width; no load-sharing credit is taken for corner portal columns.",
             "Roof X-braces are tension-only; reverse wind activates the opposite diagonal.",
+            f"Roof X-bracing continues across the complete roof width in each braced bay and connects at every {purlin_interval} purlin space(s); the final panel on each slope is shortened where required.",
+            "Roof brace angles satisfy KL/r <= 300 about x-x and y-y with K=1.0 and about v-v with K=0.5; they are not smaller than 50x50x5 so practical bolt edge and end distances can be detailed.",
+            (
+                "Column X-bracing uses tension-only angles satisfying KL/r <= 300 about x-x and y-y with K=1.0 and about v-v with K=0.5, plus the minimum 50x50x5 envelope."
+                if column_bracing_type == "X" else
+                f"Column {column_bracing_type}-bracing uses CHS members satisfying KL/r <= 200 in addition to the tension/compression resistance envelope."
+            ),
             "All gable top shear is resisted by the roof and longitudinal bracing shown.",
             "Cold-formed purlin strut compression resistance is intentionally deferred to the following design function.",
         ],
