@@ -25,9 +25,19 @@ class BracingDesignTests(unittest.TestCase):
     def test_gable_count_expands_symmetrically_from_apex(self):
         selected = select_gable_nodes(self.frame, 3)
         positions = [item["x"] for item in selected]
-        centre = self.frame.frame_data[0]["gable_width"] / 2
+        width = self.frame.frame_data[0]["gable_width"]
+        centre = width / 2
+        spacing = width / 4
+        self.assertEqual(positions, [spacing, 2 * spacing, 3 * spacing])
         self.assertEqual(positions[1], centre)
         self.assertAlmostEqual(centre - positions[0], positions[2] - centre)
+
+    def test_five_gable_columns_divide_full_width_into_six_equal_bays(self):
+        width = self.frame.frame_data[0]["gable_width"]
+        positions = [item["x"] for item in select_gable_nodes(self.frame, 5)]
+        all_positions = [0.0, *positions, width]
+        bays = [b - a for a, b in zip(all_positions, all_positions[1:])]
+        self.assertTrue(all(math.isclose(bay, width / 6) for bay in bays))
 
     def test_gable_count_must_be_positive_and_odd(self):
         for count in (0, 2, 4):

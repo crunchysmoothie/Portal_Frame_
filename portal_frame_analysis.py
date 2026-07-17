@@ -2,7 +2,7 @@ import math
 import time
 import multiprocessing
 import warnings
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor
 from scipy.sparse.linalg import MatrixRankWarning
 from Pynite import FEModel3D
 from Pynite.Visualization import Renderer
@@ -15,9 +15,9 @@ from strength_checks import (
 )
 from frame_model import load_portal_frame, PortalFrame
 
-# Weight-ordered early exit keeps the search small and avoids importing a
-# complete PyNite/Matplotlib stack in many worker processes.
-num_cores = min(5, multiprocessing.cpu_count())
+# Weight-ordered batches retain the lightest-pair guarantee while limiting the
+# number of PyNite worker processes.
+num_cores = min(12, multiprocessing.cpu_count())
 
 
 def _is_instability_error(exc: Exception) -> bool:
@@ -107,6 +107,15 @@ def build_model(r_mem, c_mem, data: PortalFrame):
                 load.w2,
                 load.x1,
                 load.x2,
+                load.case,
+            )
+
+        for load in m.point_loads:
+            frame.add_member_pt_load(
+                m.name,
+                load.direction,
+                load.magnitude,
+                load.x,
                 load.case,
             )
 
@@ -231,6 +240,14 @@ def directional_search(primary, r_list, c_list, r_section_type, c_section_type,
             else:
                 r_name, c_name = o_name, i_name
 
+            # Apply the flange-width compatibility rule before constructing
+            # FE-analysis tasks. This can remove a substantial part of the
+            # candidate matrix for large frames.
+            if member_db[r_section_type][r_name]["b"] > (
+                member_db[c_section_type][c_name]["b"] + 3.5
+            ):
+                continue
+
             tasks.append((r_section_type, r_name,
              c_section_type, c_name,
              member_db, data,
@@ -246,7 +263,8 @@ def directional_search(primary, r_list, c_list, r_section_type, c_section_type,
     ))
 
     acceptable = []
-    workers = max(1, num_core - 4)
+    workers = max(1, min(int(num_core), len(tasks)))
+    print(f"Checking {len(tasks)} compatible section pairs using {workers} worker(s)...")
     if workers == 1:
         for task in tasks:
             result = analyze_combination(task)
@@ -256,12 +274,17 @@ def directional_search(primary, r_list, c_list, r_section_type, c_section_type,
                 # candidate matrix is ordered by total steel mass.
                 break
     else:
+        # Evaluate small, mass-ordered batches. Waiting for each complete batch
+        # preserves the guarantee that the first passing result is globally
+        # lightest, while avoiding submission/analysis of the entire matrix.
         with ProcessPoolExecutor(max_workers=workers) as ex:
-            futures = [ex.submit(analyze_combination, t) for t in tasks]
-            for fut in as_completed(futures):
-                result = fut.result()
-                if result is not None:
-                    acceptable.append(result)
+            for start in range(0, len(tasks), workers):
+                batch = tasks[start:start + workers]
+                results = list(ex.map(analyze_combination, batch))
+                passing = [result for result in results if result is not None]
+                if passing:
+                    acceptable.extend(passing)
+                    break
 
     if not acceptable:
         return None
@@ -329,7 +352,8 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
     candidates = [best_r] if best_r else []
     if not candidates:
         print("No acceptable section found that satisfies the serviceability limits.")
-        return None, None, None, None, None
+        print(f"Search time: {time.time() - start:.3f} s")
+        return None, None, member_db, r_section_type, c_section_type, None
 
     best = min(candidates, key=lambda d: d['weight'])
     print("Lightest combination:")

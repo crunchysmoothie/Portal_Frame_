@@ -1,8 +1,15 @@
 import json
 from pathlib import Path
 import math
+from itertools import combinations, product
 from wind_loads import wind_out
 from internal_pressure import normalize_design_mode, resolve_internal_pressure
+from crawl_beam_loading import (
+    crane_combination_factor as crawl_combination_factor,
+    crawl_case_names,
+    generate_crawl_member_point_loads,
+)
+from crawl_beam_inputs import ALL_AT_ONCE, ONE_AT_A_TIME, resolve_crawl_selection
 
 # Function to generate nodes based on the portal frame structure with static values
 def generate_nodes(b_data):
@@ -87,14 +94,60 @@ def generate_nodes(b_data):
 
     return nodes
 
-def generate_supports(nodes):
+def generate_base_supports(
+    nodes,
+    condition="Spring",
+    rotational_stiffness_knm_per_rad=10_000.0,
+):
+    """Return portal-base restraints and optional rotational springs.
 
+    ``condition`` may be ``Pinned``, ``Fixed`` or ``Spring``. Spring stiffness
+    is entered in kN.m/rad and converted to the model's kN.mm/rad units.
+    Both portal bases use the same condition and stiffness.
+    """
+    condition_lookup = {
+        "pinned": "Pinned",
+        "fixed": "Fixed",
+        "spring": "Spring",
+    }
+    key = str(condition).strip().lower()
+    if key not in condition_lookup:
+        raise ValueError('Base support condition must be "Pinned", "Fixed" or "Spring".')
+    resolved = condition_lookup[key]
+
+    base_nodes = (nodes[0]["name"], nodes[-1]["name"])
     supports = [
-        {"node": nodes[0]["name"], "DX": True, "DY": True, "DZ": True, "RX": False, "RY": False, "RZ": False},
-        {"node": nodes[-1]["name"], "DX": True, "DY": True, "DZ": True, "RX": False, "RY": False, "RZ": False}
+        {
+            "node": node,
+            "DX": True,
+            "DY": True,
+            "DZ": True,
+            "RX": False,
+            "RY": False,
+            "RZ": resolved == "Fixed",
+        }
+        for node in base_nodes
     ]
 
-    return supports
+    springs = []
+    if resolved == "Spring":
+        stiffness = float(rotational_stiffness_knm_per_rad)
+        if stiffness <= 0:
+            raise ValueError("Base rotational spring stiffness must be positive.")
+        springs = [
+            {
+                "node": node,
+                "direction": "RZ",
+                "stiffness": stiffness * 1000.0,
+            }
+            for node in base_nodes
+        ]
+    return supports, springs
+
+
+def generate_supports(nodes):
+    """Compatibility wrapper returning the existing spring-base restraints."""
+    return generate_base_supports(nodes)[0]
 
 def generate_members(nodes):
     members = []
@@ -119,15 +172,16 @@ def generate_members(nodes):
     return members
 
 def generate_spring_supports(nodes):
-    rotational_springs = [{"node": nodes[0]["name"], "direction": "RZ", "stiffness": 10E6},
-                          {"node": nodes[-1]["name"], "direction": "RZ", "stiffness": 10E6}]
-    return rotational_springs
+    """Compatibility wrapper returning the existing 10 000 kN.m/rad springs."""
+    return generate_base_supports(nodes)[1]
 
 def generate_nodal_loads(nodes):
-    apex_node = nodes[len(nodes) // 2]
-    nodal_loads = [{"node": apex_node["name"], "direction": "FY", "magnitude": -10, "case": "CR"}]
+    """Return explicitly configured nodal loads.
 
-    return nodal_loads
+    The former fixed ``CR`` apex load was only a placeholder. Crawl loads are
+    now generated as member point loads at their actual rafter positions.
+    """
+    return []
 
 def steel_prop(grade):
     pro = {
@@ -198,6 +252,9 @@ def add_load_cases(
     load_combination_standard=SANS_2019_COMBINATIONS,
     building_roof="Duo Pitched",
     wind_design_mode="Prelim",
+    include_crawl_beams=False,
+    crawl_beams=None,
+    crawl_application=ONE_AT_A_TIME,
 ):
     """Return fixed load cases and edition-dependent SLS/ULS combinations."""
     final_wind = normalize_design_mode(wind_design_mode) == "Final design"
@@ -266,6 +323,123 @@ def add_load_cases(
         roof_accessibility,
         load_combination_standard,
     ))
+    variable_cases = {case for case, _ in wind_actions} | {"L"}
+
+    crawls = list(crawl_beams or [])
+    if include_crawl_beams and crawls:
+        case_sets = [crawl_case_names(crawl) for crawl in crawls]
+        all_case_names = [case for cases in case_sets for case in cases.values()]
+        if len(set(all_case_names)) != len(all_case_names):
+            raise ValueError("Crawl names must produce unique load-case names.")
+
+        load_cases.append({"name": "D_CRAWL", "type": "dead"})
+        for cases in case_sets:
+            load_cases.extend(
+                {"name": case_name, "type": "crane"}
+                for case_name in cases.values()
+            )
+
+        # Crawl-beam self-weight is a permanent action and therefore follows
+        # the same factor as the other permanent frame self-weight in every
+        # combination.
+        for combination in serviceability_load_combinations + load_combinations:
+            combination["factors"]["D_CRAWL"] = combination["factors"].get("D", 1.0)
+
+        if crawl_application == ONE_AT_A_TIME:
+            scenarios = [[crawl] for crawl in crawls]
+        elif crawl_application == ALL_AT_ONCE:
+            scenarios = [crawls]
+        else:
+            raise ValueError(
+                'Crawl application must be "One at a time" or "All at the same time".'
+            )
+
+        def scenario_name(scenario):
+            return "+".join(str(crawl["name"]) for crawl in scenario)
+
+        def crane_variants(name, factors, scenario, factors_by_name):
+            """Envelope vertical action plus up to two simultaneous horizontals."""
+            base = dict(factors)
+            for crawl in scenario:
+                base[crawl_case_names(crawl)["vertical"]] = factors_by_name[crawl["name"]]
+            variants = [{"name": name, "factors": base}]
+
+            # SANS 10160-6 Table 3 limits simultaneous horizontal crane
+            # actions to two. Vertical loads remain unreduced for every crawl
+            # selected by the user's operating mode.
+            for count in range(1, min(2, len(scenario)) + 1):
+                for selected in combinations(scenario, count):
+                    for signs in product(("positive", "negative"), repeat=count):
+                        grouped = dict(base)
+                        labels = []
+                        for crawl, sign in zip(selected, signs):
+                            cases = crawl_case_names(crawl)
+                            grouped[cases[f"horizontal_{sign}"]] = factors_by_name[crawl["name"]]
+                            labels.append(f'{crawl["name"]} H{"+" if sign == "positive" else "-"}')
+                        variants.append({
+                            "name": name + " + " + " + ".join(labels),
+                            "factors": grouped,
+                        })
+            return variants
+
+        # Retain combinations without crane action. Where another variable
+        # action leads, apply the SANS 10160-6 equation 20 combination factor
+        # to the grouped vertical/horizontal crane action.
+        sls_with_crane = []
+        for combination in serviceability_load_combinations:
+            if not variable_cases.intersection(combination["factors"]):
+                continue
+            for scenario in scenarios:
+                factors_by_name = {
+                    crawl["name"]: crawl_combination_factor(crawl)
+                    for crawl in scenario
+                }
+                sls_with_crane.extend(crane_variants(
+                    f'{combination["name"]} + accompanying CR {scenario_name(scenario)}',
+                    combination["factors"],
+                    scenario,
+                    factors_by_name,
+                ))
+
+        for scenario in scenarios:
+            leading_sls = {"D": 1.1, "D_MAX": 1.1, "D_CRAWL": 1.1}
+            if psi_live:
+                leading_sls["L"] = psi_live
+            sls_with_crane.extend(crane_variants(
+                f"1.1 DL + 1.0 CR {scenario_name(scenario)}",
+                leading_sls,
+                scenario,
+                {crawl["name"]: 1.0 for crawl in scenario},
+            ))
+        serviceability_load_combinations.extend(sls_with_crane)
+
+        uls_with_crane = []
+        for combination in load_combinations:
+            if not variable_cases.intersection(combination["factors"]):
+                continue
+            for scenario in scenarios:
+                factors_by_name = {
+                    crawl["name"]: 1.6 * crawl_combination_factor(crawl)
+                    for crawl in scenario
+                }
+                uls_with_crane.extend(crane_variants(
+                    f'{combination["name"]} + accompanying CR {scenario_name(scenario)}',
+                    combination["factors"],
+                    scenario,
+                    factors_by_name,
+                ))
+        load_combinations.extend(uls_with_crane)
+        for scenario in scenarios:
+            leading_uls = {"D": 1.2, "D_MAX": 1.2, "D_CRAWL": 1.2}
+            live_accompanying = 1.6 * psi_live
+            if live_accompanying:
+                leading_uls["L"] = live_accompanying
+            load_combinations.extend(crane_variants(
+                f"1.2 DL + 1.6 CR {scenario_name(scenario)}",
+                leading_uls,
+                scenario,
+                {crawl["name"]: 1.6 for crawl in scenario},
+            ))
     return load_cases, serviceability_load_combinations, load_combinations
 
 
@@ -298,20 +472,35 @@ def update_json_file(json_filename, b_data, wind_data):
     # --- generate fresh data -------------------------------------------------
     new_nodes           = generate_nodes(b_data)
     new_members         = generate_members(new_nodes)
-    new_supports        = generate_supports(new_nodes)
-    rotational_springs  = generate_spring_supports(new_nodes)
+    new_supports, rotational_springs = generate_base_supports(
+        new_nodes,
+        b_data.get("base_support_condition", "Spring"),
+        b_data.get("base_rotational_stiffness_knm_per_rad", 10_000.0),
+    )
     nodal_loads         = generate_nodal_loads(new_nodes)
     materials           = add_materials()
     roof_accessibility = b_data.get("roof_accessibility", "Accessible")
     load_combination_standard = b_data.get(
         "load_combination_standard", SANS_2019_COMBINATIONS
     )
+    configured_crawls = list(b_data.get("crawl_beams", []))
+    enabled, crawl_application, crawl_beams = resolve_crawl_selection(
+        b_data.get("use_crawl_beams", "Yes" if configured_crawls else "No"),
+        b_data.get("crawl_application", ONE_AT_A_TIME),
+        configured_crawls,
+    )
+    b_data["use_crawl_beams"] = "Yes" if enabled else "No"
+    b_data["crawl_application"] = crawl_application
+    b_data["crawl_beams"] = crawl_beams
     LC, SLS, ULS = add_load_cases(
         roof_accessibility,
         b_data.get("building_type", "Normal"),
         load_combination_standard,
         b_data.get("building_roof", "Duo Pitched"),
         b_data.get("wind_design_mode", "Prelim"),
+        enabled,
+        crawl_beams=crawl_beams,
+        crawl_application=crawl_application,
     )
     steel_props         = steel_prop(b_data['steel_grade'])
 
@@ -332,6 +521,9 @@ def update_json_file(json_filename, b_data, wind_data):
         "members"           : new_members,
         "supports"          : new_supports,
         "nodal_loads"       : nodal_loads,
+        "use_crawl_beams"  : b_data["use_crawl_beams"],
+        "crawl_application": crawl_application,
+        "crawl_beams"       : crawl_beams,
         "rotational_springs": rotational_springs,
         "wind_data"         : [wind_input],
         "steel_grade"       : [steel_props],
@@ -340,6 +532,7 @@ def update_json_file(json_filename, b_data, wind_data):
         "serviceability_load_combinations" : SLS,
         "load_combinations" : ULS,
     })
+    data["member_point_loads"] = generate_crawl_member_point_loads(data)
 
     # --- write it back, *letting json handle the formatting* -----------------
     with open(json_filename, "w") as f:
