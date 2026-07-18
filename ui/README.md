@@ -1,5 +1,12 @@
 # PortalFrame Flet UI
 
+## Run from PyCharm
+
+Create one Python run configuration for `run_designer.py`, use the project root
+as the working directory, and select the `.venv314` interpreter. The launcher
+starts FastAPI on port 8000 and the Flet browser UI on port 8550, and stops both
+when the run is stopped.
+
 Install the UI and API dependencies from the repository root:
 
 ```powershell
