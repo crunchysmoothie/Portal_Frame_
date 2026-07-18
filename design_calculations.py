@@ -891,7 +891,10 @@ def build_calculation_sheet_data_from_frame(
         "column_bracing_type": frame_data.get("column_bracing_type", "X"),
         "purlin_section": frame_data.get("purlin_section", ""),
         "purlin_max_spacing_mm": frame_data.get("purlin_max_spacing_mm", 0),
+        "rafter_bracing_spacing": frame_data.get("rafter_bracing_spacing", 1),
         "roof_bracing_purlin_interval": frame_data.get("roof_bracing_purlin_interval", 1),
+        "roof_bracing_purlin_intervals": frame_data.get("roof_bracing_purlin_intervals", []),
+        "actual_purlin_spacing_mm": frame_data.get("actual_purlin_spacing_mm", 0),
         "girt_section": frame_data.get("girt_section", ""),
         "girt_max_spacing_mm": frame_data.get("girt_max_spacing_mm", 0),
     }

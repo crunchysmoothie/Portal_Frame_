@@ -17,6 +17,7 @@ from typing import Any, Iterable, Mapping
 from Pynite import FEModel3D
 
 from strength_checks import member_class_check, member_design, section_properties
+from roof_layout import calculate_roof_bracing_layout, roof_brace_pairs
 
 
 PHI = 0.9
@@ -612,9 +613,17 @@ def design_bracing_system(data, member_db, database_path="bracing_member_databas
             for name, node in sorted(data.nodes.items(), key=lambda pair: pair[1].x)
             if name in rafter_node_names
         ]
-    purlin_interval = int(frame.get("roof_bracing_purlin_interval", 1))
-    brace_panels = _roof_brace_panels(
-        roof_points, frame.get("building_roof"), purlin_interval
+    roof_bracing_layout = calculate_roof_bracing_layout(
+        frame["gable_width"], frame["eaves_height"], frame["apex_height"],
+        frame.get("building_roof"), frame.get("purlin_max_spacing_mm"),
+        frame.get("rafter_bracing_spacing", 1),
+    )
+    panel_sizes = roof_bracing_layout["purlin_spaces_per_brace_panel"]
+    purlin_interval = roof_bracing_layout["maximum_purlin_interval"]
+    brace_panels = roof_brace_pairs(
+        roof_bracing_layout["purlin_spaces_per_slope"],
+        frame.get("building_roof"),
+        panel_sizes,
     )
     roof_panel_widths = [
         math.hypot(
@@ -752,6 +761,9 @@ def design_bracing_system(data, member_db, database_path="bracing_member_databas
             "purlin_section": purlin["Designation"],
             "purlin_max_spacing_mm": _float(frame.get("purlin_max_spacing_mm")),
             "roof_bracing_purlin_interval": purlin_interval,
+            "roof_bracing_purlin_intervals": panel_sizes,
+            "roof_brace_panels_per_slope": roof_bracing_layout["brace_panels_per_slope"],
+            "actual_purlin_spacing_mm": roof_bracing_layout["actual_purlin_spacing_mm"],
             "column_bracing_spacing_count": int(frame["col_bracing_spacing"]),
             "column_bracing_type": column_bracing_type,
         },

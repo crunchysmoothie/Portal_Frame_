@@ -142,7 +142,8 @@ column_bracing_type = "X"
 - The selected X, K or A wall-bracing topology is repeated in every one of
   these vertical intervals. For example, `col_bracing_spacing = 2` creates a
   restraint at column midheight and two stacked bracing panels.
-- For a duo-pitched roof, `rafter_bracing_spacing` is the number of equal intervals on each roof slope. Increasing it creates additional rafter nodes and possible purlin/gable-column connection points.
+- For a duo-pitched roof, `rafter_bracing_spacing` is the requested number of roof-bracing panels on each slope. It also creates the corresponding equal portal-analysis rafter intervals.
+- The program calculates the actual purlin spacing from the slope length and `purlin_max_spacing_mm`, then distributes those purlin spaces as evenly as possible across the requested bracing panels.
 - A mono-pitched roof currently uses four fixed rafter divisions regardless of this input.
 
 These values are integer counts, not distances in millimetres.
@@ -162,7 +163,6 @@ Its transverse panel width is controlled by the purlin interval described below.
 ```python
 purlin_section = "125x50x20x2.5"
 purlin_max_spacing_mm = 1500
-roof_bracing_purlin_interval = 3
 girt_section = "125x50x20x2.5"
 girt_max_spacing_mm = 1800
 ```
@@ -173,9 +173,10 @@ millimetres. The entered purlin must exist under `Lipped Channels` in
 
 `purlin_max_spacing_mm` and `girt_max_spacing_mm` are maximum spacings. The
 markup divides each roof slope and wall height into equal spaces no greater
-than those values. `roof_bracing_purlin_interval` controls the roof X-brace
-panel width: `1` braces every purlin space, `2` every second space, and so on.
-The final panel approaching the ridge or eave is shortened where necessary.
+than those values. The roof X-brace purlin intervals are calculated rather
+than entered manually. Where the number of purlin spaces is not exactly
+divisible by `rafter_bracing_spacing`, the difference is distributed between
+panels; for example, nine purlin spaces over two panels becomes `5/4`.
 
 The haunch length is fixed at `portal span / 15`, measured horizontally from
 the column centreline. The markup identifies the tapered haunch as cut from

@@ -11,6 +11,8 @@ import shutil
 import subprocess
 import tempfile
 
+from roof_layout import calculate_roof_bracing_layout, roof_brace_pairs
+
 
 PAGE_W, PAGE_H = 1682, 1188
 
@@ -139,13 +141,36 @@ def _context(data):
     girt = _section(project.get("girt_section"), "girt_section")
     purlin_max = float(project.get("purlin_max_spacing_mm", 0) or 0)
     girt_max = float(project.get("girt_max_spacing_mm", 0) or 0)
-    interval = int(project.get("roof_bracing_purlin_interval", 0) or 0)
-    if purlin_max <= 0 or girt_max <= 0 or interval < 1:
-        raise ValueError("Purlin/girt maximum spacings and roof bracing purlin interval are required.")
+    if purlin_max <= 0 or girt_max <= 0:
+        raise ValueError("Purlin and girt maximum spacings are required.")
+    design_inputs = bracing.get("inputs", {})
+    requested_panels = int(
+        project.get("rafter_bracing_spacing", 0)
+        or design_inputs.get("rafter_bracing_spacing_count", 0)
+        or 0
+    )
+    if requested_panels < 1:
+        # Backward compatibility for reports created before the calculated
+        # layout fields existed.
+        legacy_interval = int(project.get("roof_bracing_purlin_interval", 1) or 1)
+        preliminary = calculate_roof_bracing_layout(
+            project["gable_width_mm"], project["eaves_height_mm"],
+            project["apex_height_mm"], project.get("roof_type"), purlin_max, 1,
+        )
+        requested_panels = max(
+            1, math.ceil(preliminary["purlin_spaces_per_slope"] / legacy_interval)
+        )
+    roof_layout = calculate_roof_bracing_layout(
+        project["gable_width_mm"], project["eaves_height_mm"],
+        project["apex_height_mm"], project.get("roof_type"),
+        purlin_max, requested_panels,
+    )
     members = {item["member_type"]: item for item in bracing.get("bracing_members", [])}
     return {
         "p": project, "b": bracing, "purlin": purlin, "girt": girt,
-        "purlin_max": purlin_max, "girt_max": girt_max, "interval": interval,
+        "purlin_max": purlin_max, "girt_max": girt_max,
+        "interval": roof_layout["maximum_purlin_interval"],
+        "roof_layout": roof_layout,
         "roof_brace": members.get("Roof X-brace", {}).get("section", "TBC"),
         "wall_brace": members.get("Longitudinal side-wall brace", {}).get("section", "TBC"),
     }
@@ -184,12 +209,11 @@ def _roof_sheet(c):
     for i,v in enumerate(frames,1): x=X(v); s.line(x,y0-35,x,y1+35,"gridline"); s.grid(x,y0-70,i)
     half=span/2 if p.get("roof_type")=="Duo Pitched" else span
     rise=float(p["apex_height_mm"])-float(p["eaves_height_mm"]); slope=math.hypot(half,rise)
-    along,actual=even_positions(slope,c["purlin_max"])
+    layout=c["roof_layout"]; spaces=layout["purlin_spaces_per_slope"]; actual=layout["actual_purlin_spacing_mm"]; along=[index*slope/spaces for index in range(spaces+1)]
     left=[value*half/slope for value in along]
     rows=left + ([span-value*half/slope for value in reversed(along[:-1])] if p.get("roof_type")=="Duo Pitched" else [])
     for i,v in enumerate(rows,1): yy=Y(v); s.line(x0,yy,x1,yy,"secondary"); s.text(x1+12,yy+5,f"P{i}","small","start")
-    apex_index=len(left)-1 if p.get("roof_type")=="Duo Pitched" else None
-    pairs=_brace_pairs(len(rows),c["interval"],apex_index)
+    pairs=roof_brace_pairs(spaces,p.get("roof_type"),layout["purlin_spaces_per_brace_panel"])
     bays=[(frames[0],frames[1]),(frames[-2],frames[-1])]
     for a,bay_end in bays:
         xa,xb=X(a),X(bay_end)
@@ -198,7 +222,8 @@ def _roof_sheet(c):
     s.grid(x0-70,y0,"A"); s.grid(x0-70,y1,"B")
     s.dim_h(x0,x1,970,f"BUILDING LENGTH {length:,.0f} mm"); s.dim_v(110,y0,y1,f"ROOF SPAN {span:,.0f} mm")
     s.text(840,115,"ROOF PLAN", "viewtitle")
-    s.text(840,1015,f"PURLINS {c['purlin']} CFLC AT {actual:,.0f} mm ACTUAL (MAX {c['purlin_max']:,.0f} mm); ROOF X-BRACING {c['roof_brace']} EVERY {c['interval']} PURLIN SPACE(S)","note")
+    panel_text="/".join(str(value) for value in layout["purlin_spaces_per_brace_panel"])
+    s.text(840,1015,f"PURLINS {c['purlin']} CFLC AT {actual:,.0f} mm ACTUAL (MAX {c['purlin_max']:,.0f} mm); ROOF X-BRACING {c['roof_brace']} IN {layout['brace_panels_per_slope']} PANEL(S) PER SLOPE ({panel_text} PURLIN SPACES)","note")
     return s
 
 
