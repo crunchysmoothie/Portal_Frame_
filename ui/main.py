@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 from typing import Any
@@ -9,6 +10,7 @@ from typing import Any
 import flet as ft
 import httpx
 
+from preview_geometry import build_preview_geometry
 from ui.input_model import (
     BASE_SUPPORTS,
     BUILDING_TYPES,
@@ -24,6 +26,11 @@ from ui.input_model import (
     WIND_DESIGN_MODES,
     InputValidationError,
     build_analysis_payload,
+)
+from ui.preview_render import (
+    frame_elevation_svg,
+    roof_plan_svg,
+    wall_elevation_svg,
 )
 
 
@@ -183,11 +190,11 @@ def main(page: ft.Page) -> None:
         )
 
     # Project and building controls.
-    project_name = text_field("project_name", "Project name", col={"sm": 12, "md": 6})
+    project_name = text_field("project_name", "Project name", col=12)
     project_number = text_field(
-        "project_number", "Project number", col={"sm": 12, "md": 3}
+        "project_number", "Project number", col=6
     )
-    designer = text_field("designer", "Designer", col={"sm": 12, "md": 3})
+    designer = text_field("designer", "Designer", col=6)
     building_type = dropdown(
         "building_type",
         "Building type",
@@ -305,7 +312,7 @@ def main(page: ft.Page) -> None:
     rafter_bracing_spacing = number_field(
         "rafter_bracing_spacing",
         "Roof brace panels per slope",
-        helper="Requested panel count; purlin spaces are distributed automatically.",
+        helper="Fixed panel count; reduce purlin spacing if more support lines are needed.",
         integer=True,
     )
     gable_column_count = number_field(
@@ -328,7 +335,10 @@ def main(page: ft.Page) -> None:
         searchable=True,
     )
     purlin_spacing = number_field(
-        "purlin_max_spacing_mm", "Maximum purlin spacing", unit="mm"
+        "purlin_max_spacing_mm",
+        "Maximum purlin spacing",
+        unit="mm",
+        helper="Must create at least one purlin space per roof-brace panel.",
     )
     girt_section = dropdown(
         "girt_section",
@@ -394,6 +404,47 @@ def main(page: ft.Page) -> None:
         border_color="#93AAA7",
     )
     last_payload: dict[str, Any] | None = None
+    submitted_payload_fingerprint: str | None = None
+
+    analysis_status_text = ft.Text(
+        "No analysis has been run for these inputs.",
+        size=12,
+        weight=ft.FontWeight.W_600,
+        color=TEXT_PRIMARY,
+    )
+    analysis_status_icon = ft.Icon(
+        ft.Icons.HOURGLASS_TOP, size=18, color="#B87900"
+    )
+    analysis_progress = ft.ProgressRing(width=18, height=18, stroke_width=2, visible=False)
+    analysis_status_card = ft.Container(
+        bgcolor=WARNING_BG,
+        border_radius=10,
+        padding=12,
+        content=ft.Row(
+            spacing=9,
+            controls=[analysis_status_icon, analysis_progress, analysis_status_text],
+        ),
+    )
+    analysis_result_summary = ft.Column(
+        spacing=9,
+        controls=[
+            ft.Text(
+                "Run the validated inputs to populate the structural design summary.",
+                size=12,
+                color=TEXT_MUTED,
+            )
+        ],
+    )
+    download_report_button = ft.OutlinedButton(
+        "Download design report",
+        icon=ft.Icons.PICTURE_AS_PDF_OUTLINED,
+        disabled=True,
+    )
+    download_markup_button = ft.OutlinedButton(
+        "Download markup drawings",
+        icon=ft.Icons.ARCHITECTURE,
+        disabled=True,
+    )
 
     def clear_errors() -> None:
         for control in controls.values():
@@ -439,6 +490,379 @@ def main(page: ft.Page) -> None:
             ),
         )
 
+    preview_status_text = ft.Text(
+        "Preparing layout preview...",
+        size=11,
+        weight=ft.FontWeight.W_600,
+        color=TEXT_PRIMARY,
+    )
+    preview_status = ft.Container(
+        padding=10,
+        border_radius=10,
+        bgcolor=WARNING_BG,
+        content=ft.Row(
+            spacing=8,
+            controls=[
+                ft.Icon(ft.Icons.INFO_OUTLINE, size=16, color="#B87900"),
+                preview_status_text,
+            ],
+        ),
+    )
+    frame_preview_image = ft.Image(
+        src=frame_elevation_svg(
+            build_preview_geometry(build_analysis_payload(dict(DEFAULT_VALUES)))
+        ),
+        height=205,
+        fit=ft.BoxFit.CONTAIN,
+        semantics_label="Portal frame section layout preview",
+    )
+    roof_preview_image = ft.Image(
+        src=roof_plan_svg(
+            build_preview_geometry(build_analysis_payload(dict(DEFAULT_VALUES)))
+        ),
+        height=205,
+        fit=ft.BoxFit.CONTAIN,
+        semantics_label="Roof purlin and bracing plan preview",
+    )
+    wall_preview_image = ft.Image(
+        src=wall_elevation_svg(
+            build_preview_geometry(build_analysis_payload(dict(DEFAULT_VALUES)))
+        ),
+        height=180,
+        fit=ft.BoxFit.CONTAIN,
+        semantics_label="Longitudinal wall bracing preview",
+    )
+    preview_description = ft.Text("", size=11, color=TEXT_MUTED)
+    live_summary = ft.Column(spacing=9)
+    live_validation = ft.Container(
+        padding=10,
+        border_radius=10,
+        bgcolor=SUCCESS_BG,
+        content=ft.Row(
+            spacing=8,
+            controls=[
+                ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, size=17, color="#1C8C62"),
+                ft.Text(
+                    "Inputs ready for preview",
+                    size=11,
+                    weight=ft.FontWeight.W_600,
+                    color=TEXT_PRIMARY,
+                    expand=True,
+                    max_lines=4,
+                ),
+            ],
+        ),
+    )
+
+    def compact_summary_line(label: str, value: str, icon) -> ft.Container:
+        return ft.Container(
+            padding=10,
+            border=ft.Border(bottom=ft.BorderSide(1, "#DCE7E5")),
+            content=ft.Row(
+                spacing=9,
+                vertical_alignment=ft.CrossAxisAlignment.START,
+                controls=[
+                    ft.Icon(icon, color=ACCENT, size=17),
+                    ft.Column(
+                        spacing=1,
+                        expand=True,
+                        controls=[
+                            ft.Text(label, size=10, color=TEXT_MUTED),
+                            ft.Text(
+                                value,
+                                size=12,
+                                weight=ft.FontWeight.W_600,
+                                color=TEXT_PRIMARY,
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        )
+
+    def refresh_workspace(_=None, *, update_page: bool = True) -> None:
+        clear_errors()
+        try:
+            payload = build_analysis_payload(raw_values())
+            preview = build_preview_geometry(payload)
+        except (InputValidationError, ValueError) as exc:
+            error_count = len(exc.errors) if isinstance(exc, InputValidationError) else 1
+            if isinstance(exc, InputValidationError):
+                for key, message in exc.errors.items():
+                    set_validation_error(key, message)
+                first_error = next(iter(exc.errors.values()))
+            else:
+                first_error = str(exc)
+            preview_status.bgcolor = WARNING_BG
+            preview_status.content.controls[0].color = "#B87900"
+            preview_status_text.value = "Showing the last valid layout"
+            live_validation.bgcolor = WARNING_BG
+            live_validation.content.controls[0].name = ft.Icons.WARNING_AMBER
+            live_validation.content.controls[0].color = "#B87900"
+            live_validation.content.controls[1].value = (
+                f"{error_count} input{'s' if error_count != 1 else ''} need attention: "
+                f"{first_error}"
+            )
+            if update_page:
+                page.update()
+            return
+
+        building = payload["building_data"]
+        wind = payload["wind_data"]
+        counts = preview["counts"]
+        layout = preview["roof_layout"]
+        frame_preview_image.src = frame_elevation_svg(preview)
+        roof_preview_image.src = roof_plan_svg(preview)
+        wall_preview_image.src = wall_elevation_svg(preview)
+        preview_status.bgcolor = SUCCESS_BG
+        preview_status.content.controls[0].name = ft.Icons.VISIBILITY_OUTLINED
+        preview_status.content.controls[0].color = "#1C8C62"
+        preview_status_text.value = "Live layout preview - no analysis results"
+        preview_description.value = (
+            f"{counts['purlin_lines']} purlin lines at "
+            f"{layout['actual_purlin_spacing_mm']:.0f} mm actual spacing. "
+            f"Roof brace panels per slope: "
+            f"{' / '.join(str(value) for value in layout['purlin_spaces_per_brace_panel'])} "
+            "purlin spaces."
+        )
+        live_validation.bgcolor = SUCCESS_BG
+        live_validation.content.controls[0].name = ft.Icons.CHECK_CIRCLE_OUTLINE
+        live_validation.content.controls[0].color = "#1C8C62"
+        live_validation.content.controls[1].value = "Inputs ready for preview"
+        live_summary.controls = [
+            compact_summary_line(
+                "Project",
+                payload["project"]["name"],
+                ft.Icons.FOLDER_OUTLINED,
+            ),
+            compact_summary_line(
+                "Portal dimensions",
+                f"{building['gable_width'] / 1000:g} m span | "
+                f"{building['eaves_height'] / 1000:g} m eaves | "
+                f"{building['apex_height'] / 1000:g} m apex | "
+                f"{building['roof_pitch']:.2f} deg",
+                ft.Icons.STRAIGHTEN,
+            ),
+            compact_summary_line(
+                "Building arrangement",
+                f"{building['building_length'] / 1000:g} m long | "
+                f"{building['rafter_spacing'] / 1000:g} m nominal spacing | "
+                f"{counts['frame_lines']} frame lines",
+                ft.Icons.VIEW_WEEK_OUTLINED,
+            ),
+            compact_summary_line(
+                "Wind inputs",
+                f"{wind['fundamental_basic_wind_speed']:g} m/s | terrain "
+                f"{wind['terrain_category']} | {wind['return_period']} years | "
+                f"{building['wind_design_mode']}",
+                ft.Icons.AIR,
+            ),
+            compact_summary_line(
+                "Purlins",
+                f"{building['purlin_section']} | {counts['purlin_lines']} lines | "
+                f"{layout['actual_purlin_spacing_mm']:.0f} mm actual",
+                ft.Icons.HORIZONTAL_RULE,
+            ),
+            compact_summary_line(
+                "Bracing and restraint",
+                f"{building['column_bracing_type']}-wall bracing | "
+                f"{layout['brace_panels_per_slope']} roof panels/slope | "
+                f"{building['base_support_condition']} bases",
+                ft.Icons.ACCOUNT_TREE_OUTLINED,
+            ),
+            compact_summary_line(
+                "Gables",
+                "Not included for canopy"
+                if building["building_type"] == "Canopy"
+                else f"{building['gable_column_count']} columns/end | "
+                f"{building['gable_column_brace_intervals']} restraint intervals",
+                ft.Icons.CELL_TOWER,
+            ),
+        ]
+        if submitted_payload_fingerprint is not None:
+            current_fingerprint = json.dumps(payload, sort_keys=True)
+            if current_fingerprint != submitted_payload_fingerprint:
+                analysis_status_card.bgcolor = WARNING_BG
+                analysis_status_icon.name = ft.Icons.WARNING_AMBER
+                analysis_status_icon.color = "#B87900"
+                analysis_status_text.value = (
+                    "Inputs changed after analysis; run again before using downloads."
+                )
+                download_report_button.disabled = True
+                download_markup_button.disabled = True
+        if update_page:
+            page.update()
+
+    def analysis_summary_line(label: str, value: str, icon) -> ft.Container:
+        return ft.Container(
+            bgcolor="#F3F8F7",
+            border_radius=9,
+            padding=11,
+            content=ft.Row(
+                spacing=9,
+                vertical_alignment=ft.CrossAxisAlignment.START,
+                controls=[
+                    ft.Icon(icon, color=ACCENT, size=18),
+                    ft.Column(
+                        spacing=1,
+                        expand=True,
+                        controls=[
+                            ft.Text(label, size=10, color=TEXT_MUTED),
+                            ft.Text(
+                                value,
+                                size=12,
+                                weight=ft.FontWeight.W_600,
+                                color=TEXT_PRIMARY,
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        )
+
+    def show_analysis_failure(message: str) -> None:
+        analysis_progress.visible = False
+        analysis_status_card.bgcolor = ERROR_BG
+        analysis_status_icon.visible = True
+        analysis_status_icon.name = ft.Icons.ERROR_OUTLINE
+        analysis_status_icon.color = "#C43D34"
+        analysis_status_text.value = message
+        run_analysis_button.disabled = False
+        run_analysis_button.content = "Run analysis"
+        page.update()
+
+    def show_analysis_results(result: dict[str, Any]) -> None:
+        summary = result["design_summary"]
+        sections = summary["portal_sections"]
+        strength = summary["governing_strength"]
+        serviceability = summary["serviceability"]
+        mass = summary.get("steel_mass_breakdown", {})
+        portal_mass = mass.get("portal_frames", {}).get("mass_kg", 0)
+        bracing_mass = mass.get("bracing", {}).get("mass_kg", 0)
+        gable_mass = mass.get("gable_columns", {}).get("mass_kg", 0)
+        purlin_mass = mass.get("purlins", {}).get("mass_kg", 0)
+        total_mass = mass.get("total_steel_mass_kg", 0)
+        brace_text = ", ".join(
+            f"{item['member_type']}: {item['section']} ({float(item['utilisation']):.3f})"
+            for item in summary.get("bracing_members", [])
+        ) or "No gable or longitudinal bracing design required."
+
+        analysis_result_summary.controls = [
+            analysis_summary_line(
+                "Member design status",
+                f"{strength['status']} | governing utilisation "
+                f"{float(strength['utilisation']):.3f}",
+                ft.Icons.FACT_CHECK,
+            ),
+            analysis_summary_line(
+                "Selected portal sections",
+                f"Rafter {sections['rafter']} | Column {sections['column']}",
+                ft.Icons.VIEW_WEEK_OUTLINED,
+            ),
+            analysis_summary_line(
+                "Governing strength check",
+                f"{strength['member']} | {strength['combination']} | "
+                f"{strength['check']}",
+                ft.Icons.QUERY_STATS,
+            ),
+            analysis_summary_line(
+                "Serviceability results",
+                f"Horizontal {float(serviceability['max_horizontal_deflection_mm']):.2f} mm | "
+                f"Vertical {float(serviceability['max_vertical_deflection_mm']):.2f} mm",
+                ft.Icons.SWAP_VERT,
+            ),
+            analysis_summary_line(
+                "Estimated steel mass",
+                f"Portal {float(portal_mass):,.1f} kg | Bracing {float(bracing_mass):,.1f} kg | "
+                f"Gables {float(gable_mass):,.1f} kg | Purlins {float(purlin_mass):,.1f} kg | "
+                f"Total {float(total_mass):,.1f} kg",
+                ft.Icons.SCALE_OUTLINED,
+            ),
+            analysis_summary_line(
+                "Bracing members (section and utilisation)",
+                brace_text,
+                ft.Icons.ACCOUNT_TREE_OUTLINED,
+            ),
+        ]
+
+        artifacts = result.get("artifacts", {})
+        report = artifacts.get("design-report-pdf") or artifacts.get(
+            "design-report-html"
+        )
+        markup = artifacts.get("markup-pdf") or artifacts.get("markup-html")
+        if report:
+            download_report_button.url = f"{API_URL}{report['download_url']}"
+            download_report_button.disabled = False
+        if markup:
+            download_markup_button.url = f"{API_URL}{markup['download_url']}"
+            download_markup_button.disabled = False
+
+        analysis_progress.visible = False
+        analysis_status_icon.visible = True
+        analysis_status_icon.name = ft.Icons.CHECK_CIRCLE
+        analysis_status_icon.color = "#1C8C62"
+        analysis_status_card.bgcolor = SUCCESS_BG
+        analysis_status_text.value = (
+            f"Analysis {result['analysis_id']} complete. Review required before use."
+        )
+        run_analysis_button.disabled = False
+        run_analysis_button.content = "Run analysis again"
+        page.update()
+
+    async def run_analysis(_=None) -> None:
+        nonlocal submitted_payload_fingerprint
+        if not validate_form() or last_payload is None:
+            return
+
+        submitted_payload_fingerprint = json.dumps(last_payload, sort_keys=True)
+        run_analysis_button.disabled = True
+        run_analysis_button.content = "Analysis running..."
+        download_report_button.disabled = True
+        download_markup_button.disabled = True
+        analysis_status_card.bgcolor = WARNING_BG
+        analysis_status_icon.visible = False
+        analysis_progress.visible = True
+        analysis_status_text.value = "Submitting analysis..."
+        page.update()
+
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.post(f"{API_URL}/api/analysis", json=last_payload)
+                response.raise_for_status()
+                job = response.json()
+                analysis_id = job["analysis_id"]
+
+                while job["status"] in {"queued", "running"}:
+                    analysis_status_text.value = job.get(
+                        "message", "Running structural analysis."
+                    )
+                    page.update()
+                    await asyncio.sleep(0.8)
+                    status_response = await client.get(
+                        f"{API_URL}/api/analysis/{analysis_id}/status"
+                    )
+                    status_response.raise_for_status()
+                    job = status_response.json()
+
+                if job["status"] == "failed":
+                    show_analysis_failure(job.get("error", "Analysis failed."))
+                    return
+
+                result_response = await client.get(
+                    f"{API_URL}/api/analysis/{analysis_id}/results"
+                )
+                result_response.raise_for_status()
+                show_analysis_results(result_response.json())
+        except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
+            show_analysis_failure(f"Analysis API error: {exc}")
+
+    run_analysis_button = ft.FilledButton(
+        "Run analysis",
+        icon=ft.Icons.PLAY_ARROW,
+        on_click=run_analysis,
+        tooltip="Runs analysis with PyNite deformation rendering disabled.",
+    )
+
     def validate_form(_=None) -> bool:
         nonlocal last_payload
         clear_errors()
@@ -465,6 +889,7 @@ def main(page: ft.Page) -> None:
         last_payload = payload
         building = payload["building_data"]
         wind = payload["wind_data"]
+        refresh_workspace(update_page=False)
         review_summary.controls = [
             summary_line(
                 "Building",
@@ -513,6 +938,7 @@ def main(page: ft.Page) -> None:
         gable_brace_intervals.disabled = is_canopy
         crawl_application.disabled = not use_crawl_beams.value
         update_pitch()
+        refresh_workspace(update_page=False)
         page.update()
 
     building_type.on_select = update_conditionals
@@ -520,6 +946,22 @@ def main(page: ft.Page) -> None:
     wind_design_mode.on_select = update_conditionals
     base_support.on_select = update_conditionals
     use_crawl_beams.on_change = update_conditionals
+
+    def update_live_input(_=None) -> None:
+        update_pitch()
+        refresh_workspace()
+
+    conditional_dropdowns = {
+        building_type,
+        building_roof,
+        wind_design_mode,
+        base_support,
+    }
+    for live_control in controls.values():
+        if isinstance(live_control, ft.TextField):
+            live_control.on_change = update_live_input
+        elif isinstance(live_control, ft.Dropdown) and live_control not in conditional_dropdowns:
+            live_control.on_select = update_live_input
 
     def footer_buttons(previous: int | None, next_index: int | None) -> ft.Row:
         buttons: list[ft.Control] = []
@@ -690,8 +1132,8 @@ def main(page: ft.Page) -> None:
                         ft.Container(
                             col={"sm": 12, "lg": 5},
                             content=card(
-                                "Design summary",
-                                "The summary refreshes after successful validation.",
+                                "Validated input summary",
+                                "This describes the model inputs before analysis.",
                                 review_summary,
                             ),
                         ),
@@ -705,6 +1147,29 @@ def main(page: ft.Page) -> None:
                         ),
                     ]
                 ),
+                card(
+                    "Structural design summary",
+                    "Populated from the completed analysis snapshot; serviceability results remain calculated even though deformation rendering is disabled.",
+                    ft.Column(
+                        spacing=12,
+                        controls=[
+                            analysis_status_card,
+                            analysis_result_summary,
+                            ft.Row(
+                                wrap=True,
+                                controls=[
+                                    download_report_button,
+                                    download_markup_button,
+                                ],
+                            ),
+                            ft.Text(
+                                "Generated outputs require review by the responsible competent engineer.",
+                                size=10,
+                                color=TEXT_MUTED,
+                            ),
+                        ],
+                    ),
+                ),
                 ft.Row(
                     alignment=ft.MainAxisAlignment.END,
                     wrap=True,
@@ -717,12 +1182,7 @@ def main(page: ft.Page) -> None:
                             icon=ft.Icons.CHECK_CIRCLE,
                             on_click=validate_form,
                         ),
-                        ft.FilledButton(
-                            "Run analysis",
-                            icon=ft.Icons.PLAY_ARROW,
-                            disabled=True,
-                            tooltip="Enabled after POST /api/analysis is implemented.",
-                        ),
+                        run_analysis_button,
                     ],
                 ),
             ],
@@ -733,6 +1193,110 @@ def main(page: ft.Page) -> None:
         controls=[sections[0]],
         expand=True,
         scroll=ft.ScrollMode.AUTO,
+    )
+
+    def preview_block(image: ft.Image) -> ft.Container:
+        return ft.Container(
+            bgcolor="#FFFFFF",
+            border_radius=12,
+            padding=8,
+            border=ft.Border.all(1, "#D8E5E3"),
+            content=image,
+        )
+
+    visual_builder = ft.Container(
+        width=380,
+        bgcolor="#EDF4F3",
+        padding=16,
+        content=ft.Column(
+            scroll=ft.ScrollMode.AUTO,
+            spacing=12,
+            controls=[
+                ft.Column(
+                    spacing=2,
+                    controls=[
+                        ft.Text(
+                            "Live structural layout",
+                            size=17,
+                            weight=ft.FontWeight.BOLD,
+                            color=TEXT_PRIMARY,
+                        ),
+                        ft.Text(
+                            "Frame, secondary steel and stability arrangement",
+                            size=11,
+                            color=TEXT_MUTED,
+                        ),
+                    ],
+                ),
+                preview_status,
+                preview_block(frame_preview_image),
+                preview_block(roof_preview_image),
+                preview_block(wall_preview_image),
+                ft.Container(
+                    bgcolor=WARNING_BG,
+                    border_radius=10,
+                    padding=12,
+                    content=ft.Column(
+                        spacing=5,
+                        controls=[
+                            ft.Text(
+                                "LAYOUT PREVIEW ONLY",
+                                size=10,
+                                weight=ft.FontWeight.BOLD,
+                                color="#8A5A00",
+                            ),
+                            preview_description,
+                            ft.Text(
+                                "Member adequacy, design actions and analysis results are not shown.",
+                                size=10,
+                                color="#745B2B",
+                            ),
+                        ],
+                    ),
+                ),
+            ],
+        ),
+    )
+
+    running_summary_panel = ft.Container(
+        width=280,
+        bgcolor="#FFFFFF",
+        padding=16,
+        border=ft.Border(left=ft.BorderSide(1, "#D8E5E3")),
+        content=ft.Column(
+            scroll=ft.ScrollMode.AUTO,
+            spacing=10,
+            controls=[
+                ft.Column(
+                    spacing=2,
+                    controls=[
+                        ft.Text(
+                            "Running summary",
+                            size=17,
+                            weight=ft.FontWeight.BOLD,
+                            color=TEXT_PRIMARY,
+                        ),
+                        ft.Text(
+                            "Updates as project inputs change",
+                            size=11,
+                            color=TEXT_MUTED,
+                        ),
+                    ],
+                ),
+                live_validation,
+                live_summary,
+                ft.Container(
+                    bgcolor="#F3F8F7",
+                    border_radius=10,
+                    padding=11,
+                    content=ft.Text(
+                        "Values shown here are inputs and layout quantities, not verified analysis results.",
+                        size=10,
+                        color=TEXT_MUTED,
+                    ),
+                ),
+            ],
+        ),
     )
 
     rail = ft.NavigationRail(
@@ -860,10 +1424,19 @@ def main(page: ft.Page) -> None:
                     expand=True,
                     controls=[
                         header,
-                        ft.Container(
+                        ft.Row(
                             expand=True,
-                            padding=24,
-                            content=content_host,
+                            spacing=0,
+                            vertical_alignment=ft.CrossAxisAlignment.STRETCH,
+                            controls=[
+                                ft.Container(
+                                    expand=True,
+                                    padding=20,
+                                    content=content_host,
+                                ),
+                                visual_builder,
+                                running_summary_panel,
+                            ],
                         ),
                     ],
                 ),
@@ -872,6 +1445,7 @@ def main(page: ft.Page) -> None:
     )
     update_conditionals()
     update_pitch()
+    refresh_workspace()
 
 
 if __name__ == "__main__":

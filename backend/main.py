@@ -11,8 +11,16 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 
 from analysis_snapshot import load_analysis_snapshot
+from backend.analysis_service import (
+    get_analysis_artifact,
+    get_analysis_job,
+    public_analysis_job,
+    submit_analysis_job,
+)
+from preview_geometry import build_preview_geometry
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -42,10 +50,70 @@ def project_info() -> dict[str, Any]:
         "analysis_engine": "portal_frame_analysis",
         "capabilities": {
             "latest_analysis": DEFAULT_SNAPSHOT_PATH.exists(),
-            "submit_analysis": False,
-            "generate_reports": False,
+            "layout_preview": True,
+            "submit_analysis": True,
+            "generate_reports": True,
         },
     }
+
+
+@app.post("/api/preview", tags=["preview"])
+def preview(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return analysis-independent frame, purlin, girt and bracing geometry."""
+
+    try:
+        return build_preview_geometry(payload)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/analysis", status_code=202, tags=["analysis"])
+def submit_analysis(payload: dict[str, Any]) -> dict[str, Any]:
+    """Queue a complete isolated analysis with deformation rendering disabled."""
+
+    try:
+        return submit_analysis_job(payload)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/analysis/{analysis_id}/status", tags=["analysis"])
+def analysis_status(analysis_id: str) -> dict[str, Any]:
+    """Return queued, running, complete or failed status for one analysis."""
+
+    try:
+        return public_analysis_job(get_analysis_job(analysis_id))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/analysis/{analysis_id}/results", tags=["analysis"])
+def analysis_results(analysis_id: str) -> dict[str, Any]:
+    """Return the design summary and artifact links for a completed analysis."""
+
+    try:
+        job = get_analysis_job(analysis_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if job["status"] not in {"complete", "failed"}:
+        raise HTTPException(status_code=409, detail="Analysis is not complete.")
+    return public_analysis_job(job)
+
+
+@app.get("/api/analysis/{analysis_id}/artifacts/{artifact}", tags=["analysis"])
+def analysis_artifact(analysis_id: str, artifact: str):
+    """Download a generated design report or markup drawing artifact."""
+
+    try:
+        path = get_analysis_artifact(analysis_id, artifact)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    media_type = {
+        ".pdf": "application/pdf",
+        ".html": "text/html; charset=utf-8",
+        ".json": "application/json",
+    }.get(path.suffix.lower(), "application/octet-stream")
+    return FileResponse(path, media_type=media_type, filename=path.name)
 
 
 @app.get("/api/analysis/latest", tags=["analysis"])

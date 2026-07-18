@@ -327,7 +327,12 @@ def directional_search(primary, r_list, c_list, r_section_type, c_section_type,
         'dx_comb': dx_comb
     }
 
-def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
+def sls_check(
+    preferred_section: str,
+    r_section_type: str,
+    c_section_type: str,
+    input_path="input_data.json",
+):
     """Runs 'rafter-first' and 'column-first' searches, then returns the single lightest solution."""
     start = time.time()
     member_db = mdb.load_member_database()
@@ -337,7 +342,7 @@ def sls_check(preferred_section: str, r_section_type: str, c_section_type: str):
     if not r_list or not c_list:
         raise ValueError(f"No sections flagged as Preferred='{preferred_section}' found.")
 
-    data = import_data('input_data.json')
+    data = import_data(str(input_path))
     r_total_m, c_total_m = get_member_lengths(data)
     vert_limit = data.frame_data[0]['gable_width'] / 180
     horiz_limit = data.frame_data[0]['eaves_height'] / 180
@@ -659,18 +664,28 @@ def render_model(frame, combo):
         for key, dist_loads in original_member_dist_loads.items():
             frame.members[key].DistLoads = dist_loads
 
-def main(render=True, snapshot_path="output/analysis/analysis_results.json"):
+def main(
+    render=True,
+    snapshot_path="output/analysis/analysis_results.json",
+    input_path="input_data.json",
+    project_metadata=None,
+):
     """Run one analysis, store its complete results, and optionally render it."""
 
     preferred_section = 'Yes'      # or 'No', based on user preference
     r_section_type = 'I-Sections'  # or 'H-Sections', based on user preference
     c_section_type = 'I-Sections'  # or 'H-Sections', based on user preference
 
-    frame, combo, member_db, r_section_typ, c_section_typ, best_section = sls_check(preferred_section, r_section_type, c_section_type)
+    frame, combo, member_db, r_section_typ, c_section_typ, best_section = sls_check(
+        preferred_section,
+        r_section_type,
+        c_section_type,
+        input_path=input_path,
+    )
 
 
     if frame is not None:
-        data = import_data('input_data.json')
+        data = import_data(str(input_path))
         r_mem = mdb.member_properties(r_section_typ, best_section[0], member_db)
         c_mem = mdb.member_properties(c_section_typ, best_section[1], member_db)
         actions_by_combination = {
@@ -704,10 +719,11 @@ def main(render=True, snapshot_path="output/analysis/analysis_results.json"):
             rafter_section=best_section[0],
             column_section=best_section[1],
             bracing_design=bracing_results,
-            input_path='input_data.json',
+            input_path=input_path,
+            project_metadata=project_metadata,
         )
         snapshot = create_analysis_snapshot(
-            'input_data.json', calculation_data.to_dict()
+            input_path, calculation_data.to_dict()
         )
         written_snapshot = write_analysis_snapshot(snapshot, snapshot_path)
         print(f"Analysis results written to {written_snapshot.resolve()}")

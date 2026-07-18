@@ -49,7 +49,7 @@ def interpolate_cpe_roof(roof_angle, angles, data):
 def calculate_pressure(peak_wind_pressure, cpe, cpi):
     return (peak_wind_pressure * cpe) - (peak_wind_pressure * cpi)
 
-def wind_data_duo_n():
+def wind_data_duo_n(input_path="input_data.json"):
     angles = np.array([5, 15, 30, 45])
 
     # Wind 0 Upward
@@ -76,7 +76,7 @@ def wind_data_duo_n():
         [-1.1, -1.4, -0.9, -0.5]
     ])
 
-    data = import_data("input_data.json")
+    data = import_data(input_path)
     h_d_data = [0.25, 1.0]
     cpe_d = [0.70, 0.80]
     cpe_e = [-0.3, -0.50]
@@ -164,7 +164,7 @@ def wind_data_duo_n():
         "I": cpe_wind_90[3]
     }
 
-    zones = zones_normal()
+    zones = zones_normal(input_path)
     r_spacing = wind['rafter_spacing']
 
 
@@ -258,12 +258,12 @@ def wind_data_duo_n():
     formatted_json_str = formatted_json_str.replace(']}', ']\n}')
 
     # Save the formatted JSON string to a file
-    with open("input_data.json", 'w') as json_file:
+    with open(input_path, 'w') as json_file:
         json_file.write(formatted_json_str)
 
     return
 
-def wind_data_mono_n():
+def wind_data_mono_n(input_path="input_data.json"):
     angles = np.array([5, 15, 30, 45])
 
     # SANS 10160-3 Table 8. The suction envelope includes both theta=0
@@ -293,7 +293,7 @@ def wind_data_mono_n():
         [-1.5, -1.4, -1.0, -0.9],  # 45 deg
     ])
 
-    data = import_data("input_data.json")
+    data = import_data(input_path)
     h_d_data = [0.25, 1.0]
     cpe_d = [0.70, 0.80]
     cpe_e = [-0.3, -0.50]
@@ -371,7 +371,7 @@ def wind_data_mono_n():
         "I": cpe_wind_90[3]
     }
 
-    zones = zones_normal()
+    zones = zones_normal(input_path)
     r_spacing = wind['rafter_spacing']
 
     for zone, cpe in zones_up.items():
@@ -405,7 +405,7 @@ def wind_data_mono_n():
     data["wind_zones_0D"] = results_down
     data["wind_zones_90"] = results_90
 
-    with open("input_data.json", 'w') as json_file:
+    with open(input_path, 'w') as json_file:
         json.dump(data, json_file, indent=2)
 
     return
@@ -429,8 +429,8 @@ def _interp_phi(min_phi0, min_phi1, phi):
     return min_phi0 + phi * (min_phi1 - min_phi0)
 
 
-def _wind_data_canopy(roof_type):
-    data = import_data("input_data.json")
+def _wind_data_canopy(roof_type, input_path="input_data.json"):
+    data = import_data(input_path)
     wind = normalize_wind_data(data)
 
     bs = calculate_basic_wind_speed(wind['fundamental_basic_wind_speed'], wind['return_period'])
@@ -509,7 +509,7 @@ def _wind_data_canopy(roof_type):
         zones_90 = {"A": a_up, "B": b_up, "C": c_up, "D": d_up, "E": e_up,
                     "F": a_up, "G": b_up, "H": c_up, "I": d_up}
 
-    zone_lengths = zones_normal()
+    zone_lengths = zones_normal(input_path)
     r_spacing = wind['rafter_spacing']
 
     results_up = []
@@ -548,16 +548,16 @@ def _wind_data_canopy(roof_type):
     data["wind_zones_0D"] = results_down
     data["wind_zones_90"] = results_90
 
-    with open("input_data.json", 'w') as json_file:
+    with open(input_path, 'w') as json_file:
         json.dump(data, json_file, indent=2)
 
 
-def wind_data_duo_c():
-    return _wind_data_canopy("Duo Pitched")
+def wind_data_duo_c(input_path="input_data.json"):
+    return _wind_data_canopy("Duo Pitched", input_path)
 
 
-def wind_data_mono_c():
-    return _wind_data_canopy("Mono Pitched")
+def wind_data_mono_c(input_path="input_data.json"):
+    return _wind_data_canopy("Mono Pitched", input_path)
 def print_zones(zones):
     print(f"{'Zone':<5} {'0_deg':<20} {'90_deg':<20}")
     print("-" * 50)
@@ -575,8 +575,8 @@ def print_zones(zones):
     for zone, v in zones.items():
         print(f"{zone:<5} {fmt(v['0_deg']):<20} {fmt(v['90_deg']):<20}")
 
-def zones_normal():
-    data = import_data('input_data.json')['wind_data'][0]
+def zones_normal(input_path="input_data.json"):
+    data = import_data(input_path)['wind_data'][0]
 
 
     b_0 = data['building_length']
@@ -657,19 +657,19 @@ def zones_normal():
     }
     return zones
 
-def wind_out():
-    data = import_data('input_data.json')['wind_data'][0]
+def wind_out(input_path="input_data.json"):
+    data = import_data(input_path)['wind_data'][0]
     if data['building_type'] == 'Normal':
         if data['building_roof'] == 'Duo Pitched':
-            return wind_data_duo_n()
+            return wind_data_duo_n(input_path)
         elif data['building_roof'] == 'Mono Pitched':
-            return wind_data_mono_n()
+            return wind_data_mono_n(input_path)
 
     elif data['building_type'] == 'Canopy':
         if data['building_roof'] == 'Duo Pitched':
-            return wind_data_duo_c()
+            return wind_data_duo_c(input_path)
         elif data['building_roof'] == 'Mono Pitched':
-            return wind_data_mono_c()
+            return wind_data_mono_c(input_path)
 
 if __name__ == "__main__":
     wind_out()

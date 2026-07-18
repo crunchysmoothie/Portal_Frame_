@@ -50,6 +50,20 @@ class UiInputModelTests(unittest.TestCase):
             "base_rotational_stiffness_knm_per_rad", caught.exception.errors
         )
 
+    def test_purlin_spacing_must_support_fixed_roof_brace_count(self):
+        with self.assertRaises(InputValidationError) as caught:
+            build_analysis_payload(
+                self.values(
+                    rafter_bracing_spacing="4",
+                    purlin_max_spacing_mm="5000",
+                )
+            )
+        self.assertIn("purlin_max_spacing_mm", caught.exception.errors)
+        self.assertIn(
+            "Need 4 purlin spaces/slope for 4 brace panels",
+            caught.exception.errors["purlin_max_spacing_mm"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

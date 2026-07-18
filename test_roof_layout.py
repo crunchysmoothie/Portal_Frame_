@@ -22,12 +22,20 @@ class RoofLayoutTests(unittest.TestCase):
         pairs = roof_brace_pairs(9, "Duo Pitched", [5, 4])
         self.assertEqual(pairs, [(0, 5), (5, 9), (9, 13), (13, 18)])
 
-    def test_more_requested_panels_than_purlin_spaces_uses_every_space(self):
+    def test_requested_panels_are_not_reduced_by_purlin_layout(self):
+        with self.assertRaisesRegex(
+            ValueError, "Need 10 purlin spaces/slope for 10 brace panels"
+        ):
+            calculate_roof_bracing_layout(
+                6_000, 4_000, 4_500, "Mono Pitched", 2_000, 10
+            )
+
+    def test_four_requested_panels_remain_four(self):
         layout = calculate_roof_bracing_layout(
-            6_000, 4_000, 4_500, "Mono Pitched", 2_000, 10
+            16_000, 6_500, 7_500, "Duo Pitched", 1_600, 4
         )
         self.assertEqual(layout["brace_panels_per_slope"], 4)
-        self.assertEqual(layout["purlin_spaces_per_brace_panel"], [1, 1, 1, 1])
+        self.assertEqual(len(layout["purlin_spaces_per_brace_panel"]), 4)
 
 
 if __name__ == "__main__":

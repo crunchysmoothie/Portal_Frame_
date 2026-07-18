@@ -21,11 +21,21 @@ The interactive API documentation is then available at:
 
 <http://127.0.0.1:8000/docs>
 
-The initial endpoints are:
+The available endpoints are:
 
 - `GET /api/health` — liveness check.
 - `GET /api/project` — exposed capability information.
+- `POST /api/preview` - analysis-independent frame, purlin, girt and bracing geometry.
+- `POST /api/analysis` - validate the request and queue a structural analysis job.
+- `GET /api/analysis/{analysis_id}/status` - retrieve queued, running, complete or failed status.
+- `GET /api/analysis/{analysis_id}/results` - retrieve the completed design summary and artifact links.
+- `GET /api/analysis/{analysis_id}/artifacts/{artifact}` - download a generated design report or markup drawing.
 - `GET /api/analysis/latest` — latest completed analysis snapshot, if one exists.
 
-Analysis submission will be added after the current command-line input defaults
-are extracted into validated request models.
+The preview geometry is suitable for SVG, Canvas or WebGL renderers. It does not
+run structural analysis or verify member adequacy.
+
+Analysis jobs use isolated folders under `output/analysis/jobs`. API analysis
+keeps the engineering deflection calculations and results but disables the
+legacy PyNite deformation window. Generated outputs remain subject to review by
+the responsible competent engineer.

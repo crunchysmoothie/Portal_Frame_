@@ -21,5 +21,16 @@ Run the UI in a browser from another terminal:
 
 Open <http://127.0.0.1:8550> if the browser does not open automatically.
 
-The first draft validates and previews the request payload. The Run analysis
-button remains disabled until `POST /api/analysis` is implemented.
+The UI validates and previews the request payload, provides a live SVG layout
+preview, and keeps the main inputs visible in a persistent running summary. The
+layout uses the shared Python roof calculation; it is not an analysis result.
+
+On the Review step, select **Run analysis** to submit the validated inputs. The
+UI shows job progress and then displays the member-design status, selected portal
+sections, governing check, serviceability results, steel-mass breakdown and
+bracing utilisations. **Download design report** and **Download markup drawings**
+become available only for the completed, current input set.
+
+If an input changes after analysis, run the analysis again before downloading
+outputs. The browser UI does not open the legacy PyNite deformation renderer;
+deflection checks are still calculated and included in the results.

@@ -26,7 +26,15 @@ def calculate_roof_bracing_layout(
     run = span / 2 if str(roof_type) == "Duo Pitched" else span
     slope_length = math.hypot(run, rise)
     purlin_spaces = max(1, math.ceil(slope_length / maximum))
-    panel_count = min(requested, purlin_spaces)
+    if purlin_spaces < requested:
+        suggested_spacing = slope_length / requested
+        raise ValueError(
+            f"Need {requested} purlin spaces/slope for {requested} brace panels; "
+            f"this maximum gives {purlin_spaces}. Reduce to about "
+            f"{suggested_spacing:,.0f} mm."
+        )
+
+    panel_count = requested
     base, remainder = divmod(purlin_spaces, panel_count)
     panel_sizes = [base + 1] * remainder + [base] * (panel_count - remainder)
     return {

@@ -5,6 +5,34 @@ import portal_frame_analysis
 from crawl_beam_inputs import crawl_beam_library
 
 
+def run_analysis(
+    building_data,
+    wind_data,
+    *,
+    input_path="input_data.json",
+    snapshot_path="output/analysis/analysis_results.json",
+    render=False,
+    project_metadata=None,
+):
+    """Generate one isolated input file and run the complete design workflow."""
+
+    building_data = dict(building_data)
+    if "crawl_beams" not in building_data:
+        building_data["crawl_beams"] = crawl_beam_library()
+
+    user_input.update_json_file(input_path, building_data, dict(wind_data))
+    user_input.add_wind_member_loads(input_path)
+    user_input.add_live_loads(input_path)
+    user_input.add_dead_loads(input_path)
+
+    return portal_frame_analysis.main(
+        render=render,
+        snapshot_path=snapshot_path,
+        input_path=input_path,
+        project_metadata=project_metadata,
+    )
+
+
 def main(render: bool = True) -> None:
     """Generate input/load data from local settings, then run analysis."""
 
@@ -95,14 +123,13 @@ def main(render: bool = True) -> None:
         "altitude": 830,
     }
 
-    json_filename = "input_data.json"
-
-    user_input.update_json_file(json_filename, building_data, wind_data)
-    user_input.add_wind_member_loads(json_filename)
-    user_input.add_live_loads(json_filename)
-    user_input.add_dead_loads(json_filename)
-
-    snapshot_path = portal_frame_analysis.main(render=render)
+    snapshot_path = run_analysis(
+        building_data,
+        wind_data,
+        input_path="input_data.json",
+        snapshot_path="output/analysis/analysis_results.json",
+        render=render,
+    )
     if snapshot_path is not None:
         print(
             "Stored analysis is ready for reporting. Run "
