@@ -7,6 +7,8 @@ import math
 from pathlib import Path
 from typing import Any, Mapping
 
+from roof_layout import calculate_roof_bracing_layout
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -195,6 +197,27 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
         errors["purlin_section"] = "Choose a lipped channel from the section database."
     if girt_section not in LIPPED_CHANNEL_SECTIONS:
         errors["girt_section"] = "Choose a lipped channel from the section database."
+
+    layout_fields = {
+        "eaves_height_m",
+        "apex_height_m",
+        "gable_width_m",
+        "building_roof",
+        "purlin_max_spacing_mm",
+        "rafter_bracing_spacing",
+    }
+    if not layout_fields.intersection(errors):
+        try:
+            calculate_roof_bracing_layout(
+                width_m * 1000,
+                eaves_m * 1000,
+                apex_m * 1000,
+                roof_type,
+                purlin_spacing,
+                roof_panels,
+            )
+        except ValueError as exc:
+            errors["purlin_max_spacing_mm"] = str(exc)
 
     if errors:
         raise InputValidationError(errors)

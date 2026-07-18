@@ -555,7 +555,7 @@ def update_json_file(json_filename, b_data, wind_data):
         json.dump(data, f, indent=2)      # `indent` pretty-prints safely
 
     print(f"Portal frame data saved to {json_filename}")
-    wind_out()
+    wind_out(json_filename)
 
 def add_wind_member_loads(json_filename):
     """Generate wind loads and append them to the member loads list."""

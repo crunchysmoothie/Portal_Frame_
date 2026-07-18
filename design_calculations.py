@@ -837,6 +837,7 @@ def build_calculation_sheet_data_from_frame(
     column_section,
     bracing_design=None,
     input_path="input_data.json",
+    project_metadata=None,
 ):
     """Build the complete stored result set from one finished FE analysis."""
 
@@ -898,6 +899,14 @@ def build_calculation_sheet_data_from_frame(
         "girt_section": frame_data.get("girt_section", ""),
         "girt_max_spacing_mm": frame_data.get("girt_max_spacing_mm", 0),
     }
+    if project_metadata:
+        project.update(
+            {
+                "project_name": str(project_metadata.get("name", "")).strip(),
+                "project_number": str(project_metadata.get("number", "")).strip(),
+                "designer": str(project_metadata.get("designer", "")).strip(),
+            }
+        )
     assumptions = [
         "Two-dimensional transverse portal-frame analysis.",
         "Member self-weight is applied in load case D.",
@@ -1449,6 +1458,9 @@ def write_html_report(data, output_path):
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     project_rows = [
+        ("Project", escape(str(data.project.get("project_name", "")))),
+        ("Project number", escape(str(data.project.get("project_number", "")))),
+        ("Designer", escape(str(data.project.get("designer", "")))),
         ("Building", f"{escape(str(data.project['building_type']))} - {escape(str(data.project['roof_type']))}"),
         ("Geometry", f"Span {_fmt(data.project['gable_width_mm'], 0)} mm; eaves {_fmt(data.project['eaves_height_mm'], 0)} mm; apex {_fmt(data.project['apex_height_mm'], 0)} mm"),
         ("Frame spacing", f"{_fmt(data.project['rafter_spacing_mm'], 0)} mm"),
