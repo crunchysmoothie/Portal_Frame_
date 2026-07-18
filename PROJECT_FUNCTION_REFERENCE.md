@@ -92,6 +92,7 @@ pythonProject/
 |-- user_input.py                     Geometry, load cases and JSON generation
 |-- crawl_beam_inputs.py              Crawl library and operating-mode inputs
 |-- crawl_beam_loading.py             Crawl/hoist actions and rafter placement
+|-- roof_layout.py                     Shared purlin and roof-bracing panel layout
 |-- wind_loads.py                     Wind pressure and zone calculations
 |-- generate_wind_loading.py          Converts zones into member line loads
 |-- frame_model.py                    Typed in-memory input model and JSON loader

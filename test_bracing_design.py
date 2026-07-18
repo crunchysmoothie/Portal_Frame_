@@ -96,7 +96,7 @@ class BracingDesignTests(unittest.TestCase):
         panels = result["roof_layout"]["brace_panels"]
         self.assertEqual(model["x_brace_count"], 2 * len(panels))
         points = result["roof_layout"]["roof_points"]
-        interval = int(self.frame.frame_data[0].get("roof_bracing_purlin_interval", 1))
+        interval = int(result["inputs"]["roof_bracing_purlin_interval"])
         for panel in panels:
             start = points[panel["start_index"]]
             end = points[panel["end_index"]]

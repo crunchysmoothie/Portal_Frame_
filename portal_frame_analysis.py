@@ -100,6 +100,11 @@ def build_model(r_mem, c_mem, data: PortalFrame):
             # They are analytically irrelevant, so skip them.
             if abs(load.w1) < 1e-12 and abs(load.w2) < 1e-12:
                 continue
+            if (
+                load.x1 is not None and load.x2 is not None
+                and load.x2 - load.x1 <= 1e-6
+            ):
+                continue
             frame.add_member_dist_load(
                 m.name,
                 load.direction,
@@ -604,9 +609,15 @@ def render_model(frame, combo):
                 case = load[5] if isinstance(load, tuple) and len(load) > 5 else None
                 w1 = load[1] if isinstance(load, tuple) and len(load) > 2 else 0.0
                 w2 = load[2] if isinstance(load, tuple) and len(load) > 2 else 0.0
+                x1 = load[3] if isinstance(load, tuple) and len(load) > 4 else None
+                x2 = load[4] if isinstance(load, tuple) and len(load) > 4 else None
 
                 # Skip zero-magnitude loads.
                 if abs(w1) < 1e-12 and abs(w2) < 1e-12:
+                    continue
+
+                # Avoid PyNite Visualization dividing by a zero glyph length.
+                if x1 is not None and x2 is not None and x2 - x1 <= 1e-6:
                     continue
 
                 # For combo rendering, skip loads from cases with zero factor.

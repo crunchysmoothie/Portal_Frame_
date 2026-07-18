@@ -37,6 +37,7 @@ class DraughtsmanMarkupTests(unittest.TestCase):
                 "rafter_section": "305x165x40", "column_section": "305x165x40",
                 "column_bracing_type": "X", "purlin_section": "125x50x20x2.5",
                 "purlin_max_spacing_mm": 1500, "roof_bracing_purlin_interval": 3,
+                "rafter_bracing_spacing": 3,
                 "girt_section": "125x50x20x2.5", "girt_max_spacing_mm": 1800,
             },
             "bracing_design": {
@@ -51,7 +52,7 @@ class DraughtsmanMarkupTests(unittest.TestCase):
         output = build_markup_html(data)
         self.assertEqual(output.count('<section class="sheet">'), 4)
         self.assertIn("HAUNCH L=1,200 mm", output)
-        self.assertIn("EVERY 3 PURLIN SPACE(S)", output)
+        self.assertIn("IN 3 PANEL(S) PER SLOPE (3/2/2 PURLIN SPACES)", output)
         self.assertIn("MAX 1,800 mm", output)
 
     def test_purlin_rows_do_not_split_the_portal_analysis_model(self):

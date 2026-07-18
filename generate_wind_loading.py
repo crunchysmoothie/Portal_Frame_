@@ -28,6 +28,8 @@ def _zone_dict(zones: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
 
 def _add_load(loads: List[Dict[str, Any]], member: str, intensity: float, case: str,
               start: float = None, end: float = None) -> None:
+    if start is not None and end is not None and end - start <= 1e-6:
+        return
     load = {
         "member": member,
         "direction": "Fy",
@@ -53,21 +55,22 @@ def _distribute(length: float, members: List[Dict[str, Any]], intensity: float,
 
     while remaining > 0 and idx < len(members):
         m = members[idx]
-        m_len = m["length"] * 1000 - pos  # convert member length to mm
+        full_length = m["length"] * 1000  # convert member length to mm
+        m_len = full_length - pos
         seg = min(m_len, remaining)
 
-        if seg <= 0:
+        if seg <= 1e-6:
             idx += 1
             pos = 0.0
             continue
 
         start = pos if pos > 0 else None
-        end = (pos + seg) if seg < m["length"] * 1000 or start is not None else None
+        end = (pos + seg) if seg < full_length - 1e-6 or start is not None else None
         _add_load(loads, m["name"], intensity, case, start, end)
 
         remaining -= seg
         pos += seg
-        if pos >= m["length"] * 1000:
+        if pos >= full_length - 1e-6:
             idx += 1
             pos = 0.0
 

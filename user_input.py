@@ -10,6 +10,7 @@ from crawl_beam_loading import (
     generate_crawl_member_point_loads,
 )
 from crawl_beam_inputs import ALL_AT_ONCE, ONE_AT_A_TIME, resolve_crawl_selection
+from roof_layout import calculate_roof_bracing_layout
 
 # Function to generate nodes based on the portal frame structure with static values
 def generate_nodes(b_data):
@@ -468,6 +469,21 @@ def update_json_file(json_filename, b_data, wind_data):
     json_filename = Path(json_filename)
 
     b_data = dict(b_data)
+
+    if float(b_data.get("purlin_max_spacing_mm", 0) or 0) > 0:
+        roof_bracing = calculate_roof_bracing_layout(
+            b_data["gable_width"],
+            b_data["eaves_height"],
+            b_data["apex_height"],
+            b_data["building_roof"],
+            b_data["purlin_max_spacing_mm"],
+            b_data["rafter_bracing_spacing"],
+        )
+        b_data["roof_bracing_purlin_interval"] = roof_bracing["maximum_purlin_interval"]
+        b_data["roof_bracing_purlin_intervals"] = roof_bracing[
+            "purlin_spaces_per_brace_panel"
+        ]
+        b_data["actual_purlin_spacing_mm"] = roof_bracing["actual_purlin_spacing_mm"]
 
     # --- generate fresh data -------------------------------------------------
     new_nodes           = generate_nodes(b_data)

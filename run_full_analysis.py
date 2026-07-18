@@ -15,24 +15,24 @@ def main(render: bool = True) -> None:
     roof_accessibility = "Inaccessible"  # "Accessible" or "Inaccessible"
     load_combination_standard = "SANS 10160-1:2019"  # "SANS 10160-1:2019" or "Pre-2019"
     blocking_factor = 0.0             # Canopy only: 0.0 (open) to 1.0 (fully blocked)
-    eaves_height = 10 * 1000
-    apex_height = 14.5 * 1000
-    gable_width = 24 * 1000
+    eaves_height = 6.5 * 1000
+    apex_height = 7.5 * 1000
+    gable_width = 16 * 1000
     rafter_spacing = 6 * 1000
-    building_length = 144 * 1000
-    col_bracing_spacing = 3
+    building_length = 48 * 1000
+    col_bracing_spacing = 1
     column_bracing_type = "X"       # "X" uses angles; "K" or "A" uses CHS
     # CFLC format: depth x flange x lip x thickness, e.g. 125x50x20x2.5.
     purlin_section = "175x65x20x2.5"
-    purlin_max_spacing_mm = 1800
-    roof_bracing_purlin_interval = 2  # 1=every purlin, 2=every second, etc.
+    purlin_max_spacing_mm = 1600
     girt_section = "175x65x20x2.5"
-    girt_max_spacing_mm = 1800
-    # Recalculated from purlin_max_spacing_mm by update_json_file().
-    rafter_bracing_spacing = 6
+    girt_max_spacing_mm = 1600
+    # Desired roof-bracing panels per slope. The program calculates the actual
+    # purlin spacing and distributes the purlin spaces between these panels.
+    rafter_bracing_spacing = 2
     # Gable-column count for one gable end. Use 1, 3, 5, ...: the apex column
     # is always present and each increase adds one symmetric column per side.
-    gable_column_count = 5
+    gable_column_count = 3
     # Number of equal unbraced intervals over each pinned gable-column height.
     gable_column_brace_intervals = 2
     steel_grade = "Steel_S355"
@@ -73,7 +73,6 @@ def main(render: bool = True) -> None:
         "rafter_bracing_spacing": rafter_bracing_spacing,
         "purlin_section": purlin_section,
         "purlin_max_spacing_mm": purlin_max_spacing_mm,
-        "roof_bracing_purlin_interval": roof_bracing_purlin_interval,
         "girt_section": girt_section,
         "girt_max_spacing_mm": girt_max_spacing_mm,
         "gable_column_count": gable_column_count,

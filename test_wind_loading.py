@@ -5,9 +5,29 @@ import tempfile
 import unittest
 
 import user_input
+from generate_wind_loading import _distribute
 
 
 class WindLoadingGenerationTests(unittest.TestCase):
+    def test_distribution_skips_rounding_residue_at_member_end(self):
+        members = [
+            {"name": "M1", "length": 4.031},
+            {"name": "M2", "length": 4.031},
+        ]
+        loads = []
+        index, position = _distribute(
+            2.0, members, 1.0, "W", loads, idx=0, pos=4030.9999999999995
+        )
+        self.assertEqual(index, 1)
+        self.assertEqual(position, 2.0)
+        self.assertEqual(len(loads), 1)
+        self.assertEqual(loads[0]["member"], "M2")
+        self.assertFalse(
+            loads[0].get("x1") is not None
+            and loads[0].get("x2") is not None
+            and loads[0]["x1"] == loads[0]["x2"]
+        )
+
     def _generate(self, building_type, roof_type, building_updates=None):
         eaves = 6_000.0
         apex = 6_800.0
