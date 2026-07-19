@@ -211,6 +211,38 @@ def main(page: ft.Page) -> None:
         ROOF_TYPES,
         helper="Duo-pitched or mono-pitched portal.",
     )
+    building_type.helper_text = None
+    building_roof.helper_text = None
+    building_type.col = 12
+    building_roof.col = 12
+    building_type_field = ft.Container(
+        col=6,
+        content=ft.Column(
+            spacing=2,
+            controls=[
+                building_type,
+                ft.Text(
+                    "Normal enclosed building or open canopy.",
+                    size=11,
+                    color=TEXT_MUTED,
+                ),
+            ],
+        ),
+    )
+    building_roof_field = ft.Container(
+        col=6,
+        content=ft.Column(
+            spacing=2,
+            controls=[
+                building_roof,
+                ft.Text(
+                    "Duo-pitched or mono-pitched portal.",
+                    size=11,
+                    color=TEXT_MUTED,
+                ),
+            ],
+        ),
+    )
 
     pitch_text = ft.Text("", size=22, weight=ft.FontWeight.BOLD, color=ACCENT_DARK)
     frame_summary = ft.Text("", size=12, color=TEXT_MUTED)
@@ -590,21 +622,30 @@ def main(page: ft.Page) -> None:
             return "utilisation", None
         return "loads", None
 
+    def selected_combination_kind() -> str | None:
+        view, _ = selected_analysis_view()
+        if view == "deflection":
+            return "SLS"
+        if view == "utilisation":
+            return "ULS"
+        return None
+
     def refresh_analysis_controls(_=None) -> None:
         view, _ = selected_analysis_view()
         if view == "deflection":
-            component_options = (("Dx", "Dx"), ("Dy", "Dy"))
-            allowed_kind = "SLS"
+            component_options = (
+                ("Dx", "Dx"),
+                ("Dy", "Dy"),
+                ("Total Deflection", "Total deflection"),
+            )
         elif view == "forces":
             component_options = (
                 ("Axial force N", "Axial force N"),
                 ("Shear force Vy", "Shear force Vy"),
                 ("Bending moment Mz", "Bending moment Mz"),
             )
-            allowed_kind = None
         else:
             component_options = ()
-            allowed_kind = "ULS" if view == "utilisation" else None
 
         analysis_component_dropdown.visible = bool(component_options)
         analysis_component_dropdown.disabled = not component_options
@@ -619,7 +660,7 @@ def main(page: ft.Page) -> None:
         if component_keys and analysis_component_dropdown.value not in component_keys:
             analysis_component_dropdown.value = component_keys[-1]
 
-        names = combination_names(current_visualisation, allowed_kind)
+        names = combination_names(current_visualisation, selected_combination_kind())
         load_case_dropdown.options = [
             ft.DropdownOption(
                 key=name,
@@ -642,6 +683,14 @@ def main(page: ft.Page) -> None:
         name = str(load_case_dropdown.value or "")
         if not current_visualisation or not name:
             return
+        valid_names = combination_names(
+            current_visualisation, selected_combination_kind()
+        )
+        if name not in valid_names:
+            if not valid_names:
+                return
+            name = valid_names[0]
+            load_case_dropdown.value = name
         view, component = selected_analysis_view()
         load_case_image.src = load_case_svg(
             current_visualisation,
@@ -678,16 +727,30 @@ def main(page: ft.Page) -> None:
                 "entries. Magnitudes, axes and source cases are labelled directly at the arrows."
             )
         elif view == "deflection":
-            component_key = f"{component}_mm"
-            node_maximum = max(
-                (
-                    abs(float(node.get(component_key, 0.0)))
-                    for node in selected.get("nodes", [])
-                ),
-                default=0.0,
-            )
+            if component == "total deflection":
+                node_maximum = max(
+                    (
+                        math.hypot(
+                            float(node.get("dx_mm", 0.0)),
+                            float(node.get("dy_mm", 0.0)),
+                        )
+                        for node in selected.get("nodes", [])
+                    ),
+                    default=0.0,
+                )
+                component_label = "total"
+            else:
+                component_key = f"{component}_mm"
+                node_maximum = max(
+                    (
+                        abs(float(node.get(component_key, 0.0)))
+                        for node in selected.get("nodes", [])
+                    ),
+                    default=0.0,
+                )
+                component_label = str(component).upper()
             load_case_description.value = (
-                f"SLS • {str(component).upper()} nodal and member deflection • "
+                f"SLS • {component_label} nodal and member deflection • "
                 f"maximum nodal magnitude {node_maximum:.2f} mm."
             )
         elif view == "forces":
@@ -706,7 +769,9 @@ def main(page: ft.Page) -> None:
             page.show_dialog(expanded_load_case_dialog)
 
     def step_load_case(offset: int) -> None:
-        names = list(combination_names(current_visualisation))
+        names = list(
+            combination_names(current_visualisation, selected_combination_kind())
+        )
         if not names:
             return
         try:
@@ -1361,7 +1426,9 @@ def main(page: ft.Page) -> None:
                 card(
                     "Building configuration",
                     "These are finite model choices, so they are controlled selections.",
-                    ft.ResponsiveRow(controls=[building_type, building_roof]),
+                    ft.ResponsiveRow(
+                        controls=[building_type_field, building_roof_field]
+                    ),
                 ),
                 footer_buttons(None, 1),
             ],
@@ -1525,7 +1592,7 @@ def main(page: ft.Page) -> None:
                 ),
                 card(
                     "Structural design summary",
-                    "Populated from the completed analysis snapshot; serviceability results remain calculated even though deformation rendering is disabled.",
+                    "Populated from the completed analysis snapshot; serviceability results are available in the SLS analysis views.",
                     ft.Column(
                         spacing=12,
                         controls=[

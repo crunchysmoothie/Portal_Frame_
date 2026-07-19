@@ -220,8 +220,10 @@ def load_case_svg(
         raise ValueError("Deflection diagrams are available for SLS combinations only.")
     if view == "utilisation" and combination_kind != "ULS":
         raise ValueError("Utilisation diagrams are available for ULS combinations only.")
-    if view == "deflection" and component not in {"dx", "dy"}:
-        raise ValueError("Deflection component must be 'dx' or 'dy'.")
+    if view == "deflection" and component not in {"dx", "dy", "total deflection"}:
+        raise ValueError(
+            "Deflection component must be 'dx', 'dy' or 'total deflection'."
+        )
     if view == "forces":
         _force_definition(component or "")
 
@@ -550,12 +552,21 @@ def _render_deflection(
     extent_x: float,
     extent_y: float,
 ) -> None:
-    displacement_key = f"{component}_mm"
+    is_total = component == "total deflection"
+
+    def displacement_value(point: dict[str, Any]) -> float:
+        if is_total:
+            return math.hypot(
+                float(point.get("dx_mm", 0.0)),
+                float(point.get("dy_mm", 0.0)),
+            )
+        return abs(float(point.get(f"{component}_mm", 0.0)))
+
     values = [
-        abs(float(point.get(displacement_key, 0.0)))
+        displacement_value(point)
         for member in members
         for point in member.get("displacement_points", [])
-    ] + [abs(float(node.get(displacement_key, 0.0))) for node in nodes]
+    ] + [displacement_value(node) for node in nodes]
     maximum = max(values, default=0.0)
     model_size = max(extent_x, extent_y)
     deformation_scale = (
@@ -567,7 +578,10 @@ def _render_deflection(
         for point in member["displacement_points"]:
             xx = float(point["x_mm"])
             yy = float(point["y_mm"])
-            if component == "dx":
+            if is_total:
+                xx += deformation_scale * float(point.get("dx_mm", 0.0))
+                yy += deformation_scale * float(point.get("dy_mm", 0.0))
+            elif component == "dx":
                 xx += deformation_scale * float(point["dx_mm"])
             else:
                 yy += deformation_scale * float(point["dy_mm"])
@@ -578,14 +592,27 @@ def _render_deflection(
         )
 
     for node in nodes:
-        value = float(node.get(displacement_key, 0.0))
-        xx = float(node["x_mm"]) + (deformation_scale * value if component == "dx" else 0)
-        yy = float(node["y_mm"]) + (deformation_scale * value if component == "dy" else 0)
+        dx = float(node.get("dx_mm", 0.0))
+        dy = float(node.get("dy_mm", 0.0))
+        if is_total:
+            value = math.hypot(dx, dy)
+            xx = float(node["x_mm"]) + deformation_scale * dx
+            yy = float(node["y_mm"]) + deformation_scale * dy
+            node_label = f'{node["name"]} Total {value:.2f} mm'
+        else:
+            value = float(node.get(f"{component}_mm", 0.0))
+            xx = float(node["x_mm"]) + (
+                deformation_scale * value if component == "dx" else 0
+            )
+            yy = float(node["y_mm"]) + (
+                deformation_scale * value if component == "dy" else 0
+            )
+            node_label = f'{node["name"]} {component.upper()} {value:+.2f} mm'
         px, py = sx(xx), sy(yy)
         body.append(f'<circle cx="{px:.2f}" cy="{py:.2f}" r="3.5" fill="{DEFORMED}"/>')
         body.append(
             _halo_text(
-                f'{node["name"]} {component.upper()} {value:+.2f} mm',
+                node_label,
                 px,
                 py - 10,
                 colour=DEFORMED,
@@ -593,10 +620,16 @@ def _render_deflection(
             )
         )
 
+    component_label = "Total" if is_total else component.upper()
+    legend_label = (
+        "magnified complete displacement vector; node labels show exact resultant values"
+        if is_total
+        else "magnified selected component; node labels show exact unscaled values"
+    )
     body.extend(
         [
-            f'<text x="28" y="492" fill="{INK}" font-family="Arial,sans-serif" font-size="12" font-weight="700">{component.upper()} deflection &#183; maximum absolute value {maximum:.2f} mm &#183; displayed &#215;{deformation_scale:.1f}</text>',
-            f'<line x1="28" y1="520" x2="68" y2="520" stroke="{DEFORMED}" stroke-width="3"/><text x="76" y="524" fill="{MUTED}" font-family="Arial,sans-serif" font-size="11">magnified selected component; node labels show exact unscaled values</text>',
+            f'<text x="28" y="492" fill="{INK}" font-family="Arial,sans-serif" font-size="12" font-weight="700">{component_label} deflection &#183; maximum absolute value {maximum:.2f} mm &#183; displayed &#215;{deformation_scale:.1f}</text>',
+            f'<line x1="28" y1="520" x2="68" y2="520" stroke="{DEFORMED}" stroke-width="3"/><text x="76" y="524" fill="{MUTED}" font-family="Arial,sans-serif" font-size="11">{legend_label}</text>',
             f'<text x="28" y="545" fill="{MUTED}" font-family="Arial,sans-serif" font-size="10">Deflection is intentionally limited to analysed SLS combinations.</text>',
         ]
     )
