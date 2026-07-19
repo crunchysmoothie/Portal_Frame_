@@ -20,6 +20,7 @@ import re
 from typing import Any, Iterable, Mapping, Sequence
 
 import member_database as mdb
+from analysis_visualisation import build_analysis_visualisation
 from analysis_snapshot import load_analysis_snapshot, validate_snapshot_input
 from strength_checks import (
     element_property_details,
@@ -101,6 +102,7 @@ class CalculationSheetData:
     reactions: list[ReactionResult] = field(default_factory=list)
     bracing_design: Mapping[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    visualisation: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -115,6 +117,7 @@ class CalculationSheetData:
             "reactions": [item.to_dict() for item in self.reactions],
             "bracing_design": dict(self.bracing_design),
             "warnings": list(self.warnings),
+            "visualisation": dict(self.visualisation),
         }
 
 
@@ -144,6 +147,7 @@ def calculation_sheet_from_dict(raw: Mapping[str, Any]) -> CalculationSheetData:
         reactions=reactions,
         bracing_design=dict(raw.get("bracing_design", {})),
         warnings=list(raw.get("warnings", [])),
+        visualisation=dict(raw.get("visualisation", {})),
     )
 
 
@@ -929,6 +933,7 @@ def build_calculation_sheet_data_from_frame(
         f"Steel mass estimate excludes: {item}"
         for item in frame_summary.get("steel_mass_breakdown", {}).get("exclusions", [])
     )
+    visualisation = build_analysis_visualisation(frame, data, all_members)
     return CalculationSheetData(
         title="Portal Frame Structural Calculation Sheet",
         scope=ReportScope.FULL,
@@ -943,6 +948,7 @@ def build_calculation_sheet_data_from_frame(
         warnings=[
             "Tension-member net-section fracture and connection resistance are outside the current input model.",
         ],
+        visualisation=visualisation,
     )
 
 

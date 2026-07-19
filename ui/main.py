@@ -11,7 +11,9 @@ import flet as ft
 import httpx
 
 from preview_geometry import build_preview_geometry
+from ui.analysis_render import combination_names, load_case_svg
 from ui.input_model import (
+    AUTOMATIC_SECTION,
     BASE_SUPPORTS,
     BUILDING_TYPES,
     COLUMN_BRACING_TYPES,
@@ -19,6 +21,8 @@ from ui.input_model import (
     DEFAULT_VALUES,
     LIPPED_CHANNEL_SECTIONS,
     LOAD_COMBINATION_STANDARDS,
+    PORTAL_SECTION_FAMILIES,
+    PORTAL_SECTIONS_BY_FAMILY,
     ROOF_ACCESSIBILITY,
     ROOF_TYPES,
     STEEL_GRADES,
@@ -288,6 +292,52 @@ def main(page: ft.Page) -> None:
     openings_note = ft.Text("", size=12, color=TEXT_MUTED)
 
     # Frame, bracing and secondary steel controls.
+    rafter_section_type = dropdown(
+        "rafter_section_type",
+        "Rafter section family",
+        PORTAL_SECTION_FAMILIES,
+        helper="Select the database family used for automatic or manual sizing.",
+    )
+    rafter_section = dropdown(
+        "rafter_section",
+        "Rafter section",
+        (AUTOMATIC_SECTION,) + PORTAL_SECTIONS_BY_FAMILY["I-Sections"],
+        helper="Automatic selects the lightest passing section; otherwise the chosen size is checked.",
+        searchable=True,
+    )
+    column_section_type = dropdown(
+        "column_section_type",
+        "Column section family",
+        PORTAL_SECTION_FAMILIES,
+        helper="Select the database family used for automatic or manual sizing.",
+    )
+    column_section = dropdown(
+        "column_section",
+        "Column section",
+        (AUTOMATIC_SECTION,) + PORTAL_SECTIONS_BY_FAMILY["I-Sections"],
+        helper="Automatic selects the lightest passing section; otherwise the chosen size is checked.",
+        searchable=True,
+    )
+
+    def sync_portal_section_options() -> None:
+        for family_control, section_control in (
+            (rafter_section_type, rafter_section),
+            (column_section_type, column_section),
+        ):
+            family = str(family_control.value)
+            values = (AUTOMATIC_SECTION,) + PORTAL_SECTIONS_BY_FAMILY.get(
+                family, ()
+            )
+            section_control.options = [
+                ft.DropdownOption(
+                    key=value,
+                    content=ft.Text(value, color=TEXT_PRIMARY),
+                )
+                for value in values
+            ]
+            if section_control.value not in values:
+                section_control.value = AUTOMATIC_SECTION
+
     base_support = dropdown(
         "base_support_condition", "Portal base restraint", BASE_SUPPORTS
     )
@@ -434,6 +484,119 @@ def main(page: ft.Page) -> None:
                 color=TEXT_MUTED,
             )
         ],
+    )
+    current_visualisation: dict[str, Any] = {}
+    load_case_dropdown = ft.Dropdown(
+        label="Load combination",
+        options=[],
+        disabled=True,
+        expand=True,
+        color=TEXT_PRIMARY,
+        border_color="#93AAA7",
+        focused_border_color=ACCENT,
+        menu_style=ft.MenuStyle(bgcolor="#FFFFFF", shadow_color="#607472"),
+    )
+    load_case_image = ft.Image(
+        src="",
+        height=420,
+        fit=ft.BoxFit.CONTAIN,
+        visible=False,
+        semantics_label="Portal frame load, utilisation and deflection results",
+    )
+    expanded_load_case_image = ft.Image(
+        src="",
+        width=900,
+        height=520,
+        fit=ft.BoxFit.CONTAIN,
+        semantics_label="Large portal frame load, utilisation and deflection results",
+    )
+    expanded_load_case_title = ft.Text("Load combination", size=18, weight=ft.FontWeight.BOLD)
+    expanded_load_case_dialog = ft.AlertDialog(
+        modal=True,
+        title=expanded_load_case_title,
+        content=ft.Container(
+            width=900,
+            height=520,
+            content=expanded_load_case_image,
+        ),
+        actions=[
+            ft.TextButton("Close", on_click=lambda _: page.pop_dialog()),
+        ],
+    )
+    load_case_description = ft.Text(
+        "Run the analysis to inspect each ULS and SLS combination.",
+        size=11,
+        color=TEXT_MUTED,
+    )
+
+    def update_load_case_view(_=None) -> None:
+        name = str(load_case_dropdown.value or "")
+        if not current_visualisation or not name:
+            return
+        load_case_image.src = load_case_svg(current_visualisation, name)
+        expanded_load_case_image.src = load_case_image.src
+        expanded_load_case_title.value = name
+        load_case_image.visible = True
+        selected = next(
+            item
+            for item in current_visualisation["combinations"]
+            if item["name"] == name
+        )
+        utilisations = [
+            float(member["utilisation"])
+            for member in selected.get("members", [])
+            if member.get("utilisation") is not None
+        ]
+        active_loads = sum(
+            len(member.get("distributed_loads", []))
+            + len(member.get("point_loads", []))
+            for member in selected.get("members", [])
+        ) + len(selected.get("nodal_loads", []))
+        utilisation_text = (
+            f"maximum member utilisation {max(utilisations):.3f}"
+            if utilisations
+            else "strength utilisation not applicable to SLS"
+        )
+        load_case_description.value = (
+            f"{selected.get('kind', '')} • {active_loads} active factored load "
+            f"segment(s) • {utilisation_text} • maximum displacement "
+            f"{float(selected.get('max_displacement_mm', 0)):.2f} mm."
+        )
+        page.update()
+
+    def show_large_load_case(_=None) -> None:
+        if expanded_load_case_image.src:
+            page.show_dialog(expanded_load_case_dialog)
+
+    def step_load_case(offset: int) -> None:
+        names = list(combination_names(current_visualisation))
+        if not names:
+            return
+        try:
+            index = names.index(str(load_case_dropdown.value))
+        except ValueError:
+            index = 0
+        load_case_dropdown.value = names[(index + offset) % len(names)]
+        update_load_case_view()
+
+    load_case_dropdown.on_select = update_load_case_view
+    previous_load_case_button = ft.IconButton(
+        icon=ft.Icons.CHEVRON_LEFT,
+        tooltip="Previous load combination",
+        disabled=True,
+        on_click=lambda _: step_load_case(-1),
+    )
+    next_load_case_button = ft.IconButton(
+        icon=ft.Icons.CHEVRON_RIGHT,
+        tooltip="Next load combination",
+        disabled=True,
+        on_click=lambda _: step_load_case(1),
+    )
+    expand_load_case_button = ft.OutlinedButton(
+        "Open large view",
+        icon=ft.Icons.OPEN_IN_FULL,
+        disabled=True,
+        on_click=show_large_load_case,
     )
     download_report_button = ft.OutlinedButton(
         "Download design report",
@@ -658,6 +821,12 @@ def main(page: ft.Page) -> None:
                 ft.Icons.AIR,
             ),
             compact_summary_line(
+                "Portal member selection",
+                f"Rafter {building['rafter_section']} | "
+                f"Column {building['column_section']}",
+                ft.Icons.VIEW_WEEK_OUTLINED,
+            ),
+            compact_summary_line(
                 "Purlins",
                 f"{building['purlin_section']} | {counts['purlin_lines']} lines | "
                 f"{layout['actual_purlin_spacing_mm']:.0f} mm actual",
@@ -690,6 +859,13 @@ def main(page: ft.Page) -> None:
                 )
                 download_report_button.disabled = True
                 download_markup_button.disabled = True
+                load_case_dropdown.disabled = True
+                previous_load_case_button.disabled = True
+                next_load_case_button.disabled = True
+                expand_load_case_button.disabled = True
+                load_case_description.value = (
+                    "Inputs changed after analysis; run again before using these results."
+                )
         if update_page:
             page.update()
 
@@ -732,6 +908,7 @@ def main(page: ft.Page) -> None:
         page.update()
 
     def show_analysis_results(result: dict[str, Any]) -> None:
+        nonlocal current_visualisation
         summary = result["design_summary"]
         sections = summary["portal_sections"]
         strength = summary["governing_strength"]
@@ -746,6 +923,9 @@ def main(page: ft.Page) -> None:
             f"{item['member_type']}: {item['section']} ({float(item['utilisation']):.3f})"
             for item in summary.get("bracing_members", [])
         ) or "No gable or longitudinal bracing design required."
+        current_visualisation = dict(
+            summary.get("load_case_visualisation", {})
+        )
 
         analysis_result_summary.controls = [
             analysis_summary_line(
@@ -797,6 +977,27 @@ def main(page: ft.Page) -> None:
             download_markup_button.url = f"{API_URL}{markup['download_url']}"
             download_markup_button.disabled = False
 
+        names = combination_names(current_visualisation)
+        load_case_dropdown.options = [
+            ft.DropdownOption(
+                key=name,
+                content=ft.Text(name, color=TEXT_PRIMARY),
+            )
+            for name in names
+        ]
+        load_case_dropdown.disabled = not names
+        previous_load_case_button.disabled = len(names) < 2
+        next_load_case_button.disabled = len(names) < 2
+        expand_load_case_button.disabled = not names
+        if names:
+            governing = str(strength.get("combination", ""))
+            load_case_dropdown.value = governing if governing in names else names[0]
+            update_load_case_view()
+        else:
+            load_case_description.value = (
+                "This analysis snapshot does not contain renderer data."
+            )
+
         analysis_progress.visible = False
         analysis_status_icon.visible = True
         analysis_status_icon.name = ft.Icons.CHECK_CIRCLE
@@ -819,6 +1020,10 @@ def main(page: ft.Page) -> None:
         run_analysis_button.content = "Analysis running..."
         download_report_button.disabled = True
         download_markup_button.disabled = True
+        load_case_dropdown.disabled = True
+        previous_load_case_button.disabled = True
+        next_load_case_button.disabled = True
+        expand_load_case_button.disabled = True
         analysis_status_card.bgcolor = WARNING_BG
         analysis_status_icon.visible = False
         analysis_progress.visible = True
@@ -912,6 +1117,11 @@ def main(page: ft.Page) -> None:
                 ft.Icons.WIND_POWER,
             ),
             summary_line(
+                "Portal sections",
+                f"Rafter {building['rafter_section']} • Column {building['column_section']}",
+                ft.Icons.VIEW_WEEK_OUTLINED,
+            ),
+            summary_line(
                 "Bracing",
                 f"{building['column_bracing_type']}-bracing • {building['gable_column_count']} gable columns/end",
                 ft.Icons.CALL_SPLIT,
@@ -922,6 +1132,7 @@ def main(page: ft.Page) -> None:
         return True
 
     def update_conditionals(_=None) -> None:
+        sync_portal_section_options()
         is_canopy = building_type.value == "Canopy"
         is_final_normal = not is_canopy and wind_design_mode.value == "Final design"
         blocking.disabled = not is_canopy
@@ -956,6 +1167,8 @@ def main(page: ft.Page) -> None:
         building_roof,
         wind_design_mode,
         base_support,
+        rafter_section_type,
+        column_section_type,
     }
     for live_control in controls.values():
         if isinstance(live_control, ft.TextField):
@@ -1088,6 +1301,18 @@ def main(page: ft.Page) -> None:
                     "Configure restraints, bracing topology, gables, purlins, girts and crawl loading.",
                 ),
                 card(
+                    "Portal member sections",
+                    "Choose automatic mass-ordered sizing or force a database section for checking.",
+                    ft.ResponsiveRow(
+                        controls=[
+                            rafter_section_type,
+                            rafter_section,
+                            column_section_type,
+                            column_section,
+                        ]
+                    ),
+                ),
+                card(
                     "Portal support and bracing",
                     "Integer fields represent counts of modelled intervals or panels.",
                     ft.ResponsiveRow(
@@ -1164,6 +1389,39 @@ def main(page: ft.Page) -> None:
                             ),
                             ft.Text(
                                 "Generated outputs require review by the responsible competent engineer.",
+                                size=10,
+                                color=TEXT_MUTED,
+                            ),
+                        ],
+                    ),
+                ),
+                card(
+                    "Load combination explorer",
+                    "Step through factored loading, member utilisation and magnified FE deflection. ULS and SLS are identified explicitly.",
+                    ft.Column(
+                        spacing=10,
+                        controls=[
+                            ft.Row(
+                                controls=[
+                                    previous_load_case_button,
+                                    load_case_dropdown,
+                                    next_load_case_button,
+                                ]
+                            ),
+                            load_case_description,
+                            ft.Container(
+                                bgcolor="#F8FBFA",
+                                border_radius=12,
+                                border=ft.Border.all(1, "#D8E5E3"),
+                                padding=8,
+                                content=load_case_image,
+                            ),
+                            ft.Row(
+                                alignment=ft.MainAxisAlignment.END,
+                                controls=[expand_load_case_button],
+                            ),
+                            ft.Text(
+                                "The dashed blue curve is magnified for visibility. Load labels are factored for the selected combination; SLS combinations do not carry a strength utilisation.",
                                 size=10,
                                 color=TEXT_MUTED,
                             ),
