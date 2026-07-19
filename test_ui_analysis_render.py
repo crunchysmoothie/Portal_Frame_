@@ -151,6 +151,21 @@ class UiAnalysisRenderTests(unittest.TestCase):
                 component="dx",
             )
 
+    def test_total_deflection_uses_complete_vector_and_resultant_labels(self):
+        svg = decoded_svg(
+            load_case_svg(
+                self.visualisation,
+                "1.0 D + 1.0 L",
+                view="deflection",
+                component="total deflection",
+            )
+        )
+        self.assertIn("N2 Total 2.24 mm", svg)
+        self.assertIn("Total deflection", svg)
+        self.assertIn("complete displacement vector", svg)
+        self.assertNotIn("N2 DX", svg)
+        self.assertNotIn("N2 DY", svg)
+
     def test_internal_force_components_have_independent_diagrams(self):
         svg = decoded_svg(
             load_case_svg(
