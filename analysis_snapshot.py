@@ -21,6 +21,7 @@ ENGINE_SOURCE_FILES = (
     "bracing_design.py",
     "internal_pressure.py",
     "strength_checks.py",
+    "analysis_visualisation.py",
     "member_database.csv",
     "bracing_member_database.csv",
 )

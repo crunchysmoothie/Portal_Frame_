@@ -16,7 +16,6 @@ from design_calculations import (
     load_calculation_sheet_data,
     write_html_report,
     write_json_data,
-    write_pdf_from_json,
 )
 from draughtsman_markup import write_markup
 from preview_geometry import build_preview_geometry
@@ -137,6 +136,7 @@ def _design_summary(calculation_data, analysis_id: str) -> dict[str, Any]:
         },
         "steel_mass_breakdown": frame.get("steel_mass_breakdown", {}),
         "bracing_members": brace_members,
+        "load_case_visualisation": dict(calculation_data.visualisation),
         "warnings": list(calculation_data.warnings),
     }
 
@@ -174,16 +174,12 @@ def _run_job(analysis_id: str, payload: dict[str, Any]) -> None:
         report_json = write_json_data(
             calculation_data, report_dir / "portal_frame_design_report.json"
         )
-        report_pdf = write_pdf_from_json(
-            report_json, report_dir / "portal_frame_design_report.pdf"
-        )
         report_source = json.loads(report_json.read_text(encoding="utf-8"))
         markup_html, markup_pdf = write_markup(
             report_source, markup_dir, create_pdf=True
         )
 
         artifact_paths = {
-            "design-report-pdf": str(report_pdf),
             "design-report-html": str(report_html),
             "design-report-json": str(report_json),
             "markup-html": str(markup_html),
@@ -195,7 +191,7 @@ def _run_job(analysis_id: str, payload: dict[str, Any]) -> None:
             {
                 "status": "complete",
                 "completed": _now(),
-                "message": "Analysis, design report and markup are complete.",
+                "message": "Analysis, HTML design report and markup are complete.",
                 "snapshot_path": str(written_snapshot),
                 "design_summary": _design_summary(calculation_data, analysis_id),
                 "artifact_paths": artifact_paths,
