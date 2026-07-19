@@ -39,3 +39,9 @@ Analysis jobs use isolated folders under `output/analysis/jobs`. API analysis
 keeps the engineering deflection calculations and results but disables the
 legacy PyNite deformation window. Generated outputs remain subject to review by
 the responsible competent engineer.
+
+Completed results include a renderer-neutral `load_case_visualisation` object.
+It contains all ULS and SLS combinations, factored member loads, member
+utilisations, model geometry, local member axes and sampled global displacement
+points. The API performs these calculations; clients should render the stored
+values rather than reproduce engineering formulae.

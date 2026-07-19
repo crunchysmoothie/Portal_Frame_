@@ -137,6 +137,7 @@ def _design_summary(calculation_data, analysis_id: str) -> dict[str, Any]:
         },
         "steel_mass_breakdown": frame.get("steel_mass_breakdown", {}),
         "bracing_members": brace_members,
+        "load_case_visualisation": dict(calculation_data.visualisation),
         "warnings": list(calculation_data.warnings),
     }
 
