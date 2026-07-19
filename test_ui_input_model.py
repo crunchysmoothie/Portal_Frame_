@@ -1,6 +1,12 @@
 import unittest
 
-from ui.input_model import DEFAULT_VALUES, InputValidationError, build_analysis_payload
+from ui.input_model import (
+    AUTOMATIC_SECTION,
+    DEFAULT_VALUES,
+    InputValidationError,
+    PORTAL_SECTIONS_BY_FAMILY,
+    build_analysis_payload,
+)
 
 
 class UiInputModelTests(unittest.TestCase):
@@ -16,6 +22,7 @@ class UiInputModelTests(unittest.TestCase):
         self.assertEqual(building["gable_width"], 16000)
         self.assertEqual(building["gable_column_count"], 3)
         self.assertGreater(building["roof_pitch"], 0)
+        self.assertEqual(building["rafter_section"], AUTOMATIC_SECTION)
 
     def test_even_gable_column_count_is_rejected(self):
         with self.assertRaises(InputValidationError) as caught:
@@ -63,6 +70,31 @@ class UiInputModelTests(unittest.TestCase):
             "Need 4 purlin spaces/slope for 4 brace panels",
             caught.exception.errors["purlin_max_spacing_mm"],
         )
+
+    def test_user_selected_portal_sections_are_preserved(self):
+        rafter = PORTAL_SECTIONS_BY_FAMILY["I-Sections"][12]
+        column = PORTAL_SECTIONS_BY_FAMILY["H-Sections"][0]
+        payload = build_analysis_payload(
+            self.values(
+                rafter_section=rafter,
+                column_section_type="H-Sections",
+                column_section=column,
+            )
+        )
+
+        building = payload["building_data"]
+        self.assertEqual(building["rafter_section"], rafter)
+        self.assertEqual(building["column_section"], column)
+
+    def test_section_must_belong_to_selected_family(self):
+        with self.assertRaises(InputValidationError) as caught:
+            build_analysis_payload(
+                self.values(
+                    rafter_section_type="H-Sections",
+                    rafter_section=PORTAL_SECTIONS_BY_FAMILY["I-Sections"][0],
+                )
+            )
+        self.assertIn("rafter_section", caught.exception.errors)
 
 
 if __name__ == "__main__":

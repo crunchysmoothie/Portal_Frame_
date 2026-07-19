@@ -29,7 +29,7 @@ The available endpoints are:
 - `POST /api/analysis` - validate the request and queue a structural analysis job.
 - `GET /api/analysis/{analysis_id}/status` - retrieve queued, running, complete or failed status.
 - `GET /api/analysis/{analysis_id}/results` - retrieve the completed design summary and artifact links.
-- `GET /api/analysis/{analysis_id}/artifacts/{artifact}` - download a generated design report or markup drawing.
+- `GET /api/analysis/{analysis_id}/artifacts/{artifact}` - view the HTML design report inline or download a markup drawing.
 - `GET /api/analysis/latest` — latest completed analysis snapshot, if one exists.
 
 The preview geometry is suitable for SVG, Canvas or WebGL renderers. It does not
@@ -39,3 +39,14 @@ Analysis jobs use isolated folders under `output/analysis/jobs`. API analysis
 keeps the engineering deflection calculations and results but disables the
 legacy PyNite deformation window. Generated outputs remain subject to review by
 the responsible competent engineer.
+The API workflow generates the design report as printable HTML; it no longer
+creates the legacy equation-layout PDF. The browser print dialog can save the
+HTML report as a PDF when required.
+
+Completed results include a renderer-neutral `load_case_visualisation` object.
+It contains all ULS and SLS combinations, factored member loads, member
+utilisations, model geometry, local member axes, sampled global displacement
+points and sampled axial, shear and bending-moment results. Deflection views use
+SLS combinations only and utilisation views use ULS combinations only. The API
+performs these calculations; clients should render the stored values rather than
+reproduce engineering formulae.

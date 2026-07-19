@@ -1,5 +1,7 @@
 import unittest
 from unittest.mock import patch
+from pathlib import Path
+import tempfile
 
 from fastapi.testclient import TestClient
 
@@ -43,6 +45,21 @@ class AnalysisApiTests(unittest.TestCase):
         response = self.client.get("/api/analysis/123456789abc/results")
 
         self.assertEqual(response.status_code, 409)
+
+    @patch("backend.main.get_analysis_artifact")
+    def test_html_report_opens_inline(self, get_artifact):
+        with tempfile.TemporaryDirectory() as directory:
+            report = Path(directory) / "portal_frame_design_report.html"
+            report.write_text("<html><body>Report</body></html>", encoding="utf-8")
+            get_artifact.return_value = report
+
+            response = self.client.get(
+                "/api/analysis/123456789abc/artifacts/design-report-html"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "text/html; charset=utf-8")
+        self.assertTrue(response.headers["content-disposition"].startswith("inline;"))
 
 
 if __name__ == "__main__":

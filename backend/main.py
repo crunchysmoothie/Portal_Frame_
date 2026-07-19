@@ -113,7 +113,14 @@ def analysis_artifact(analysis_id: str, artifact: str):
         ".html": "text/html; charset=utf-8",
         ".json": "application/json",
     }.get(path.suffix.lower(), "application/octet-stream")
-    return FileResponse(path, media_type=media_type, filename=path.name)
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=path.name,
+        content_disposition_type=(
+            "inline" if path.suffix.lower() == ".html" else "attachment"
+        ),
+    )
 
 
 @app.get("/api/analysis/latest", tags=["analysis"])

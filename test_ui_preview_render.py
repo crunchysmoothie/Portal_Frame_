@@ -3,7 +3,12 @@ import unittest
 
 from preview_geometry import build_preview_geometry
 from ui.input_model import DEFAULT_VALUES, build_analysis_payload
-from ui.preview_render import frame_elevation_svg, roof_plan_svg, wall_elevation_svg
+from ui.preview_render import (
+    _uniform_axes,
+    frame_elevation_svg,
+    roof_plan_svg,
+    wall_elevation_svg,
+)
 
 
 class UiPreviewRenderTests(unittest.TestCase):
@@ -30,6 +35,16 @@ class UiPreviewRenderTests(unittest.TestCase):
     def test_wall_renderer_contains_topology(self):
         svg = self.decode(wall_elevation_svg(self.preview))
         self.assertIn("X-bracing", svg)
+
+    def test_uniform_axes_do_not_exaggerate_eaves_height(self):
+        x, y, fitted = _uniform_axes(
+            48_000, 6_500, 55, 545, 45, 215, ground=True
+        )
+        horizontal_scale = (x(48_000) - x(0)) / 48_000
+        vertical_scale = (y(0) - y(6_500)) / 6_500
+
+        self.assertAlmostEqual(horizontal_scale, vertical_scale)
+        self.assertLess(fitted[3] - fitted[2], 70)
 
 
 if __name__ == "__main__":

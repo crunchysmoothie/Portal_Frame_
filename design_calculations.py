@@ -20,6 +20,7 @@ import re
 from typing import Any, Iterable, Mapping, Sequence
 
 import member_database as mdb
+from analysis_visualisation import build_analysis_visualisation
 from analysis_snapshot import load_analysis_snapshot, validate_snapshot_input
 from strength_checks import (
     element_property_details,
@@ -101,6 +102,7 @@ class CalculationSheetData:
     reactions: list[ReactionResult] = field(default_factory=list)
     bracing_design: Mapping[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    visualisation: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -115,6 +117,7 @@ class CalculationSheetData:
             "reactions": [item.to_dict() for item in self.reactions],
             "bracing_design": dict(self.bracing_design),
             "warnings": list(self.warnings),
+            "visualisation": dict(self.visualisation),
         }
 
 
@@ -144,6 +147,7 @@ def calculation_sheet_from_dict(raw: Mapping[str, Any]) -> CalculationSheetData:
         reactions=reactions,
         bracing_design=dict(raw.get("bracing_design", {})),
         warnings=list(raw.get("warnings", [])),
+        visualisation=dict(raw.get("visualisation", {})),
     )
 
 
@@ -929,6 +933,7 @@ def build_calculation_sheet_data_from_frame(
         f"Steel mass estimate excludes: {item}"
         for item in frame_summary.get("steel_mass_breakdown", {}).get("exclusions", [])
     )
+    visualisation = build_analysis_visualisation(frame, data, all_members)
     return CalculationSheetData(
         title="Portal Frame Structural Calculation Sheet",
         scope=ReportScope.FULL,
@@ -943,6 +948,7 @@ def build_calculation_sheet_data_from_frame(
         warnings=[
             "Tension-member net-section fracture and connection resistance are outside the current input model.",
         ],
+        visualisation=visualisation,
     )
 
 
@@ -1643,6 +1649,8 @@ window.MathJax = {{
 :root {{ --ink:#17202a; --muted:#59636e; --line:#cbd2d9; --soft:#f3f6f8; --accent:#174f78; --pass:#176b3a; --fail:#a21f2d; }}
 * {{ box-sizing:border-box; }}
 body {{ margin:0 auto; max-width:1100px; color:var(--ink); font:13px/1.42 Arial, Helvetica, sans-serif; background:#fff; }}
+.report-toolbar {{ position:sticky; top:0; z-index:5; display:flex; justify-content:flex-end; padding:10px 0; background:rgba(255,255,255,.96); border-bottom:1px solid var(--line); }}
+.report-toolbar button {{ border:0; border-radius:8px; padding:9px 14px; color:#fff; background:var(--accent); font:600 13px Arial,Helvetica,sans-serif; cursor:pointer; }}
 header {{ border-bottom:3px solid var(--accent); padding:18px 0 12px; margin-bottom:18px; }}
 h1 {{ font-size:25px; margin:0 0 4px; color:var(--accent); }}
 h2 {{ font-size:18px; color:var(--accent); margin:24px 0 8px; border-bottom:1px solid var(--line); padding-bottom:4px; }}
@@ -1668,9 +1676,10 @@ code {{ white-space:normal; font-family:Consolas, monospace; font-size:10.5px; }
 .layout {{ width:100%; max-height:330px; border:1px solid var(--line); background:#fff; margin:6px 0 14px; }}
 ul {{ margin-top:6px; }}
 footer {{ margin-top:28px; border-top:1px solid var(--line); padding-top:8px; color:var(--muted); font-size:11px; }}
-@media print {{ body {{ max-width:none; }} header {{ padding-top:0; }} a {{ color:inherit; text-decoration:none; }} }}
+@media print {{ body {{ max-width:none; }} .report-toolbar {{ display:none; }} header {{ padding-top:0; }} a {{ color:inherit; text-decoration:none; }} }}
 @media (max-width:700px) {{ .member-meta {{ grid-template-columns:1fr; }} table {{ font-size:11px; }} }}
 </style></head><body>
+<div class="report-toolbar"><button type="button" onclick="window.print()">Print / save as PDF</button></div>
 <header><h1>{escape(data.title)}</h1>
 <div class="subtitle">Generated {escape(str(data.project['generated']))} from {escape(str(data.project['input_file']))}</div></header>
 <h2>1. Project and design basis</h2>

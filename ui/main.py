@@ -11,7 +11,9 @@ import flet as ft
 import httpx
 
 from preview_geometry import build_preview_geometry
+from ui.analysis_render import combination_names, load_case_svg
 from ui.input_model import (
+    AUTOMATIC_SECTION,
     BASE_SUPPORTS,
     BUILDING_TYPES,
     COLUMN_BRACING_TYPES,
@@ -19,6 +21,8 @@ from ui.input_model import (
     DEFAULT_VALUES,
     LIPPED_CHANNEL_SECTIONS,
     LOAD_COMBINATION_STANDARDS,
+    PORTAL_SECTION_FAMILIES,
+    PORTAL_SECTIONS_BY_FAMILY,
     ROOF_ACCESSIBILITY,
     ROOF_TYPES,
     STEEL_GRADES,
@@ -288,6 +292,52 @@ def main(page: ft.Page) -> None:
     openings_note = ft.Text("", size=12, color=TEXT_MUTED)
 
     # Frame, bracing and secondary steel controls.
+    rafter_section_type = dropdown(
+        "rafter_section_type",
+        "Rafter section family",
+        PORTAL_SECTION_FAMILIES,
+        helper="Select the database family used for automatic or manual sizing.",
+    )
+    rafter_section = dropdown(
+        "rafter_section",
+        "Rafter section",
+        (AUTOMATIC_SECTION,) + PORTAL_SECTIONS_BY_FAMILY["I-Sections"],
+        helper="Automatic selects the lightest passing section; otherwise the chosen size is checked.",
+        searchable=True,
+    )
+    column_section_type = dropdown(
+        "column_section_type",
+        "Column section family",
+        PORTAL_SECTION_FAMILIES,
+        helper="Select the database family used for automatic or manual sizing.",
+    )
+    column_section = dropdown(
+        "column_section",
+        "Column section",
+        (AUTOMATIC_SECTION,) + PORTAL_SECTIONS_BY_FAMILY["I-Sections"],
+        helper="Automatic selects the lightest passing section; otherwise the chosen size is checked.",
+        searchable=True,
+    )
+
+    def sync_portal_section_options() -> None:
+        for family_control, section_control in (
+            (rafter_section_type, rafter_section),
+            (column_section_type, column_section),
+        ):
+            family = str(family_control.value)
+            values = (AUTOMATIC_SECTION,) + PORTAL_SECTIONS_BY_FAMILY.get(
+                family, ()
+            )
+            section_control.options = [
+                ft.DropdownOption(
+                    key=value,
+                    content=ft.Text(value, color=TEXT_PRIMARY),
+                )
+                for value in values
+            ]
+            if section_control.value not in values:
+                section_control.value = AUTOMATIC_SECTION
+
     base_support = dropdown(
         "base_support_condition", "Portal base restraint", BASE_SUPPORTS
     )
@@ -435,10 +485,268 @@ def main(page: ft.Page) -> None:
             )
         ],
     )
-    download_report_button = ft.OutlinedButton(
-        "Download design report",
-        icon=ft.Icons.PICTURE_AS_PDF_OUTLINED,
+    current_visualisation: dict[str, Any] = {}
+    analysis_view_dropdown = ft.Dropdown(
+        label="Engineering view",
+        value="Loading",
+        options=[
+            ft.DropdownOption(
+                key="Loading", content=ft.Text("Loading", color=TEXT_PRIMARY)
+            ),
+            ft.DropdownOption(
+                key="Deflection",
+                content=ft.Text("Deflection (SLS)", color=TEXT_PRIMARY),
+            ),
+            ft.DropdownOption(
+                key="Internal forces",
+                content=ft.Text("Internal forces", color=TEXT_PRIMARY),
+            ),
+            ft.DropdownOption(
+                key="Utilisation",
+                content=ft.Text("Utilisation (ULS)", color=TEXT_PRIMARY),
+            ),
+        ],
         disabled=True,
+        width=240,
+        color=TEXT_PRIMARY,
+        border_color="#93AAA7",
+        focused_border_color=ACCENT,
+        menu_style=ft.MenuStyle(bgcolor="#FFFFFF", shadow_color="#607472"),
+    )
+    analysis_component_dropdown = ft.Dropdown(
+        label="Component",
+        options=[],
+        disabled=True,
+        visible=False,
+        width=240,
+        color=TEXT_PRIMARY,
+        border_color="#93AAA7",
+        focused_border_color=ACCENT,
+        menu_style=ft.MenuStyle(bgcolor="#FFFFFF", shadow_color="#607472"),
+    )
+    load_case_dropdown = ft.Dropdown(
+        label="Load combination",
+        options=[],
+        disabled=True,
+        width=420,
+        color=TEXT_PRIMARY,
+        border_color="#93AAA7",
+        focused_border_color=ACCENT,
+        menu_style=ft.MenuStyle(bgcolor="#FFFFFF", shadow_color="#607472"),
+    )
+    load_case_image = ft.Image(
+        src="",
+        height=420,
+        fit=ft.BoxFit.CONTAIN,
+        visible=False,
+        semantics_label="Portal frame engineering diagram",
+    )
+    expanded_load_case_image = ft.Image(
+        src="",
+        width=900,
+        height=520,
+        fit=ft.BoxFit.CONTAIN,
+        semantics_label="Large portal frame engineering diagram",
+    )
+    expanded_load_case_title = ft.Text("Load combination", size=18, weight=ft.FontWeight.BOLD)
+    expanded_load_case_dialog = ft.AlertDialog(
+        modal=True,
+        title=expanded_load_case_title,
+        content=ft.Container(
+            width=900,
+            height=600,
+            content=ft.Column(
+                scroll=ft.ScrollMode.AUTO,
+                spacing=12,
+                controls=[
+                    expanded_load_case_image,
+                ],
+            ),
+        ),
+        actions=[
+            ft.TextButton("Close", on_click=lambda _: page.pop_dialog()),
+        ],
+    )
+    load_case_description = ft.Text(
+        "Run the analysis to inspect each ULS and SLS combination.",
+        size=11,
+        color=TEXT_MUTED,
+    )
+
+    def selected_analysis_view() -> tuple[str, str | None]:
+        view = str(analysis_view_dropdown.value or "Loading")
+        if view == "Deflection":
+            return "deflection", str(analysis_component_dropdown.value or "Dy").lower()
+        if view == "Internal forces":
+            force_components = {
+                "Axial force N": "axial",
+                "Shear force Vy": "shear",
+                "Bending moment Mz": "moment",
+            }
+            return "forces", force_components.get(
+                str(analysis_component_dropdown.value), "moment"
+            )
+        if view == "Utilisation":
+            return "utilisation", None
+        return "loads", None
+
+    def refresh_analysis_controls(_=None) -> None:
+        view, _ = selected_analysis_view()
+        if view == "deflection":
+            component_options = (("Dx", "Dx"), ("Dy", "Dy"))
+            allowed_kind = "SLS"
+        elif view == "forces":
+            component_options = (
+                ("Axial force N", "Axial force N"),
+                ("Shear force Vy", "Shear force Vy"),
+                ("Bending moment Mz", "Bending moment Mz"),
+            )
+            allowed_kind = None
+        else:
+            component_options = ()
+            allowed_kind = "ULS" if view == "utilisation" else None
+
+        analysis_component_dropdown.visible = bool(component_options)
+        analysis_component_dropdown.disabled = not component_options
+        analysis_component_dropdown.options = [
+            ft.DropdownOption(
+                key=key,
+                content=ft.Text(label, color=TEXT_PRIMARY),
+            )
+            for key, label in component_options
+        ]
+        component_keys = [key for key, _ in component_options]
+        if component_keys and analysis_component_dropdown.value not in component_keys:
+            analysis_component_dropdown.value = component_keys[-1]
+
+        names = combination_names(current_visualisation, allowed_kind)
+        load_case_dropdown.options = [
+            ft.DropdownOption(
+                key=name,
+                content=ft.Text(name, color=TEXT_PRIMARY),
+            )
+            for name in names
+        ]
+        if names and load_case_dropdown.value not in names:
+            load_case_dropdown.value = names[0]
+        if not names:
+            load_case_dropdown.value = None
+        load_case_dropdown.disabled = not names
+        previous_load_case_button.disabled = len(names) < 2
+        next_load_case_button.disabled = len(names) < 2
+        expand_load_case_button.disabled = not names
+        if names:
+            update_load_case_view()
+
+    def update_load_case_view(_=None) -> None:
+        name = str(load_case_dropdown.value or "")
+        if not current_visualisation or not name:
+            return
+        view, component = selected_analysis_view()
+        load_case_image.src = load_case_svg(
+            current_visualisation,
+            name,
+            view=view,
+            component=component,
+        )
+        expanded_load_case_image.src = load_case_image.src
+        expanded_load_case_title.value = f"{name} — {analysis_view_dropdown.value}"
+        load_case_image.visible = True
+        selected = next(
+            item
+            for item in current_visualisation["combinations"]
+            if item["name"] == name
+        )
+        utilisations = [
+            float(member["utilisation"])
+            for member in selected.get("members", [])
+            if member.get("utilisation") is not None
+        ]
+        active_loads = sum(
+            len(member.get("distributed_loads", []))
+            + len(member.get("point_loads", []))
+            for member in selected.get("members", [])
+        ) + len(selected.get("nodal_loads", []))
+        utilisation_text = (
+            f"maximum member utilisation {max(utilisations):.3f}"
+            if utilisations
+            else "strength utilisation not applicable to SLS"
+        )
+        if view == "loads":
+            load_case_description.value = (
+                f"{selected.get('kind', '')} • {active_loads} active factored load "
+                "entries. Magnitudes, axes and source cases are labelled directly at the arrows."
+            )
+        elif view == "deflection":
+            component_key = f"{component}_mm"
+            node_maximum = max(
+                (
+                    abs(float(node.get(component_key, 0.0)))
+                    for node in selected.get("nodes", [])
+                ),
+                default=0.0,
+            )
+            load_case_description.value = (
+                f"SLS • {str(component).upper()} nodal and member deflection • "
+                f"maximum nodal magnitude {node_maximum:.2f} mm."
+            )
+        elif view == "forces":
+            load_case_description.value = (
+                f"{selected.get('kind', '')} • sampled {analysis_component_dropdown.value} "
+                "diagram using PyNite local member signs."
+            )
+        else:
+            load_case_description.value = (
+                f"ULS • {utilisation_text}."
+            )
+        page.update()
+
+    def show_large_load_case(_=None) -> None:
+        if expanded_load_case_image.src:
+            page.show_dialog(expanded_load_case_dialog)
+
+    def step_load_case(offset: int) -> None:
+        names = list(combination_names(current_visualisation))
+        if not names:
+            return
+        try:
+            index = names.index(str(load_case_dropdown.value))
+        except ValueError:
+            index = 0
+        load_case_dropdown.value = names[(index + offset) % len(names)]
+        update_load_case_view()
+
+    load_case_dropdown.on_select = update_load_case_view
+    analysis_view_dropdown.on_select = refresh_analysis_controls
+    analysis_component_dropdown.on_select = update_load_case_view
+    previous_load_case_button = ft.IconButton(
+        icon=ft.Icons.CHEVRON_LEFT,
+        tooltip="Previous load combination",
+        disabled=True,
+        on_click=lambda _: step_load_case(-1),
+    )
+    next_load_case_button = ft.IconButton(
+        icon=ft.Icons.CHEVRON_RIGHT,
+        tooltip="Next load combination",
+        disabled=True,
+        on_click=lambda _: step_load_case(1),
+    )
+    expand_load_case_button = ft.OutlinedButton(
+        "Open large view",
+        icon=ft.Icons.OPEN_IN_FULL,
+        disabled=True,
+        on_click=show_large_load_case,
+    )
+    view_report_button = ft.OutlinedButton(
+        "View report",
+        icon=ft.Icons.DESCRIPTION_OUTLINED,
+        disabled=True,
+    )
+    open_analysis_button = ft.OutlinedButton(
+        "Open analysis views",
+        icon=ft.Icons.QUERY_STATS,
+        disabled=True,
+        on_click=lambda _: go_to(5),
     )
     download_markup_button = ft.OutlinedButton(
         "Download markup drawings",
@@ -658,6 +966,12 @@ def main(page: ft.Page) -> None:
                 ft.Icons.AIR,
             ),
             compact_summary_line(
+                "Portal member selection",
+                f"Rafter {building['rafter_section']} | "
+                f"Column {building['column_section']}",
+                ft.Icons.VIEW_WEEK_OUTLINED,
+            ),
+            compact_summary_line(
                 "Purlins",
                 f"{building['purlin_section']} | {counts['purlin_lines']} lines | "
                 f"{layout['actual_purlin_spacing_mm']:.0f} mm actual",
@@ -688,8 +1002,20 @@ def main(page: ft.Page) -> None:
                 analysis_status_text.value = (
                     "Inputs changed after analysis; run again before using downloads."
                 )
-                download_report_button.disabled = True
+                view_report_button.disabled = True
+                open_analysis_button.disabled = True
+                analysis_destination.disabled = True
                 download_markup_button.disabled = True
+                load_case_dropdown.disabled = True
+                analysis_view_dropdown.disabled = True
+                analysis_component_dropdown.disabled = True
+                previous_load_case_button.disabled = True
+                next_load_case_button.disabled = True
+                expand_load_case_button.disabled = True
+                load_case_description.value = (
+                    "Inputs changed after analysis; run again before using these results."
+                )
+                load_case_image.visible = False
         if update_page:
             page.update()
 
@@ -729,9 +1055,11 @@ def main(page: ft.Page) -> None:
         analysis_status_text.value = message
         run_analysis_button.disabled = False
         run_analysis_button.content = "Run analysis"
+        analysis_destination.disabled = True
         page.update()
 
     def show_analysis_results(result: dict[str, Any]) -> None:
+        nonlocal current_visualisation
         summary = result["design_summary"]
         sections = summary["portal_sections"]
         strength = summary["governing_strength"]
@@ -746,6 +1074,9 @@ def main(page: ft.Page) -> None:
             f"{item['member_type']}: {item['section']} ({float(item['utilisation']):.3f})"
             for item in summary.get("bracing_members", [])
         ) or "No gable or longitudinal bracing design required."
+        current_visualisation = dict(
+            summary.get("load_case_visualisation", {})
+        )
 
         analysis_result_summary.controls = [
             analysis_summary_line(
@@ -786,16 +1117,32 @@ def main(page: ft.Page) -> None:
         ]
 
         artifacts = result.get("artifacts", {})
-        report = artifacts.get("design-report-pdf") or artifacts.get(
-            "design-report-html"
-        )
+        report = artifacts.get("design-report-html")
         markup = artifacts.get("markup-pdf") or artifacts.get("markup-html")
         if report:
-            download_report_button.url = f"{API_URL}{report['download_url']}"
-            download_report_button.disabled = False
+            view_report_button.url = ft.Url(
+                url=f"{API_URL}{report['download_url']}",
+                target=ft.UrlTarget.SELF,
+            )
+            view_report_button.disabled = False
         if markup:
             download_markup_button.url = f"{API_URL}{markup['download_url']}"
             download_markup_button.disabled = False
+
+        all_names = combination_names(current_visualisation)
+        analysis_view_dropdown.disabled = not all_names
+        open_analysis_button.disabled = not all_names
+        analysis_destination.disabled = not all_names
+        if all_names:
+            governing = str(strength.get("combination", ""))
+            load_case_dropdown.value = (
+                governing if governing in all_names else all_names[0]
+            )
+            refresh_analysis_controls()
+        else:
+            load_case_description.value = (
+                "This analysis snapshot does not contain renderer data."
+            )
 
         analysis_progress.visible = False
         analysis_status_icon.visible = True
@@ -817,8 +1164,17 @@ def main(page: ft.Page) -> None:
         submitted_payload_fingerprint = json.dumps(last_payload, sort_keys=True)
         run_analysis_button.disabled = True
         run_analysis_button.content = "Analysis running..."
-        download_report_button.disabled = True
+        view_report_button.disabled = True
+        open_analysis_button.disabled = True
+        analysis_destination.disabled = True
         download_markup_button.disabled = True
+        load_case_dropdown.disabled = True
+        analysis_view_dropdown.disabled = True
+        analysis_component_dropdown.disabled = True
+        previous_load_case_button.disabled = True
+        next_load_case_button.disabled = True
+        expand_load_case_button.disabled = True
+        load_case_image.visible = False
         analysis_status_card.bgcolor = WARNING_BG
         analysis_status_icon.visible = False
         analysis_progress.visible = True
@@ -912,6 +1268,11 @@ def main(page: ft.Page) -> None:
                 ft.Icons.WIND_POWER,
             ),
             summary_line(
+                "Portal sections",
+                f"Rafter {building['rafter_section']} • Column {building['column_section']}",
+                ft.Icons.VIEW_WEEK_OUTLINED,
+            ),
+            summary_line(
                 "Bracing",
                 f"{building['column_bracing_type']}-bracing • {building['gable_column_count']} gable columns/end",
                 ft.Icons.CALL_SPLIT,
@@ -922,6 +1283,7 @@ def main(page: ft.Page) -> None:
         return True
 
     def update_conditionals(_=None) -> None:
+        sync_portal_section_options()
         is_canopy = building_type.value == "Canopy"
         is_final_normal = not is_canopy and wind_design_mode.value == "Final design"
         blocking.disabled = not is_canopy
@@ -956,6 +1318,8 @@ def main(page: ft.Page) -> None:
         building_roof,
         wind_design_mode,
         base_support,
+        rafter_section_type,
+        column_section_type,
     }
     for live_control in controls.values():
         if isinstance(live_control, ft.TextField):
@@ -1088,6 +1452,18 @@ def main(page: ft.Page) -> None:
                     "Configure restraints, bracing topology, gables, purlins, girts and crawl loading.",
                 ),
                 card(
+                    "Portal member sections",
+                    "Choose automatic mass-ordered sizing or force a database section for checking.",
+                    ft.ResponsiveRow(
+                        controls=[
+                            rafter_section_type,
+                            rafter_section,
+                            column_section_type,
+                            column_section,
+                        ]
+                    ),
+                ),
+                card(
                     "Portal support and bracing",
                     "Integer fields represent counts of modelled intervals or panels.",
                     ft.ResponsiveRow(
@@ -1158,7 +1534,8 @@ def main(page: ft.Page) -> None:
                             ft.Row(
                                 wrap=True,
                                 controls=[
-                                    download_report_button,
+                                    view_report_button,
+                                    open_analysis_button,
                                     download_markup_button,
                                 ],
                             ),
@@ -1183,6 +1560,65 @@ def main(page: ft.Page) -> None:
                             on_click=validate_form,
                         ),
                         run_analysis_button,
+                    ],
+                ),
+            ],
+        ),
+        ft.Column(
+            spacing=18,
+            controls=[
+                section_heading(
+                    "Analysis views",
+                    "Inspect loading, SLS deflection, internal forces and ULS utilisation independently.",
+                ),
+                card(
+                    "Load combination",
+                    "Select a ULS or SLS combination and the engineering information to display.",
+                    ft.Column(
+                        spacing=10,
+                        controls=[
+                            ft.Row(
+                                wrap=True,
+                                controls=[
+                                    analysis_view_dropdown,
+                                    analysis_component_dropdown,
+                                    previous_load_case_button,
+                                    load_case_dropdown,
+                                    next_load_case_button,
+                                ],
+                            ),
+                            load_case_description,
+                        ],
+                    ),
+                ),
+                card(
+                    "Portal frame",
+                    "The selected engineering quantity is labelled directly on a dedicated frame diagram.",
+                    ft.Column(
+                        spacing=10,
+                        controls=[
+                            ft.Container(
+                                bgcolor="#F8FBFA",
+                                border_radius=12,
+                                border=ft.Border.all(1, "#D8E5E3"),
+                                padding=8,
+                                content=load_case_image,
+                            ),
+                            ft.Row(
+                                alignment=ft.MainAxisAlignment.END,
+                                controls=[expand_load_case_button],
+                            ),
+                        ],
+                    ),
+                ),
+                ft.Row(
+                    alignment=ft.MainAxisAlignment.END,
+                    controls=[
+                        ft.OutlinedButton(
+                            "Back to review",
+                            icon=ft.Icons.ARROW_BACK,
+                            on_click=lambda _: go_to(4),
+                        ),
                     ],
                 ),
             ],
@@ -1299,6 +1735,13 @@ def main(page: ft.Page) -> None:
         ),
     )
 
+    analysis_destination = ft.NavigationRailDestination(
+        icon=ft.Icon(ft.Icons.QUERY_STATS_OUTLINED, color="#506A67"),
+        selected_icon=ft.Icon(ft.Icons.QUERY_STATS, color=ACCENT_DARK),
+        label="Analysis",
+        disabled=True,
+    )
+
     rail = ft.NavigationRail(
         extended=True,
         selected_index=0,
@@ -1360,6 +1803,7 @@ def main(page: ft.Page) -> None:
                 selected_icon=ft.Icon(ft.Icons.FACT_CHECK, color=ACCENT_DARK),
                 label="Review",
             ),
+            analysis_destination,
         ],
     )
 
@@ -1374,6 +1818,8 @@ def main(page: ft.Page) -> None:
         current_index = index
         rail.selected_index = index
         content_host.controls = [sections[index]]
+        visual_builder.visible = index != 5
+        running_summary_panel.visible = index != 5
         page.update()
         page.run_task(content_host.scroll_to, offset=0, duration=0)
 

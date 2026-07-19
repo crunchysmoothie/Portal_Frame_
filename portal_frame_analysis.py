@@ -327,18 +327,49 @@ def directional_search(primary, r_list, c_list, r_section_type, c_section_type,
         'dx_comb': dx_comb
     }
 
+
+def section_candidates(
+    member_db,
+    section_type,
+    preferred_section="Yes",
+    selected_section=None,
+):
+    """Return one forced section or the normal preferred automatic candidates."""
+
+    family = member_db.get(section_type)
+    if family is None:
+        raise ValueError(f"Unknown portal section family {section_type!r}.")
+    selected = str(selected_section or "").strip()
+    if selected and not selected.lower().startswith("automatic"):
+        if selected not in family:
+            raise ValueError(
+                f"Section {selected!r} is not available in {section_type}."
+            )
+        return [selected]
+    return [
+        name
+        for name, properties in family.items()
+        if properties.get("Preferred", "No") == preferred_section
+    ]
+
 def sls_check(
     preferred_section: str,
     r_section_type: str,
     c_section_type: str,
     input_path="input_data.json",
+    selected_rafter_section=None,
+    selected_column_section=None,
 ):
     """Runs 'rafter-first' and 'column-first' searches, then returns the single lightest solution."""
     start = time.time()
     member_db = mdb.load_member_database()
 
-    r_list = [sec for sec in member_db[r_section_type] if member_db[r_section_type][sec].get('Preferred','No') == preferred_section]
-    c_list = [sec for sec in member_db[c_section_type] if member_db[c_section_type][sec].get('Preferred','No') == preferred_section]
+    r_list = section_candidates(
+        member_db, r_section_type, preferred_section, selected_rafter_section
+    )
+    c_list = section_candidates(
+        member_db, c_section_type, preferred_section, selected_column_section
+    )
     if not r_list or not c_list:
         raise ValueError(f"No sections flagged as Preferred='{preferred_section}' found.")
 
@@ -672,20 +703,25 @@ def main(
 ):
     """Run one analysis, store its complete results, and optionally render it."""
 
-    preferred_section = 'Yes'      # or 'No', based on user preference
-    r_section_type = 'I-Sections'  # or 'H-Sections', based on user preference
-    c_section_type = 'I-Sections'  # or 'H-Sections', based on user preference
+    preferred_section = 'Yes'
+    data = import_data(str(input_path))
+    frame_input = data.frame_data[0]
+    r_section_type = frame_input.get('rafter_section_type', 'I-Sections')
+    c_section_type = frame_input.get('column_section_type', 'I-Sections')
+    selected_rafter = frame_input.get('rafter_section')
+    selected_column = frame_input.get('column_section')
 
     frame, combo, member_db, r_section_typ, c_section_typ, best_section = sls_check(
         preferred_section,
         r_section_type,
         c_section_type,
         input_path=input_path,
+        selected_rafter_section=selected_rafter,
+        selected_column_section=selected_column,
     )
 
 
     if frame is not None:
-        data = import_data(str(input_path))
         r_mem = mdb.member_properties(r_section_typ, best_section[0], member_db)
         c_mem = mdb.member_properties(c_section_typ, best_section[1], member_db)
         actions_by_combination = {

@@ -7,6 +7,7 @@ import math
 from pathlib import Path
 from typing import Any, Mapping
 
+import member_database as portal_members
 from roof_layout import calculate_roof_bracing_layout
 
 
@@ -22,6 +23,8 @@ STEEL_GRADES = ("Steel_S355", "Steel_S275")
 BASE_SUPPORTS = ("Pinned", "Fixed", "Spring")
 COLUMN_BRACING_TYPES = ("X", "K", "A")
 CRAWL_APPLICATIONS = ("One at a time", "All at the same time")
+PORTAL_SECTION_FAMILIES = ("I-Sections", "H-Sections")
+AUTOMATIC_SECTION = "Automatic - lightest passing"
 
 
 def load_lipped_channel_sections() -> tuple[str, ...]:
@@ -40,6 +43,13 @@ def load_lipped_channel_sections() -> tuple[str, ...]:
 
 
 LIPPED_CHANNEL_SECTIONS = load_lipped_channel_sections()
+_PORTAL_MEMBER_DATABASE = portal_members.load_member_database(
+    PROJECT_ROOT / "member_database.csv"
+)
+PORTAL_SECTIONS_BY_FAMILY: dict[str, tuple[str, ...]] = {
+    family: tuple(_PORTAL_MEMBER_DATABASE[family])
+    for family in PORTAL_SECTION_FAMILIES
+}
 
 DEFAULT_VALUES: dict[str, Any] = {
     "project_name": "New portal frame",
@@ -56,6 +66,10 @@ DEFAULT_VALUES: dict[str, Any] = {
     "roof_accessibility": "Inaccessible",
     "load_combination_standard": "SANS 10160-1:2019",
     "steel_grade": "Steel_S355",
+    "rafter_section_type": "I-Sections",
+    "rafter_section": AUTOMATIC_SECTION,
+    "column_section_type": "I-Sections",
+    "column_section": AUTOMATIC_SECTION,
     "base_support_condition": "Spring",
     "base_rotational_stiffness_knm_per_rad": "10000",
     "fundamental_basic_wind_speed": "32",
@@ -147,6 +161,12 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
     base_support = choice("base_support_condition", BASE_SUPPORTS)
     bracing_type = choice("column_bracing_type", COLUMN_BRACING_TYPES)
     crawl_application = choice("crawl_application", CRAWL_APPLICATIONS)
+    rafter_section_type = choice(
+        "rafter_section_type", PORTAL_SECTION_FAMILIES
+    )
+    column_section_type = choice(
+        "column_section_type", PORTAL_SECTION_FAMILIES
+    )
 
     eaves_m = number("eaves_height_m", strictly_positive=True)
     apex_m = number("apex_height_m", strictly_positive=True)
@@ -197,6 +217,17 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
         errors["purlin_section"] = "Choose a lipped channel from the section database."
     if girt_section not in LIPPED_CHANNEL_SECTIONS:
         errors["girt_section"] = "Choose a lipped channel from the section database."
+
+    def portal_section(key: str, family: str) -> str:
+        value = str(raw.get(key, "")).strip()
+        if value == AUTOMATIC_SECTION:
+            return value
+        if value not in PORTAL_SECTIONS_BY_FAMILY.get(family, ()):
+            errors[key] = f"Choose Automatic or a section from {family}."
+        return value
+
+    rafter_section = portal_section("rafter_section", rafter_section_type)
+    column_section = portal_section("column_section", column_section_type)
 
     layout_fields = {
         "eaves_height_m",
@@ -256,6 +287,10 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
             "gable_column_count": gable_columns,
             "gable_column_brace_intervals": gable_intervals,
             "steel_grade": steel_grade,
+            "rafter_section_type": rafter_section_type,
+            "rafter_section": rafter_section,
+            "column_section_type": column_section_type,
+            "column_section": column_section,
             "base_support_condition": base_support,
             "base_rotational_stiffness_knm_per_rad": base_stiffness,
             "use_crawl_beams": "Yes" if use_crawl_beams else "No",
