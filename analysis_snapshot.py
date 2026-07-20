@@ -128,7 +128,7 @@ def validate_snapshot_input(
         return "stale-allowed"
     raise StaleAnalysisError(
         "The current input file differs from the stored analysis. "
-        f"Re-run run_full_analysis.py before generating the report. "
+        f"Re-run the analysis from the PortalFrame UI before generating the report. "
         f"Analysed SHA-256: {analysis['input_sha256']}; "
         f"current SHA-256: {current_hash}."
     )

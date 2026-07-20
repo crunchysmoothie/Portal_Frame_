@@ -8,7 +8,7 @@ calculation/reporting code.
 From the repository root:
 
 ```powershell
-.\.venv314\Scripts\python.exe -m pip install -r requirements-api.txt
+.\.venv314\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
 ## Run locally

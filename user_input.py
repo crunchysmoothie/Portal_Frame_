@@ -569,7 +569,6 @@ def add_wind_member_loads(json_filename):
     data["member_loads"] = loads
     with open(json_filename, 'w') as json_file:
         json.dump(data, json_file, indent=2)
-
 def add_live_loads(json_filename):
     """Generate live loads and append them to the member loads list."""
     with open(json_filename, 'r') as file:
@@ -622,79 +621,4 @@ def add_dead_loads(json_filename):
     with open(json_filename, 'w') as json_file:
         json.dump(data, json_file, indent=2)
 
-def main() -> None:
-    """Generate the default portal-frame input JSON and associated loads."""
-
-    # Static inputs for eaves, apex, and rafter span (converted to mm)
-    building_roof = "Duo Pitched"  # "Mono Pitched" or "Duo Pitched"
-    building_type = "Normal"       # "Normal" or "Canopy"
-    wind_design_mode = "Prelim"    # "Prelim" uses +0.2/-0.3; "Final design" uses wall openings.
-    eaves_height = 6 * 1000        # Convert to mm
-    apex_height = 6.8 * 1000         # Convert to mm
-    gable_width = 16 * 1000        # Convert to mm
-    rafter_spacing = 6 * 1000      # Convert to mm
-    building_length = 72 * 1000    # Convert to mm
-    col_bracing_spacing = 1        # number of braced points per column
-    column_bracing_type = "X"     # "X" uses angles; "K" or "A" uses CHS
-    rafter_bracing_spacing = 3     # number of braced points per rafter
-    # One gable end: 1, 3, 5, ... columns. The apex column is mandatory and
-    # each increment adds a symmetric pair at the next roof brace nodes.
-    gable_column_count = 3
-    # Number of equal laterally-unbraced intervals along each gable column.
-    gable_column_brace_intervals = 2
-    steel_grade = "Steel_S355"     # "Steel_S355" or "Steel_S275"
-    roof_accessibility = "Inaccessible"  # "Accessible" or "Inaccessible"
-    load_combination_standard = SANS_2019_COMBINATIONS  # or PRE_2019_COMBINATIONS
-    blocking_factor = 0.0          # Canopy only: 0.0 (open) to 1.0 (fully blocked)
-    roof_span = gable_width / 2 if building_roof == "Duo Pitched" else gable_width
-
-    building_data = {
-        "building_type": building_type,
-        "wind_design_mode": wind_design_mode,
-        # Required in Final design mode. Areas are the total openings on each
-        # physical wall face in m2; the two side walls run along the ridge.
-        "opening_areas_m2": {
-            "side_1": 0.0,
-            "side_2": 0.0,
-            "gable_1": 0.0,
-            "gable_2": 0.0,
-        },
-        "building_roof": building_roof,
-        "eaves_height": eaves_height,
-        "apex_height": apex_height,
-        "gable_width": gable_width,
-        "rafter_spacing": rafter_spacing,
-        "building_length": building_length,
-        "col_bracing_spacing": col_bracing_spacing,
-        "column_bracing_type": column_bracing_type,
-        "rafter_bracing_spacing": rafter_bracing_spacing,
-        "gable_column_count": gable_column_count,
-        "gable_column_brace_intervals": gable_column_brace_intervals,
-        "roof_accessibility": roof_accessibility,
-        "load_combination_standard": load_combination_standard,
-        "blocking_factor": blocking_factor,
-        "roof_pitch": math.degrees(math.atan((apex_height - eaves_height) / roof_span)),
-        "steel_grade": steel_grade,
-    }
-
-    wind_data = {
-        "wind": "3s gust",
-        "fundamental_basic_wind_speed": 36,
-        "return_period": 50,
-        "terrain_category": "B",
-        "topographic_factor": 1.0,
-        "altitude": 1140,
-    }
-
-    # Filename of the existing JSON file
-    json_filename = "input_data.json"
-
-    # Generate the input file and associated loads
-    update_json_file(json_filename, building_data, wind_data)
-    add_wind_member_loads(json_filename)
-    add_live_loads(json_filename)
-    add_dead_loads(json_filename)
-
-if __name__ == "__main__":
-    main()
 

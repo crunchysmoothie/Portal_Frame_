@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import html
 import json
 import math
@@ -307,17 +306,3 @@ def write_markup(data, output_dir="output/markup", create_pdf=True):
                 continue
     return html_path.resolve(), pdf_path
 
-
-def main():
-    parser=argparse.ArgumentParser(description="Create an A1 draughtsman markup after the design report is complete.")
-    parser.add_argument("--report-json",default="output/calculations/portal_frame_calculation_sheet.json")
-    parser.add_argument("--output-dir",default="output/markup")
-    parser.add_argument("--no-pdf",action="store_true")
-    args=parser.parse_args(); data=json.loads(Path(args.report_json).read_text(encoding="utf-8"))
-    html_path,pdf_path=write_markup(data,args.output_dir,not args.no_pdf); print(f"Markup HTML written to {html_path}")
-    if pdf_path: print(f"Markup PDF written to {pdf_path}")
-    elif not args.no_pdf: print("No browser PDF was created; print the generated HTML from Edge or Chrome.")
-
-
-if __name__ == "__main__":
-    main()

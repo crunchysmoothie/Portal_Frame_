@@ -786,6 +786,3 @@ def main(
     else:
         print("Unable to find acceptable sections.")
         return None
-
-if __name__ == "__main__":
-    main()

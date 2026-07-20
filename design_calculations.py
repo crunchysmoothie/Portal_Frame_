@@ -8,7 +8,6 @@ building a PyNite model or searching sections again.
 
 from __future__ import annotations
 
-import argparse
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from enum import Enum
@@ -2272,59 +2271,3 @@ def write_pdf_from_json(json_path, output_path):
     doc.build(story)
     return output_path
 
-
-def _parse_args():
-    parser = argparse.ArgumentParser(
-        description="Generate portal-frame reports from stored analysis results."
-    )
-    parser.add_argument(
-        "--results",
-        default="output/analysis/analysis_results.json",
-        help="Completed analysis snapshot written by portal_frame_analysis.py.",
-    )
-    parser.add_argument("--scope", choices=[item.value for item in ReportScope], default=ReportScope.CRITICAL.value)
-    parser.add_argument("--load-combination")
-    parser.add_argument("--output-dir", default="output/calculations")
-    parser.add_argument(
-        "--allow-stale-results",
-        action="store_true",
-        help="Allow a report when the current input differs from the stored analysis.",
-    )
-    parser.add_argument("--render-json", help="Render an existing calculation JSON file to PDF.")
-    parser.add_argument("--pdf-output", default="output/pdf/portal_frame_calculation_sheet.pdf")
-    parser.add_argument(
-        "--no-pdf",
-        action="store_true",
-        help="Generate only the HTML and JSON reports.",
-    )
-    return parser.parse_args()
-
-
-def main():
-    args = _parse_args()
-    if args.render_json:
-        path = write_pdf_from_json(args.render_json, args.pdf_output)
-        print(f"PDF calculation sheet written to {path.resolve()}")
-        return
-
-    scope = ReportScope(args.scope)
-    if scope is ReportScope.LOAD_COMBINATION and not args.load_combination:
-        raise SystemExit("--load-combination is required when --scope load_combination is used.")
-    data = load_calculation_sheet_data(
-        snapshot_path=args.results,
-        scope=scope,
-        load_combination=args.load_combination,
-        allow_stale=args.allow_stale_results,
-    )
-    output_dir = Path(args.output_dir)
-    html_path = write_html_report(data, output_dir / "portal_frame_calculation_sheet.html")
-    json_path = write_json_data(data, output_dir / "portal_frame_calculation_sheet.json")
-    print(f"HTML calculation sheet written to {html_path.resolve()}")
-    print(f"Calculation data written to {json_path.resolve()}")
-    if not args.no_pdf:
-        pdf_path = write_pdf_from_json(json_path, args.pdf_output)
-        print(f"PDF calculation sheet written to {pdf_path.resolve()}")
-
-
-if __name__ == "__main__":
-    main()

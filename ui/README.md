@@ -7,23 +7,16 @@ as the working directory, and select the `.venv314` interpreter. The launcher
 starts FastAPI on port 8000 and the Flet browser UI on port 8550, and stops both
 when the run is stopped.
 
-Install the UI and API dependencies from the repository root:
+Install the application dependencies from the repository root:
 
 ```powershell
-.\.venv314\Scripts\python.exe -m pip install -r requirements-ui.txt
-.\.venv314\Scripts\python.exe -m pip install -r requirements-api.txt
+.\.venv314\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-Run the API in one terminal:
+Start the complete application:
 
 ```powershell
-.\.venv314\Scripts\python.exe -m uvicorn backend.main:app --reload
-```
-
-Run the UI in a browser from another terminal:
-
-```powershell
-.\.venv314\Scripts\python.exe -m flet.cli run --web --port 8550 ui/main.py
+.\.venv314\Scripts\python.exe run_designer.py
 ```
 
 Open <http://127.0.0.1:8550> if the browser does not open automatically.

@@ -2193,7 +2193,3 @@ def main(page: ft.Page) -> None:
     update_conditionals()
     update_pitch()
     refresh_workspace()
-
-
-if __name__ == "__main__":
-    ft.run(main)
