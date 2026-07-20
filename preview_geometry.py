@@ -75,6 +75,30 @@ def _roof_points(
     ]
 
 
+def _crawl_point(
+    span_mm: float,
+    eaves_mm: float,
+    apex_mm: float,
+    roof_type: str,
+    slope: str,
+    position_from_eaves_mm: float,
+) -> tuple[float, float]:
+    """Return a crawl-beam marker position in the portal-frame elevation."""
+
+    run = span_mm / 2 if roof_type == "Duo Pitched" else span_mm
+    slope_length = math.hypot(run, apex_mm - eaves_mm)
+    if position_from_eaves_mm < 0 or position_from_eaves_mm > slope_length + 1e-6:
+        raise ValueError(
+            f"Crawl position {position_from_eaves_mm:.1f} mm is outside the roof slope."
+        )
+    ratio = 0.0 if slope_length <= 0 else position_from_eaves_mm / slope_length
+    distance_x = run * ratio
+    distance_y = (apex_mm - eaves_mm) * ratio
+    if roof_type == "Duo Pitched" and str(slope).strip().lower() == "right":
+        return span_mm - distance_x, eaves_mm + distance_y
+    return distance_x, eaves_mm + distance_y
+
+
 def _line(
     member_id: str,
     kind: str,
@@ -244,8 +268,30 @@ def build_preview_geometry(payload: Mapping[str, Any]) -> dict[str, Any]:
         frame_positions, eaves, bracing_type, wall_panels
     )
 
+    crawl_markers: list[dict[str, Any]] = []
+    for index, crawl in enumerate(building.get("crawl_beams", []) or [], 1):
+        slope = str(crawl.get("slope", "")).strip().lower()
+        position = float(crawl.get("position_from_eaves_mm", 0.0))
+        point_x, point_y = _crawl_point(
+            span,
+            eaves,
+            apex,
+            roof_type,
+            slope,
+            position,
+        )
+        crawl_markers.append(
+            {
+                "id": f"CR{index}",
+                "name": str(crawl.get("name", f"Crawl {index}")),
+                "slope": slope,
+                "position_from_eaves_mm": position,
+                "point": {"x_mm": point_x, "y_mm": point_y},
+            }
+        )
+
     return {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "status": "layout_preview_only",
         "units": "mm",
         "dimensions": {
@@ -266,10 +312,19 @@ def build_preview_geometry(payload: Mapping[str, Any]) -> dict[str, Any]:
             "members": portal_members,
             "purlin_points": roof_points,
             "gable_columns": gable_columns,
+            "crawl_beams": crawl_markers,
         },
         "roof_plan": {
             "frame_positions_mm": frame_positions,
             "purlin_rows_mm": [float(point["x_mm"]) for point in roof_points],
+            "crawl_rows": [
+                {
+                    "name": marker["name"],
+                    "slope": marker["slope"],
+                    "x_mm": marker["point"]["x_mm"],
+                }
+                for marker in crawl_markers
+            ],
             "braces": roof_braces,
         },
         "wall_elevation": {

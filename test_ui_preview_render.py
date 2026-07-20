@@ -27,6 +27,31 @@ class UiPreviewRenderTests(unittest.TestCase):
         self.assertIn("Portal frame section", svg)
         self.assertIn("13 purlin lines", svg)
 
+    def test_frame_renderer_labels_crawl_marker(self):
+        preview = build_preview_geometry(
+            build_analysis_payload(
+                {
+                    **DEFAULT_VALUES,
+                    "use_crawl_beams": True,
+                    "crawl_beams": [{
+                        "name": "CB1",
+                        "slope": "left",
+                        "position_from_eaves_mm": "6000",
+                        "section_type": "I-Sections",
+                        "section": "IPE-AA100",
+                        "swl_kg": "5000",
+                        "hoist_trolley_mass_kg": "350",
+                        "lifting_attachment_mass_kg": "100",
+                        "hoist_class": "C2",
+                        "hoisting_speed_m_s": "0.15",
+                    }],
+                }
+            )
+        )
+        svg = self.decode(frame_elevation_svg(preview))
+        self.assertIn("CB1", svg)
+        self.assertIn("crawl beam marker", svg)
+
     def test_roof_renderer_contains_bracing(self):
         svg = self.decode(roof_plan_svg(self.preview))
         self.assertIn("Roof X-bracing in end bays", svg)

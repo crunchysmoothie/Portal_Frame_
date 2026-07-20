@@ -96,6 +96,37 @@ class UiInputModelTests(unittest.TestCase):
             )
         self.assertIn("rafter_section", caught.exception.errors)
 
+    def test_crawl_beams_are_copied_into_engine_payload(self):
+        payload = build_analysis_payload(
+            self.values(
+                use_crawl_beams=True,
+                crawl_beams=[
+                    {
+                        "name": "CB1",
+                        "slope": "left",
+                        "position_from_eaves_mm": "6000",
+                        "section_type": "I-Sections",
+                        "section": PORTAL_SECTIONS_BY_FAMILY["I-Sections"][0],
+                        "swl_kg": "5000",
+                        "hoist_trolley_mass_kg": "350",
+                        "lifting_attachment_mass_kg": "100",
+                        "hoist_class": "C2",
+                        "hoisting_speed_m_s": "0.15",
+                    }
+                ],
+            )
+        )
+
+        building = payload["building_data"]
+        self.assertEqual(building["use_crawl_beams"], "Yes")
+        self.assertEqual(building["crawl_beams"][0]["name"], "CB1")
+        self.assertEqual(building["crawl_beams"][0]["position_from_eaves_mm"], 6000.0)
+
+    def test_enabled_crawl_loading_requires_a_beam(self):
+        with self.assertRaises(InputValidationError) as caught:
+            build_analysis_payload(self.values(use_crawl_beams=True))
+        self.assertIn("crawl_beams", caught.exception.errors)
+
 
 if __name__ == "__main__":
     unittest.main()

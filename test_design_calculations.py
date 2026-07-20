@@ -18,6 +18,7 @@ from design_calculations import (
     ReactionResult,
     ReportScope,
     calculate_member_design,
+    _deflection_ratio,
     load_calculation_sheet_data,
 )
 from strength_checks import (
@@ -51,6 +52,10 @@ class DesignCalculationTests(unittest.TestCase):
             "w1": 1.0,
             "w2": 2.1628,
         }
+
+    def test_deflection_ratio_uses_reference_length(self):
+        self.assertAlmostEqual(_deflection_ratio(16_000, 116.19), 137.7055, places=3)
+        self.assertIsNone(_deflection_ratio(16_000, 0))
 
     def test_gross_section_tension_resistance(self):
         actions = self.actions(-30.571)

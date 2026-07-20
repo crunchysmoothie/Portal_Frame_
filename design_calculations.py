@@ -601,7 +601,28 @@ def collect_member_calculations(
     return calculations
 
 
-def collect_deflections(frame, combinations):
+def _deflection_ratio(reference_mm, deflection_mm):
+    """Return the reference-length/deflection ratio for serviceability display."""
+
+    try:
+        reference = float(reference_mm)
+        deflection = abs(float(deflection_mm))
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(reference) or not math.isfinite(deflection):
+        return None
+    if reference <= 0 or deflection <= 1e-12:
+        return None
+    return reference / deflection
+
+
+def collect_deflections(
+    frame,
+    combinations,
+    *,
+    horizontal_reference_mm=0.0,
+    vertical_reference_mm=0.0,
+):
     results = []
     for combination in combinations:
         name = combination["name"]
@@ -618,8 +639,10 @@ def collect_deflections(frame, combinations):
             "load_combination": name,
             "max_dx": max_dx,
             "dx_node": dx_node,
+            "horizontal_ratio": _deflection_ratio(horizontal_reference_mm, max_dx),
             "max_dy": max_dy,
             "dy_node": dy_node,
+            "vertical_ratio": _deflection_ratio(vertical_reference_mm, max_dy),
         })
     return results
 
@@ -671,9 +694,11 @@ def build_frame_summary(data, member_db, rafter_section_type, column_section_typ
         "governing_utilisation": governing_member.governing_ratio,
         "overall_status": governing_member.status,
         "max_horizontal_deflection_mm": governing_dx["max_dx"] if governing_dx else 0.0,
+        "horizontal_deflection_ratio": governing_dx.get("horizontal_ratio") if governing_dx else None,
         "horizontal_deflection_node": governing_dx["dx_node"] if governing_dx else "",
         "horizontal_deflection_combination": governing_dx["load_combination"] if governing_dx else "",
         "max_vertical_deflection_mm": governing_dy["max_dy"] if governing_dy else 0.0,
+        "vertical_deflection_ratio": governing_dy.get("vertical_ratio") if governing_dy else None,
         "vertical_deflection_node": governing_dy["dy_node"] if governing_dy else "",
         "vertical_deflection_combination": governing_dy["load_combination"] if governing_dy else "",
         "max_abs_horizontal_reaction_kN": abs(governing_fx.fx) if governing_fx else 0.0,
@@ -859,7 +884,12 @@ def build_calculation_sheet_data_from_frame(
     wind_data = dict(data.wind_data[0]) if data.wind_data else {}
     internal_pressure = dict(wind_data.get("internal_pressure", {}))
     cpi_directions = internal_pressure.get("directions", {})
-    deflections = collect_deflections(frame, data.serviceability_load_combinations)
+    deflections = collect_deflections(
+        frame,
+        data.serviceability_load_combinations,
+        horizontal_reference_mm=frame_data.get("eaves_height", 0.0),
+        vertical_reference_mm=frame_data.get("gable_width", 0.0),
+    )
     frame_summary = build_frame_summary(
         data, member_db, rafter_section_type, column_section_type,
         rafter_section, column_section, all_members, reactions, deflections,
@@ -1011,6 +1041,15 @@ def _fmt(value, digits=3):
     if isinstance(value, (int, float)):
         return f"{value:,.{digits}f}"
     return escape(str(value))
+
+
+def _deflection_display(value, ratio, reference_label):
+    suffix = (
+        f" ({reference_label}/{_fmt(ratio, 0)})"
+        if ratio is not None
+        else ""
+    )
+    return f"{_fmt(value)} mm{suffix}"
 
 
 def _html_units(units):
@@ -1516,9 +1555,9 @@ def write_html_report(data, output_path):
          f"{escape(summary['governing_section'])}) - {escape(summary['governing_combination'])}; "
          f"{escape(summary['governing_check'])} = {_fmt(summary['governing_utilisation'])} "
          f"[{escape(summary['overall_status'])}]"),
-        ("Maximum horizontal deflection", f"{_fmt(summary['max_horizontal_deflection_mm'])} mm at "
+        ("Maximum horizontal deflection", f"{_deflection_display(summary['max_horizontal_deflection_mm'], summary.get('horizontal_deflection_ratio'), 'Eaves')} at "
          f"{escape(summary['horizontal_deflection_node'])} - {escape(summary['horizontal_deflection_combination'])}"),
-        ("Maximum vertical deflection", f"{_fmt(summary['max_vertical_deflection_mm'])} mm at "
+        ("Maximum vertical deflection", f"{_deflection_display(summary['max_vertical_deflection_mm'], summary.get('vertical_deflection_ratio'), 'Span')} at "
          f"{escape(summary['vertical_deflection_node'])} - {escape(summary['vertical_deflection_combination'])}"),
         ("Maximum absolute horizontal reaction", f"{_fmt(summary['max_abs_horizontal_reaction_kN'])} kN at "
          f"{escape(summary['horizontal_reaction_node'])} - {escape(summary['horizontal_reaction_combination'])}"),
@@ -1531,8 +1570,11 @@ def write_html_report(data, output_path):
     ]
     deflection_rows = [
         (
-            escape(item["load_combination"]), _fmt(item["max_dx"]), escape(item["dx_node"]),
-            _fmt(item["max_dy"]), escape(item["dy_node"]),
+            escape(item["load_combination"]),
+            _deflection_display(item["max_dx"], item.get("horizontal_ratio"), "Eaves"),
+            escape(item["dx_node"]),
+            _deflection_display(item["max_dy"], item.get("vertical_ratio"), "Span"),
+            escape(item["dy_node"]),
         )
         for item in data.deflections
     ]
@@ -1869,9 +1911,9 @@ def write_pdf_from_json(json_path, output_path):
         ["Governing member strength", f"{frame_summary['governing_member']} ({frame_summary['governing_member_type']}, "
          f"{frame_summary['governing_section']}) - {frame_summary['governing_combination']}; "
          f"{frame_summary['governing_check']} = {_fmt(frame_summary['governing_utilisation'])} [{frame_summary['overall_status']}]"],
-        ["Maximum horizontal deflection", f"{_fmt(frame_summary['max_horizontal_deflection_mm'])} mm at "
+        ["Maximum horizontal deflection", f"{_deflection_display(frame_summary['max_horizontal_deflection_mm'], frame_summary.get('horizontal_deflection_ratio'), 'Eaves')} at "
          f"{frame_summary['horizontal_deflection_node']} - {frame_summary['horizontal_deflection_combination']}"],
-        ["Maximum vertical deflection", f"{_fmt(frame_summary['max_vertical_deflection_mm'])} mm at "
+        ["Maximum vertical deflection", f"{_deflection_display(frame_summary['max_vertical_deflection_mm'], frame_summary.get('vertical_deflection_ratio'), 'Span')} at "
          f"{frame_summary['vertical_deflection_node']} - {frame_summary['vertical_deflection_combination']}"],
         ["Maximum absolute horizontal reaction", f"{_fmt(frame_summary['max_abs_horizontal_reaction_kN'])} kN at "
          f"{frame_summary['horizontal_reaction_node']} - {frame_summary['horizontal_reaction_combination']}"],
@@ -1894,8 +1936,11 @@ def write_pdf_from_json(json_path, output_path):
 
     deflection_rows = [["Combination", "Max dx", "Node", "Max dy", "Node"]] + [
         [
-            row["load_combination"], _fmt(row["max_dx"]), row["dx_node"],
-            _fmt(row["max_dy"]), row["dy_node"],
+            row["load_combination"],
+            _deflection_display(row["max_dx"], row.get("horizontal_ratio"), "Eaves"),
+            row["dx_node"],
+            _deflection_display(row["max_dy"], row.get("vertical_ratio"), "Span"),
+            row["dy_node"],
         ]
         for row in source["deflections"]
     ]

@@ -59,6 +59,33 @@ class PreviewGeometryTests(unittest.TestCase):
         self.assertEqual(len(rafters), 1)
         self.assertEqual(preview["counts"]["purlin_lines"], 12)
 
+    def test_preview_contains_crawl_markers_on_the_selected_slope(self):
+        preview = build_preview_geometry(
+            self.payload(
+                use_crawl_beams=True,
+                crawl_beams=[
+                    {
+                        "name": "CB1",
+                        "slope": "right",
+                        "position_from_eaves_mm": "6000",
+                        "section_type": "I-Sections",
+                        "section": "IPE-AA100",
+                        "swl_kg": "5000",
+                        "hoist_trolley_mass_kg": "350",
+                        "lifting_attachment_mass_kg": "100",
+                        "hoist_class": "C2",
+                        "hoisting_speed_m_s": "0.15",
+                    }
+                ],
+            )
+        )
+
+        marker = preview["frame_elevation"]["crawl_beams"][0]
+        self.assertEqual(marker["name"], "CB1")
+        self.assertEqual(marker["slope"], "right")
+        self.assertGreater(marker["point"]["x_mm"], 8000)
+        self.assertGreater(marker["point"]["y_mm"], 6500)
+
     def test_preview_rejects_accidentally_oversized_geometry(self):
         with self.assertRaisesRegex(ValueError, "too many purlin spaces"):
             build_preview_geometry(self.payload(gable_width_m="2000"))

@@ -124,11 +124,17 @@ def _design_summary(calculation_data, analysis_id: str) -> dict[str, Any]:
             "max_horizontal_deflection_mm": frame.get(
                 "max_horizontal_deflection_mm", 0
             ),
+            "horizontal_deflection_ratio": frame.get(
+                "horizontal_deflection_ratio"
+            ),
             "horizontal_combination": frame.get(
                 "horizontal_deflection_combination", ""
             ),
             "max_vertical_deflection_mm": frame.get(
                 "max_vertical_deflection_mm", 0
+            ),
+            "vertical_deflection_ratio": frame.get(
+                "vertical_deflection_ratio"
             ),
             "vertical_combination": frame.get(
                 "vertical_deflection_combination", ""

@@ -12,6 +12,7 @@ GRID = "#B8C9C7"
 SECONDARY = "#3E8E89"
 BRACE = "#C94B40"
 GABLE = "#D08A2E"
+CRAWL = "#7A3E9D"
 MUTED = "#607472"
 PAPER = "#F8FBFA"
 
@@ -92,6 +93,17 @@ def frame_elevation_svg(preview: dict[str, Any]) -> str:
         body.append(_line(member, x, y, color=INK, width=4))
     for member in preview["frame_elevation"]["gable_columns"]:
         body.append(_line(member, x, y, color=GABLE, width=1.5, dash="5 4"))
+    for crawl in preview["frame_elevation"].get("crawl_beams", []):
+        point = crawl["point"]
+        cx = x(float(point["x_mm"]))
+        cy = y(float(point["y_mm"]))
+        body.extend(
+            [
+                f'<circle cx="{cx:.2f}" cy="{cy:.2f}" r="6" fill="#FFFFFF" stroke="{CRAWL}" stroke-width="2.5"/>',
+                f'<line x1="{cx - 8:.2f}" y1="{cy:.2f}" x2="{cx + 8:.2f}" y2="{cy:.2f}" stroke="{CRAWL}" stroke-width="2"/>',
+                f'<text x="{cx + 9:.2f}" y="{cy - 8:.2f}" fill="{CRAWL}" font-family="Arial,sans-serif" font-size="10" font-weight="700">{html.escape(str(crawl["name"]))}</text>',
+            ]
+        )
     for point in preview["frame_elevation"]["purlin_points"]:
         body.append(
             f'<circle cx="{x(float(point["x_mm"])):.2f}" '
@@ -103,6 +115,7 @@ def frame_elevation_svg(preview: dict[str, Any]) -> str:
             f'<text x="{left}" y="278" fill="{MUTED}" font-family="Arial,sans-serif" font-size="12">Span {span / 1000:g} m</text>',
             f'<text x="{right}" y="278" text-anchor="end" fill="{MUTED}" font-family="Arial,sans-serif" font-size="12">{preview["counts"]["purlin_lines"]} purlin lines</text>',
             f'<text x="{right}" y="48" text-anchor="end" fill="{SECONDARY}" font-family="Arial,sans-serif" font-size="11">Actual spacing {pitch["actual_purlin_spacing_mm"]:.0f} mm</text>',
+            f'<text x="{left}" y="295" fill="{CRAWL}" font-family="Arial,sans-serif" font-size="11">{len(preview["frame_elevation"].get("crawl_beams", []))} crawl beam marker(s)</text>',
         ]
     )
     return _data_url(_svg_document("Portal frame section", "".join(body), width, height))
@@ -132,6 +145,14 @@ def roof_plan_svg(preview: dict[str, Any]) -> str:
         yy = y(float(position))
         body.append(
             f'<line x1="{fitted_left:.2f}" y1="{yy:.2f}" x2="{fitted_right:.2f}" y2="{yy:.2f}" stroke="{SECONDARY}" stroke-width="1" opacity="0.75"/>'
+        )
+    for crawl in preview["roof_plan"].get("crawl_rows", []):
+        yy = y(float(crawl["x_mm"]))
+        body.extend(
+            [
+                f'<line x1="{fitted_left:.2f}" y1="{yy:.2f}" x2="{fitted_right:.2f}" y2="{yy:.2f}" stroke="{CRAWL}" stroke-width="3" opacity="0.9"/>',
+                f'<text x="{fitted_left + 5:.2f}" y="{yy - 5:.2f}" fill="{CRAWL}" font-family="Arial,sans-serif" font-size="10" font-weight="700">{html.escape(str(crawl["name"]))}</text>',
+            ]
         )
     for brace in preview["roof_plan"]["braces"]:
         body.append(_line(brace, x, y, color=BRACE, width=2.2))

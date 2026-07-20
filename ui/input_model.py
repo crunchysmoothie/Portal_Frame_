@@ -23,6 +23,8 @@ STEEL_GRADES = ("Steel_S355", "Steel_S275")
 BASE_SUPPORTS = ("Pinned", "Fixed", "Spring")
 COLUMN_BRACING_TYPES = ("X", "K", "A")
 CRAWL_APPLICATIONS = ("One at a time", "All at the same time")
+CRAWL_SLOPES = ("left", "right", "single")
+HOIST_CLASSES = ("C1", "C2", "C3", "C4")
 PORTAL_SECTION_FAMILIES = ("I-Sections", "H-Sections")
 AUTOMATIC_SECTION = "Automatic - lightest passing"
 
@@ -93,6 +95,7 @@ DEFAULT_VALUES: dict[str, Any] = {
     "girt_max_spacing_mm": "1600",
     "use_crawl_beams": False,
     "crawl_application": "One at a time",
+    "crawl_beams": [],
 }
 
 
@@ -229,6 +232,117 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
     rafter_section = portal_section("rafter_section", rafter_section_type)
     column_section = portal_section("column_section", column_section_type)
 
+    raw_crawls = raw.get("crawl_beams", [])
+    if raw_crawls is None:
+        raw_crawls = []
+    if not isinstance(raw_crawls, (list, tuple)):
+        errors["crawl_beams"] = "Crawl beams must be entered as a list."
+        raw_crawls = []
+
+    crawl_beams: list[dict[str, Any]] = []
+    crawl_names: set[str] = set()
+    slope_length_mm = math.hypot(
+        (width_m / (2 if roof_type == "Duo Pitched" else 1)) * 1000,
+        (apex_m - eaves_m) * 1000,
+    )
+    for index, raw_crawl in enumerate(raw_crawls):
+        prefix = f"crawl_beams[{index}]"
+        if not isinstance(raw_crawl, Mapping):
+            errors[prefix] = "Enter a crawl beam object."
+            continue
+
+        def crawl_text(field: str, label: str) -> str:
+            value = str(raw_crawl.get(field, "")).strip()
+            if not value:
+                errors[f"{prefix}.{field}"] = f"Enter {label}."
+            return value
+
+        def crawl_number(
+            field: str,
+            label: str,
+            *,
+            minimum: float = 0.0,
+            strictly_positive: bool = False,
+        ) -> float:
+            value = raw_crawl.get(field, "")
+            try:
+                parsed = float(value)
+            except (TypeError, ValueError):
+                errors[f"{prefix}.{field}"] = f"Enter {label} as a number."
+                return 0.0
+            if not math.isfinite(parsed):
+                errors[f"{prefix}.{field}"] = f"Enter a finite {label}."
+            elif strictly_positive and parsed <= 0:
+                errors[f"{prefix}.{field}"] = f"Enter a {label} greater than zero."
+            elif parsed < minimum:
+                errors[f"{prefix}.{field}"] = f"Enter a {label} of at least {minimum:g}."
+            return parsed
+
+        name = crawl_text("name", "a crawl beam name")
+        name_key = name.casefold()
+        if name_key and name_key in crawl_names:
+            errors[f"{prefix}.name"] = "Crawl beam names must be unique."
+        if name_key:
+            crawl_names.add(name_key)
+
+        slope = str(raw_crawl.get("slope", "")).strip().lower()
+        allowed_slopes = ("left", "right") if roof_type == "Duo Pitched" else ("single", "left")
+        if slope not in allowed_slopes:
+            errors[f"{prefix}.slope"] = (
+                f"Choose one of: {', '.join(allowed_slopes)}."
+            )
+
+        position = crawl_number(
+            "position_from_eaves_mm", "the position from the eaves", minimum=0
+        )
+        if (
+            f"{prefix}.position_from_eaves_mm" not in errors
+            and position > slope_length_mm + 1e-6
+        ):
+            errors[f"{prefix}.position_from_eaves_mm"] = (
+                f"Position must not exceed the roof slope length of {slope_length_mm:.0f} mm."
+            )
+
+        section_type = str(raw_crawl.get("section_type", "")).strip()
+        if section_type not in PORTAL_SECTION_FAMILIES:
+            errors[f"{prefix}.section_type"] = (
+                f"Choose one of: {', '.join(PORTAL_SECTION_FAMILIES)}."
+            )
+        section = str(raw_crawl.get("section", "")).strip()
+        if section not in PORTAL_SECTIONS_BY_FAMILY.get(section_type, ()):
+            errors[f"{prefix}.section"] = f"Choose a section from {section_type}."
+
+        swl = crawl_number("swl_kg", "the safe working load", strictly_positive=True)
+        trolley_mass = crawl_number("hoist_trolley_mass_kg", "the hoist/trolley mass")
+        attachment_mass = crawl_number(
+            "lifting_attachment_mass_kg", "the lifting attachment mass"
+        )
+        hoist_class = str(raw_crawl.get("hoist_class", "")).strip().upper()
+        if hoist_class not in HOIST_CLASSES:
+            errors[f"{prefix}.hoist_class"] = f"Choose one of: {', '.join(HOIST_CLASSES)}."
+        speed = crawl_number(
+            "hoisting_speed_m_s", "the hoisting speed", minimum=0
+        )
+
+        crawl_beams.append(
+            {
+                "name": name,
+                "slope": slope,
+                "position_from_eaves_mm": position,
+                "section_type": section_type,
+                "section": section,
+                "swl_kg": swl,
+                "hoist_trolley_mass_kg": trolley_mass,
+                "lifting_attachment_mass_kg": attachment_mass,
+                "hoist_class": hoist_class,
+                "hoisting_speed_m_s": speed,
+            }
+        )
+
+    use_crawl_beams = bool(raw.get("use_crawl_beams", False))
+    if use_crawl_beams and not crawl_beams:
+        errors["crawl_beams"] = "Add at least one crawl beam when crawl loading is enabled."
+
     layout_fields = {
         "eaves_height_m",
         "apex_height_m",
@@ -255,8 +369,6 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
 
     roof_span_m = width_m / 2 if roof_type == "Duo Pitched" else width_m
     roof_pitch = math.degrees(math.atan((apex_m - eaves_m) / roof_span_m))
-    use_crawl_beams = bool(raw.get("use_crawl_beams", False))
-
     return {
         "project": {
             "name": str(raw.get("project_name", "")).strip() or "Untitled project",
@@ -295,6 +407,7 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
             "base_rotational_stiffness_knm_per_rad": base_stiffness,
             "use_crawl_beams": "Yes" if use_crawl_beams else "No",
             "crawl_application": crawl_application,
+            "crawl_beams": crawl_beams,
         },
         "wind_data": {
             "wind": "3s gust",
