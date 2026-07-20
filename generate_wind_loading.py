@@ -333,6 +333,3 @@ def wind_loading(data: Optional[Union[PortalFrame, Dict[str, Any]]] = None) -> L
         _process_90deg(zones_90, left_cols, rafters, right_cols, f"W90_{positive}", f"W90_{negative}", loads)
 
     return loads
-
-if __name__ == "__main__":
-    print(wind_loading())
