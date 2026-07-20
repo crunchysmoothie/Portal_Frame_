@@ -18,6 +18,7 @@ from ui.input_model import (
     BUILDING_TYPES,
     COLUMN_BRACING_TYPES,
     CRAWL_APPLICATIONS,
+    HOIST_CLASSES,
     DEFAULT_VALUES,
     LIPPED_CHANNEL_SECTIONS,
     LOAD_COMBINATION_STANDARDS,
@@ -446,6 +447,193 @@ def main(page: ft.Page) -> None:
         helper="Whether configured crawls act separately or together.",
     )
 
+    crawl_rows: list[dict[str, Any]] = []
+    crawl_row_counter = 0
+    crawl_editor = ft.Column(spacing=12)
+    crawl_editor_hint = ft.Text(
+        "No crawl beams added. Select Add crawl beam to define one.",
+        size=12,
+        color=TEXT_MUTED,
+    )
+
+    def crawl_text_field(key: str, label: str, value: str, *, col=6) -> ft.TextField:
+        control = ft.TextField(
+            key=key,
+            label=label,
+            value=value,
+            color=TEXT_PRIMARY,
+            label_style=ft.TextStyle(color=TEXT_MUTED),
+            border_color="#93AAA7",
+            focused_border_color=ACCENT,
+            helper_style=ft.TextStyle(color=TEXT_MUTED, size=11),
+            col=col,
+            dense=True,
+        )
+        controls[key] = control
+        return control
+
+    def crawl_number_field(
+        key: str,
+        label: str,
+        value: str,
+        *,
+        unit: str = "",
+        col=6,
+    ) -> ft.TextField:
+        control = ft.TextField(
+            key=key,
+            label=label,
+            value=value,
+            keyboard_type=ft.KeyboardType.NUMBER,
+            suffix=unit or None,
+            color=TEXT_PRIMARY,
+            label_style=ft.TextStyle(color=TEXT_MUTED),
+            border_color="#93AAA7",
+            focused_border_color=ACCENT,
+            helper_style=ft.TextStyle(color=TEXT_MUTED, size=11),
+            suffix_style=ft.TextStyle(color=TEXT_MUTED),
+            col=col,
+            dense=True,
+        )
+        controls[key] = control
+        return control
+
+    def crawl_dropdown(
+        key: str,
+        label: str,
+        values: tuple[str, ...],
+        value: str,
+        *,
+        col=6,
+        searchable=False,
+    ) -> ft.Dropdown:
+        control = ft.Dropdown(
+            key=key,
+            label=label,
+            value=value if value in values else values[0],
+            options=[
+                ft.DropdownOption(key=item, content=ft.Text(item, color=TEXT_PRIMARY))
+                for item in values
+            ],
+            enable_filter=searchable,
+            enable_search=True,
+            editable=False,
+            color=TEXT_PRIMARY,
+            label_style=ft.TextStyle(color=TEXT_MUTED),
+            border_color="#93AAA7",
+            focused_border_color=ACCENT,
+            helper_style=ft.TextStyle(color=TEXT_MUTED, size=11),
+            menu_style=ft.MenuStyle(bgcolor="#FFFFFF", shadow_color="#607472"),
+            col=col,
+            dense=True,
+        )
+        controls[key] = control
+        return control
+
+    def refresh_crawl_editor() -> None:
+        crawl_editor.controls = []
+        if not crawl_rows:
+            crawl_editor.controls.append(crawl_editor_hint)
+            return
+        crawl_editor.controls.extend(row["container"] for row in crawl_rows)
+
+    def add_crawl_beam(_=None) -> None:
+        nonlocal crawl_row_counter
+        index = crawl_row_counter
+        crawl_row_counter += 1
+        prefix = f"crawl_{index}"
+        default_section = PORTAL_SECTIONS_BY_FAMILY["I-Sections"][0]
+        slope_default = "left" if building_roof.value == "Duo Pitched" else "single"
+        fields = {
+            "name": crawl_text_field(f"{prefix}_name", "Crawl beam name", f"CB{index + 1}"),
+            "slope": crawl_dropdown(
+                f"{prefix}_slope", "Roof slope", ("left", "right") if building_roof.value == "Duo Pitched" else ("single", "left"), slope_default
+            ),
+            "position_from_eaves_mm": crawl_number_field(
+                f"{prefix}_position_from_eaves_mm", "Position from eaves", "6000", unit="mm"
+            ),
+            "section_type": crawl_dropdown(
+                f"{prefix}_section_type", "Crawl section family", PORTAL_SECTION_FAMILIES, "I-Sections"
+            ),
+            "section": crawl_dropdown(
+                f"{prefix}_section", "Crawl beam section", PORTAL_SECTIONS_BY_FAMILY["I-Sections"], default_section, searchable=True
+            ),
+            "swl_kg": crawl_number_field(f"{prefix}_swl_kg", "Safe working load", "5000", unit="kg"),
+            "hoist_trolley_mass_kg": crawl_number_field(f"{prefix}_hoist_trolley_mass_kg", "Hoist / trolley mass", "350", unit="kg"),
+            "lifting_attachment_mass_kg": crawl_number_field(f"{prefix}_lifting_attachment_mass_kg", "Lifting attachment mass", "100", unit="kg"),
+            "hoist_class": crawl_dropdown(f"{prefix}_hoist_class", "Hoist class", HOIST_CLASSES, "C2"),
+            "hoisting_speed_m_s": crawl_number_field(f"{prefix}_hoisting_speed_m_s", "Hoisting speed", "0.15", unit="m/s"),
+        }
+
+        def sync_crawl_section_options(event=None) -> None:
+            family = str(fields["section_type"].value)
+            values = PORTAL_SECTIONS_BY_FAMILY.get(family, ())
+            fields["section"].options = [
+                ft.DropdownOption(key=item, content=ft.Text(item, color=TEXT_PRIMARY))
+                for item in values
+            ]
+            if fields["section"].value not in values:
+                fields["section"].value = values[0] if values else None
+            refresh_workspace()
+
+        fields["section_type"].on_select = sync_crawl_section_options
+        for field_name, field in fields.items():
+            if field_name == "section_type":
+                continue
+            if isinstance(field, ft.TextField):
+                field.on_change = update_live_input
+            elif isinstance(field, ft.Dropdown):
+                field.on_select = update_live_input
+        row = ft.Container(
+            padding=14,
+            border=ft.Border.all(1, "#DCE7E5"),
+            border_radius=10,
+            content=ft.Column(
+                spacing=10,
+                controls=[
+                    ft.Row(
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        controls=[
+                            ft.Text(f"Crawl beam {index + 1}", weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
+                            ft.IconButton(
+                                icon=ft.Icons.DELETE_OUTLINE,
+                                tooltip="Remove crawl beam",
+                                icon_color="#A53D35",
+                                on_click=lambda _, row_index=index: remove_crawl_beam(row_index),
+                            ),
+                        ],
+                    ),
+                    ft.ResponsiveRow(controls=[fields["name"], fields["slope"], fields["position_from_eaves_mm"]]),
+                    ft.ResponsiveRow(controls=[fields["section_type"], fields["section"]]),
+                    ft.ResponsiveRow(controls=[fields["swl_kg"], fields["hoist_trolley_mass_kg"], fields["lifting_attachment_mass_kg"]]),
+                    ft.ResponsiveRow(controls=[fields["hoist_class"], fields["hoisting_speed_m_s"]]),
+                ],
+            ),
+        )
+        crawl_rows.append({"index": index, "fields": fields, "container": row})
+        use_crawl_beams.value = True
+        refresh_crawl_editor()
+        update_conditionals()
+
+    def remove_crawl_beam(index: int) -> None:
+        row = next((item for item in crawl_rows if item["index"] == index), None)
+        if row is None:
+            return
+        crawl_rows.remove(row)
+        for field in row["fields"].values():
+            controls.pop(field.key, None)
+        if not crawl_rows:
+            use_crawl_beams.value = False
+        refresh_crawl_editor()
+        update_conditionals()
+
+    add_crawl_beam_button = ft.OutlinedButton(
+        "Add crawl beam",
+        icon=ft.Icons.ADD,
+        on_click=add_crawl_beam,
+    )
+    refresh_crawl_editor()
+
     api_status_text = ft.Text(
         "API not checked", size=12, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY
     )
@@ -827,13 +1015,28 @@ def main(page: ft.Page) -> None:
                 control.error_text = None
 
     def raw_values() -> dict[str, Any]:
-        return {
+        values = {
             key: control.value
             for key, control in controls.items()
         }
+        values["crawl_beams"] = [
+            {
+                field: control.value
+                for field, control in row["fields"].items()
+            }
+            for row in crawl_rows
+        ]
+        return values
 
     def set_validation_error(key: str, message: str) -> None:
         control = controls.get(key)
+        if control is None and key.startswith("crawl_beams["):
+            try:
+                index_text, field = key[len("crawl_beams["):].split("].", 1)
+                row = crawl_rows[int(index_text)]
+                control = row["fields"].get(field)
+            except (ValueError, IndexError, KeyError):
+                control = None
         if isinstance(control, ft.TextField):
             control.error = message
         elif isinstance(control, ft.Dropdown):
@@ -1135,6 +1338,19 @@ def main(page: ft.Page) -> None:
         gable_mass = mass.get("gable_columns", {}).get("mass_kg", 0)
         purlin_mass = mass.get("purlins", {}).get("mass_kg", 0)
         total_mass = mass.get("total_steel_mass_kg", 0)
+
+        def deflection_text(value, ratio, reference_label: str) -> str:
+            try:
+                ratio_value = float(ratio)
+            except (TypeError, ValueError):
+                ratio_value = math.nan
+            suffix = (
+                f" ({reference_label}/{ratio_value:.0f})"
+                if math.isfinite(ratio_value)
+                else ""
+            )
+            return f"{float(value):.2f} mm{suffix}"
+
         brace_text = ", ".join(
             f"{item['member_type']}: {item['section']} ({float(item['utilisation']):.3f})"
             for item in summary.get("bracing_members", [])
@@ -1163,8 +1379,8 @@ def main(page: ft.Page) -> None:
             ),
             analysis_summary_line(
                 "Serviceability results",
-                f"Horizontal {float(serviceability['max_horizontal_deflection_mm']):.2f} mm | "
-                f"Vertical {float(serviceability['max_vertical_deflection_mm']):.2f} mm",
+                f"Horizontal {deflection_text(serviceability['max_horizontal_deflection_mm'], serviceability.get('horizontal_deflection_ratio'), 'Eaves')} | "
+                f"Vertical {deflection_text(serviceability['max_vertical_deflection_mm'], serviceability.get('vertical_deflection_ratio'), 'Span')}",
                 ft.Icons.SWAP_VERT,
             ),
             analysis_summary_line(
@@ -1364,6 +1580,17 @@ def main(page: ft.Page) -> None:
         gable_column_count.disabled = is_canopy
         gable_brace_intervals.disabled = is_canopy
         crawl_application.disabled = not use_crawl_beams.value
+        crawl_slope_values = (
+            ("left", "right") if building_roof.value == "Duo Pitched" else ("single", "left")
+        )
+        for row in crawl_rows:
+            slope_control = row["fields"]["slope"]
+            slope_control.options = [
+                ft.DropdownOption(key=value, content=ft.Text(value, color=TEXT_PRIMARY))
+                for value in crawl_slope_values
+            ]
+            if slope_control.value not in crawl_slope_values:
+                slope_control.value = crawl_slope_values[0]
         update_pitch()
         refresh_workspace(update_page=False)
         page.update()
@@ -1557,8 +1784,15 @@ def main(page: ft.Page) -> None:
                 ),
                 card(
                     "Crawl beam loading",
-                    "The detailed crawl library remains in crawl_beam_inputs.py for this draft.",
-                    ft.ResponsiveRow(controls=[use_crawl_beams, crawl_application]),
+                    "Add each crawl beam, its roof position and hoist data. The marker is shown on the live frame preview.",
+                    ft.Column(
+                        spacing=12,
+                        controls=[
+                            ft.ResponsiveRow(controls=[use_crawl_beams, crawl_application]),
+                            ft.Row(controls=[add_crawl_beam_button]),
+                            crawl_editor,
+                        ],
+                    ),
                 ),
                 footer_buttons(2, 4),
             ],

@@ -146,14 +146,15 @@ def analyze_combination(args):
      c_type, c_name,
      member_db, data,
      v_lim, h_lim,
-     r_total_m, c_total_m) = args
+     r_total_m, c_total_m,
+     allow_failed_checks) = args
 
     # --- section properties -------------------------------------------------
     r_mem = mdb.member_properties(r_type, r_name, member_db)
     c_mem = mdb.member_properties(c_type, c_name, member_db)
 
     # ❶ Reject combos where the rafter flange is wider than the column flange
-    if r_mem['b'] > c_mem['b'] + 3.5:
+    if r_mem['b'] > c_mem['b'] + 3.5 and not allow_failed_checks:
         return None
 
     # --- build and analyse FE model ----------------------------------------
@@ -196,11 +197,12 @@ def analyze_combination(args):
             if dx > worst_h:
                 worst_h, worst_h_combo = dx, cn
 
-    if worst_v > v_lim or worst_h > h_lim:
-        return None   # structure fails serviceability
+    if not allow_failed_checks:
+        if worst_v > v_lim or worst_h > h_lim:
+            return None   # automatic sizing rejects serviceability failures
 
-    if not member_design_checks(frame, r_type, r_mem, c_type, c_mem, data, member_db):
-        return None
+        if not member_design_checks(frame, r_type, r_mem, c_type, c_mem, data, member_db):
+            return None   # automatic sizing rejects strength failures
 
     # --- weight (kN) --------------------------------------------------------
     weight = round(r_mem['m'] * r_total_m + c_mem['m'] * c_total_m, 1)
@@ -227,7 +229,8 @@ def get_member_lengths(data: PortalFrame):
 
 def directional_search(primary, r_list, c_list, r_section_type, c_section_type,
                        member_db, data: PortalFrame, r_total_m, c_total_m,
-                       vert_limit, horiz_limit, num_core):
+                       vert_limit, horiz_limit, num_core,
+                       allow_failed_checks=False):
 
     # Decide which list is the outer loop
     if primary == 'column':
@@ -248,7 +251,7 @@ def directional_search(primary, r_list, c_list, r_section_type, c_section_type,
             # Apply the flange-width compatibility rule before constructing
             # FE-analysis tasks. This can remove a substantial part of the
             # candidate matrix for large frames.
-            if member_db[r_section_type][r_name]["b"] > (
+            if not allow_failed_checks and member_db[r_section_type][r_name]["b"] > (
                 member_db[c_section_type][c_name]["b"] + 3.5
             ):
                 continue
@@ -257,7 +260,8 @@ def directional_search(primary, r_list, c_list, r_section_type, c_section_type,
              c_section_type, c_name,
              member_db, data,
              vert_limit, horiz_limit,
-             r_total_m, c_total_m))
+             r_total_m, c_total_m,
+             allow_failed_checks))
 
     if not tasks:          # nothing to do
         return None
@@ -377,6 +381,11 @@ def sls_check(
     r_total_m, c_total_m = get_member_lengths(data)
     vert_limit = data.frame_data[0]['gable_width'] / 180
     horiz_limit = data.frame_data[0]['eaves_height'] / 180
+    forced_sections = all(
+        str(section or "").strip()
+        and not str(section).strip().lower().startswith("automatic")
+        for section in (selected_rafter_section, selected_column_section)
+    )
 
     # Search the full rafter/column matrix once in ascending mass order.
     best_r = directional_search(
@@ -386,7 +395,8 @@ def sls_check(
         member_db, data,
         r_total_m, c_total_m,  # totals still needed for weight ranking
         vert_limit, horiz_limit,
-        num_cores
+        num_cores,
+        allow_failed_checks=forced_sections,
     )
 
     # ❷ Search by fixing columns first, then rafters
@@ -397,7 +407,9 @@ def sls_check(
         return None, None, member_db, r_section_type, c_section_type, None
 
     best = min(candidates, key=lambda d: d['weight'])
-    print("Lightest combination:")
+    print(
+        "Selected combination:" if forced_sections else "Lightest combination:"
+    )
     print(f"   Rafter: {best['r_name']}")
     print(f"   Column: {best['c_name']}")
     print(f"   Total steel: {best['weight']:.1f} kg")
