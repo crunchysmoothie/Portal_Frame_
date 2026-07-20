@@ -37,8 +37,8 @@ def crawl_beam_library() -> List[Dict]:
     return [
         {
             "name": "CB1",
-            "slope": "right",
-            "position_from_eaves_mm": 8000,
+            "slope": "left",
+            "position_from_eaves_mm": 6000,
             "section_type": "I-Sections",
             "section": "203x133x25",
             "swl_kg": 5000,
@@ -50,7 +50,7 @@ def crawl_beam_library() -> List[Dict]:
         {
             "name": "CB2",
             "slope": "left",
-            "position_from_eaves_mm": 6000,
+            "position_from_eaves_mm": 12000,
             "section_type": "I-Sections",
             "section": "203x133x25",
             "swl_kg": 5000,
