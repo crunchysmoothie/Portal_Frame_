@@ -10,6 +10,7 @@ from typing import Any
 import flet as ft
 import httpx
 
+from foundation_design import FOUNDATION_STANDARDS
 from preview_geometry import build_preview_geometry
 from truss_design import preview_truss
 from ui.analysis_render import combination_names, load_case_svg
@@ -427,6 +428,54 @@ def main(page: ft.Page) -> None:
         (AUTOMATIC_SECTION,) + PORTAL_SECTIONS_BY_FAMILY["I-Sections"],
         helper="Automatic selects the lightest passing section; otherwise the chosen size is checked.",
         searchable=True,
+    )
+    use_eaves_haunch = ft.Switch(
+        key="use_eaves_haunch",
+        label="Use eaves haunches",
+        value=bool(DEFAULT_VALUES["use_eaves_haunch"]),
+        active_color=ACCENT,
+        col=6,
+    )
+    controls["use_eaves_haunch"] = use_eaves_haunch
+    eaves_haunch_length = number_field(
+        "eaves_haunch_length_m",
+        "Eaves haunch length",
+        unit="m",
+        helper="Length along each roof slope from the eaves.",
+    )
+    eaves_haunch_depth = number_field(
+        "eaves_haunch_depth_mm",
+        "Maximum eaves haunch depth",
+        unit="mm",
+        helper="Additional depth below the selected rafter at the eaves.",
+    )
+    eaves_haunch_fields = ft.ResponsiveRow(
+        controls=[eaves_haunch_length, eaves_haunch_depth],
+        visible=bool(DEFAULT_VALUES["use_eaves_haunch"]),
+    )
+    use_apex_haunch = ft.Switch(
+        key="use_apex_haunch",
+        label="Use apex haunches",
+        value=bool(DEFAULT_VALUES["use_apex_haunch"]),
+        active_color=ACCENT,
+        col=6,
+    )
+    controls["use_apex_haunch"] = use_apex_haunch
+    apex_haunch_length = number_field(
+        "apex_haunch_length_m",
+        "Apex haunch length per slope",
+        unit="m",
+        helper="Length from the apex along each adjoining roof slope.",
+    )
+    apex_haunch_depth = number_field(
+        "apex_haunch_depth_mm",
+        "Maximum apex haunch depth",
+        unit="mm",
+        helper="Additional depth below the selected rafter at the apex.",
+    )
+    apex_haunch_fields = ft.ResponsiveRow(
+        controls=[apex_haunch_length, apex_haunch_depth],
+        visible=bool(DEFAULT_VALUES["use_apex_haunch"]),
     )
 
     def sync_portal_section_options() -> None:
@@ -896,6 +945,82 @@ def main(page: ft.Page) -> None:
     )
     refresh_crawl_editor()
 
+    # Foundation design is deliberately post-analysis. These controls are not
+    # included in the portal-analysis request fingerprint.
+    foundation_standard = dropdown(
+        "foundation_standard",
+        "Concrete design standard",
+        FOUNDATION_STANDARDS,
+        col=12,
+    )
+    foundation_length = number_field(
+        "foundation_length_m",
+        "Footing length (frame direction)",
+        unit="m",
+    )
+    foundation_width = number_field(
+        "foundation_width_m",
+        "Footing width (transverse)",
+        unit="m",
+    )
+    foundation_thickness = number_field(
+        "foundation_thickness_mm", "Footing thickness", unit="mm"
+    )
+    foundation_loaded_length = number_field(
+        "foundation_loaded_length_mm",
+        "Loaded length / pedestal",
+        unit="mm",
+    )
+    foundation_loaded_width = number_field(
+        "foundation_loaded_width_mm",
+        "Loaded width / pedestal",
+        unit="mm",
+    )
+    foundation_concrete = number_field(
+        "foundation_concrete_strength_mpa",
+        "Concrete strength",
+        unit="MPa",
+        helper="Cylinder strength for EC2; cube strength for SANS 10100.",
+    )
+    foundation_rebar = number_field(
+        "foundation_rebar_strength_mpa",
+        "Reinforcement yield strength",
+        unit="MPa",
+    )
+    foundation_bar_diameter = number_field(
+        "foundation_bar_diameter_mm", "Bottom bar diameter", unit="mm"
+    )
+    foundation_bar_spacing = number_field(
+        "foundation_bar_spacing_mm", "Bottom bar spacing", unit="mm"
+    )
+    foundation_cover = number_field(
+        "foundation_cover_mm", "Nominal bottom cover", unit="mm"
+    )
+    foundation_bearing = number_field(
+        "foundation_permissible_bearing_kpa",
+        "Permissible soil bearing pressure",
+        unit="kPa",
+        helper="Project-specific value confirmed by the geotechnical engineer.",
+    )
+    foundation_base_depth = number_field(
+        "foundation_base_depth_m",
+        "Depth to footing base",
+        unit="m",
+    )
+    foundation_soil_weight = number_field(
+        "foundation_soil_unit_weight_kn_m3",
+        "Soil unit weight",
+        unit="kN/m³",
+    )
+    foundation_friction = number_field(
+        "foundation_friction_coefficient",
+        "Base friction coefficient",
+        helper="Passive soil resistance is omitted.",
+    )
+    foundation_control_keys = {
+        key for key in controls if key.startswith("foundation_")
+    }
+
     api_status_text = ft.Text(
         "API not checked", size=12, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY
     )
@@ -937,6 +1062,7 @@ def main(page: ft.Page) -> None:
     )
     last_payload: dict[str, Any] | None = None
     submitted_payload_fingerprint: str | None = None
+    current_analysis_id: str | None = None
 
     analysis_status_text = ft.Text(
         "No analysis has been run for these inputs.",
@@ -968,6 +1094,160 @@ def main(page: ft.Page) -> None:
         ],
     )
     current_visualisation: dict[str, Any] = {}
+    foundation_status_text = ft.Text(
+        "Run a portal-frame analysis before designing foundations.",
+        size=12,
+        weight=ft.FontWeight.W_600,
+        color=TEXT_PRIMARY,
+    )
+    foundation_status_card = ft.Container(
+        bgcolor=WARNING_BG,
+        border_radius=10,
+        padding=12,
+        content=ft.Row(
+            spacing=9,
+            controls=[
+                ft.Icon(ft.Icons.INFO_OUTLINE, size=18, color="#B87900"),
+                foundation_status_text,
+            ],
+        ),
+    )
+    foundation_result_summary = ft.Column(
+        spacing=9,
+        controls=[
+            ft.Text(
+                "No foundation design has been run.",
+                size=12,
+                color=TEXT_MUTED,
+            )
+        ],
+    )
+
+    def show_foundation_results(result: dict[str, Any]) -> None:
+        status = str(result.get("status", "FAIL"))
+        foundation_status_card.bgcolor = (
+            SUCCESS_BG if status == "PASS" else ERROR_BG
+        )
+        foundation_status_card.content.controls[0].name = (
+            ft.Icons.CHECK_CIRCLE
+            if status == "PASS"
+            else ft.Icons.ERROR_OUTLINE
+        )
+        foundation_status_card.content.controls[0].color = (
+            "#1C8C62" if status == "PASS" else "#C43D34"
+        )
+        foundation_status_text.value = (
+            f"Foundation design {status}. Review every support and the listed hold points."
+        )
+        derived = result["derived"]
+        rows: list[ft.Control] = [
+            analysis_summary_line(
+                "Design basis",
+                f"{result['standard']} | effective depth "
+                f"{float(derived['effective_depth_mm']):.0f} mm | "
+                f"provided steel {float(derived['provided_steel_mm2_per_m']):.0f} mm²/m",
+                ft.Icons.GAVEL,
+            ),
+            analysis_summary_line(
+                "Stabilising permanent weight",
+                f"Footing {float(derived['footing_self_weight_kN']):.1f} kN | "
+                f"soil cover {float(derived['soil_cover_weight_kN']):.1f} kN",
+                ft.Icons.SCALE_OUTLINED,
+            ),
+        ]
+        for support in result.get("supports", []):
+            bearing = support["serviceability"]["bearing"]
+            sliding = support["serviceability"]["sliding"]
+            uplift = support["serviceability"]["uplift"]
+            structural = support["structural"]
+            governing_check = max(
+                structural["checks"],
+                key=lambda item: float(item["utilisation"]),
+            )
+            rows.extend([
+                analysis_summary_line(
+                    f"Support {support['node']} - {support['status']}",
+                    f"Bearing {bearing['status']} {float(bearing['q_max_kpa']):.1f} kPa "
+                    f"(util {float(bearing['utilisation']):.3f}, {bearing['contact']} contact) | "
+                    f"sliding {sliding['status']} (util {float(sliding['utilisation']):.3f}) | "
+                    f"uplift {uplift['status']} ({float(uplift['net_vertical_kN']):.1f} kN net)",
+                    ft.Icons.FOUNDATION,
+                ),
+                analysis_summary_line(
+                    f"Support {support['node']} - governing RC check",
+                    f"{governing_check['name']} | {structural['combination']} | "
+                    f"utilisation {float(governing_check['utilisation']):.3f} | "
+                    f"{governing_check['status']}",
+                    ft.Icons.FACT_CHECK,
+                ),
+            ])
+        rows.append(
+            analysis_summary_line(
+                "Engineering hold points",
+                "Geotechnical bearing/settlement, anchors and base plate, pedestal/dowels, "
+                "development length, exposure detailing, global overturning and adjacent-footing interaction.",
+                ft.Icons.REPORT_PROBLEM_OUTLINED,
+            )
+        )
+        foundation_result_summary.controls = rows
+        page.update()
+
+    async def run_foundation_design(_=None) -> None:
+        if current_analysis_id is None:
+            return
+        for key in foundation_control_keys:
+            control = controls[key]
+            if isinstance(control, ft.TextField):
+                control.error = None
+            elif isinstance(control, ft.Dropdown):
+                control.error_text = None
+        payload = {
+            key: controls[key].value for key in foundation_control_keys
+        }
+        foundation_design_button.disabled = True
+        foundation_design_button.content = "Designing foundations..."
+        foundation_status_card.bgcolor = WARNING_BG
+        foundation_status_text.value = "Checking service bearing and ULS reinforced concrete design..."
+        page.update()
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{API_URL}/api/analysis/{current_analysis_id}/foundation",
+                    json=payload,
+                )
+                if response.status_code == 422:
+                    detail = response.json().get("detail", {})
+                    if isinstance(detail, dict):
+                        for key, message in (detail.get("errors") or {}).items():
+                            control = controls.get(key)
+                            if isinstance(control, ft.TextField):
+                                control.error = str(message)
+                            elif isinstance(control, ft.Dropdown):
+                                control.error_text = str(message)
+                    raise ValueError(
+                        detail.get("message", "Foundation inputs are invalid.")
+                        if isinstance(detail, dict)
+                        else str(detail)
+                    )
+                response.raise_for_status()
+                show_foundation_results(response.json())
+        except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
+            foundation_status_card.bgcolor = ERROR_BG
+            foundation_status_card.content.controls[0].name = ft.Icons.ERROR_OUTLINE
+            foundation_status_card.content.controls[0].color = "#C43D34"
+            foundation_status_text.value = f"Foundation design error: {exc}"
+            page.update()
+        finally:
+            foundation_design_button.disabled = current_analysis_id is None
+            foundation_design_button.content = "Design foundations"
+            page.update()
+
+    foundation_design_button = ft.FilledButton(
+        "Design foundations",
+        icon=ft.Icons.FOUNDATION,
+        disabled=True,
+        on_click=run_foundation_design,
+    )
     analysis_view_dropdown = ft.Dropdown(
         label="Engineering view",
         value="Loading",
@@ -1627,6 +1907,24 @@ def main(page: ft.Page) -> None:
                 ft.Icons.VIEW_WEEK_OUTLINED,
             ),
             compact_summary_line(
+                "Rafter haunches",
+                " | ".join([
+                    (
+                        f"Eaves {building['eaves_haunch_length'] / 1000:g} m x "
+                        f"{building['eaves_haunch_depth']:.0f} mm"
+                        if building["use_eaves_haunch"] == "Yes"
+                        else "Eaves none"
+                    ),
+                    (
+                        f"Apex {building['apex_haunch_length'] / 1000:g} m/slope x "
+                        f"{building['apex_haunch_depth']:.0f} mm"
+                        if building["use_apex_haunch"] == "Yes"
+                        else "Apex none"
+                    ),
+                ]),
+                ft.Icons.CALL_MERGE,
+            ),
+            compact_summary_line(
                 "Purlins",
                 f"{building['purlin_section']} | {counts['purlin_lines']} lines | "
                 f"{layout['actual_purlin_spacing_mm']:.0f} mm actual",
@@ -1660,6 +1958,8 @@ def main(page: ft.Page) -> None:
                 view_report_button.disabled = True
                 open_analysis_button.disabled = True
                 analysis_destination.disabled = True
+                foundation_destination.disabled = True
+                foundation_design_button.disabled = True
                 download_markup_button.disabled = True
                 load_case_dropdown.disabled = True
                 analysis_view_dropdown.disabled = True
@@ -1702,6 +2002,8 @@ def main(page: ft.Page) -> None:
         )
 
     def show_analysis_failure(message: str) -> None:
+        nonlocal current_analysis_id
+        current_analysis_id = None
         analysis_progress.visible = False
         analysis_status_card.bgcolor = ERROR_BG
         analysis_status_icon.visible = True
@@ -1711,12 +2013,17 @@ def main(page: ft.Page) -> None:
         run_analysis_button.disabled = False
         run_analysis_button.content = "Run analysis"
         analysis_destination.disabled = True
+        foundation_destination.disabled = True
+        foundation_design_button.disabled = True
         page.update()
 
     def show_analysis_results(result: dict[str, Any]) -> None:
-        nonlocal current_visualisation
+        nonlocal current_visualisation, current_analysis_id
         summary = result["design_summary"]
         if summary.get("structural_system") == "Truss":
+            current_analysis_id = None
+            foundation_destination.disabled = True
+            foundation_design_button.disabled = True
             ranked = list(summary.get("ranked_solutions", []))
             best = ranked[0]
             current_visualisation = dict(
@@ -1887,6 +2194,7 @@ def main(page: ft.Page) -> None:
             return
         set_analysis_view_options(truss_deflection_only=False)
         sections = summary["portal_sections"]
+        haunches = summary.get("haunches", {})
         strength = summary["governing_strength"]
         serviceability = summary["serviceability"]
         mass = summary.get("steel_mass_breakdown", {})
@@ -1927,6 +2235,24 @@ def main(page: ft.Page) -> None:
                 "Selected portal sections",
                 f"Rafter {sections['rafter']} | Column {sections['column']}",
                 ft.Icons.VIEW_WEEK_OUTLINED,
+            ),
+            analysis_summary_line(
+                "Modelled haunches",
+                " | ".join([
+                    (
+                        f"Eaves {float(haunches.get('eaves', {}).get('length_mm', 0)) / 1000:g} m x "
+                        f"{float(haunches.get('eaves', {}).get('depth_mm', 0)):.0f} mm"
+                        if haunches.get("eaves", {}).get("used")
+                        else "Eaves none"
+                    ),
+                    (
+                        f"Apex {float(haunches.get('apex', {}).get('length_mm', 0)) / 1000:g} m/slope x "
+                        f"{float(haunches.get('apex', {}).get('depth_mm', 0)):.0f} mm"
+                        if haunches.get("apex", {}).get("used")
+                        else "Apex none"
+                    ),
+                ]),
+                ft.Icons.CALL_MERGE,
             ),
             analysis_summary_line(
                 "Governing strength check",
@@ -1971,6 +2297,16 @@ def main(page: ft.Page) -> None:
         analysis_view_dropdown.disabled = not all_names
         open_analysis_button.disabled = not all_names
         analysis_destination.disabled = not all_names
+        current_analysis_id = str(result["analysis_id"])
+        foundation_destination.disabled = False
+        foundation_design_button.disabled = False
+        foundation_status_card.bgcolor = WARNING_BG
+        foundation_status_card.content.controls[0].name = ft.Icons.INFO_OUTLINE
+        foundation_status_card.content.controls[0].color = "#B87900"
+        foundation_status_text.value = (
+            "Portal reactions are ready. Confirm the geotechnical and footing "
+            "inputs, then run the foundation design."
+        )
         if all_names:
             governing = str(strength.get("combination", ""))
             load_case_dropdown.value = (
@@ -1995,16 +2331,19 @@ def main(page: ft.Page) -> None:
         page.update()
 
     async def run_analysis(_=None) -> None:
-        nonlocal submitted_payload_fingerprint
+        nonlocal submitted_payload_fingerprint, current_analysis_id
         if not validate_form() or last_payload is None:
             return
 
+        current_analysis_id = None
         submitted_payload_fingerprint = json.dumps(last_payload, sort_keys=True)
         run_analysis_button.disabled = True
         run_analysis_button.content = "Analysis running..."
         view_report_button.disabled = True
         open_analysis_button.disabled = True
         analysis_destination.disabled = True
+        foundation_destination.disabled = True
+        foundation_design_button.disabled = True
         download_markup_button.disabled = True
         load_case_dropdown.disabled = True
         analysis_view_dropdown.disabled = True
@@ -2109,6 +2448,24 @@ def main(page: ft.Page) -> None:
                 "Portal sections",
                 f"Rafter {building['rafter_section']} • Column {building['column_section']}",
                 ft.Icons.VIEW_WEEK_OUTLINED,
+            ),
+            summary_line(
+                "Haunches",
+                " | ".join([
+                    (
+                        f"Eaves {building['eaves_haunch_length'] / 1000:g} m x "
+                        f"{building['eaves_haunch_depth']:.0f} mm"
+                        if building["use_eaves_haunch"] == "Yes"
+                        else "Eaves none"
+                    ),
+                    (
+                        f"Apex {building['apex_haunch_length'] / 1000:g} m/slope x "
+                        f"{building['apex_haunch_depth']:.0f} mm"
+                        if building["use_apex_haunch"] == "Yes"
+                        else "Apex none"
+                    ),
+                ]),
+                ft.Icons.CALL_MERGE,
             ),
             summary_line(
                 "Bracing",
@@ -2233,6 +2590,14 @@ def main(page: ft.Page) -> None:
             else "Opening areas are only used for a normal building in Final design mode."
         )
         spring_stiffness.disabled = base_support.value != "Spring"
+        use_eaves_haunch.disabled = is_truss
+        use_apex_haunch.disabled = is_truss
+        eaves_haunch_fields.visible = (
+            not is_truss and bool(use_eaves_haunch.value)
+        )
+        apex_haunch_fields.visible = (
+            not is_truss and bool(use_apex_haunch.value)
+        )
         gable_column_count.disabled = is_canopy
         gable_brace_intervals.disabled = is_canopy
         crawl_application.disabled = is_truss or not use_crawl_beams.value
@@ -2256,6 +2621,8 @@ def main(page: ft.Page) -> None:
     structural_system.on_select = update_conditionals
     wind_design_mode.on_select = update_conditionals
     base_support.on_select = update_conditionals
+    use_eaves_haunch.on_change = update_conditionals
+    use_apex_haunch.on_change = update_conditionals
     use_crawl_beams.on_change = update_conditionals
     truss_internal_support.on_select = update_conditionals
     truss_design_centre_columns.on_change = update_conditionals
@@ -2311,7 +2678,9 @@ def main(page: ft.Page) -> None:
         truss_internal_support,
         truss_centre_column_material,
     }
-    for live_control in controls.values():
+    for control_key, live_control in controls.items():
+        if control_key in foundation_control_keys:
+            continue
         if isinstance(live_control, ft.TextField):
             live_control.on_change = update_live_input
         elif isinstance(live_control, ft.Dropdown) and live_control not in conditional_dropdowns:
@@ -2352,6 +2721,22 @@ def main(page: ft.Page) -> None:
                     rafter_section_type, rafter_section,
                     column_section_type, column_section,
                 ]),
+            ),
+            card(
+                "Rafter haunches",
+                "Haunches are cut from the selected rafter. The tapered composite "
+                "stiffness is discretised internally; welds and connection detailing "
+                "remain separate design checks.",
+                ft.Column(
+                    spacing=10,
+                    controls=[
+                        ft.ResponsiveRow(
+                            controls=[use_eaves_haunch, use_apex_haunch]
+                        ),
+                        eaves_haunch_fields,
+                        apex_haunch_fields,
+                    ],
+                ),
             ),
             card(
                 "Portal support and bracing",
@@ -2699,6 +3084,94 @@ def main(page: ft.Page) -> None:
                 ),
             ],
         ),
+        ft.Column(
+            spacing=18,
+            controls=[
+                section_heading(
+                    "Foundation design",
+                    "Design identical isolated pads from the completed portal-frame "
+                    "support reactions.",
+                ),
+                foundation_status_card,
+                card(
+                    "Design basis and soil",
+                    "The permissible bearing pressure is a project-specific "
+                    "geotechnical input. SANS 10161 is not used to infer a soil value.",
+                    ft.Column(
+                        spacing=10,
+                        controls=[
+                            ft.ResponsiveRow(controls=[foundation_standard]),
+                            ft.ResponsiveRow(
+                                controls=[
+                                    foundation_bearing,
+                                    foundation_base_depth,
+                                    foundation_soil_weight,
+                                    foundation_friction,
+                                ]
+                            ),
+                        ],
+                    ),
+                ),
+                card(
+                    "Pad geometry and materials",
+                    "The loaded area represents the centred pedestal or base-transfer area.",
+                    ft.Column(
+                        spacing=10,
+                        controls=[
+                            ft.ResponsiveRow(
+                                controls=[
+                                    foundation_length,
+                                    foundation_width,
+                                    foundation_thickness,
+                                    foundation_loaded_length,
+                                    foundation_loaded_width,
+                                ]
+                            ),
+                            ft.ResponsiveRow(
+                                controls=[
+                                    foundation_concrete,
+                                    foundation_rebar,
+                                    foundation_bar_diameter,
+                                    foundation_bar_spacing,
+                                    foundation_cover,
+                                ]
+                            ),
+                        ],
+                    ),
+                ),
+                card(
+                    "Foundation results",
+                    "Service bearing, sliding and uplift are separated from ULS "
+                    "flexure, one-way shear and punching shear.",
+                    foundation_result_summary,
+                ),
+                ft.Container(
+                    bgcolor=WARNING_BG,
+                    border_radius=10,
+                    padding=14,
+                    content=ft.Text(
+                        "HOLD POINTS: geotechnical bearing and settlement, anchors/base "
+                        "plate, pedestal and dowels, development length, exposure "
+                        "detailing, global overturning and adjacent-foundation interaction "
+                        "require separate project checks.",
+                        color="#745B2B",
+                        weight=ft.FontWeight.BOLD,
+                    ),
+                ),
+                ft.Row(
+                    alignment=ft.MainAxisAlignment.END,
+                    wrap=True,
+                    controls=[
+                        ft.OutlinedButton(
+                            "Back to analysis",
+                            icon=ft.Icons.ARROW_BACK,
+                            on_click=lambda _: go_to(5),
+                        ),
+                        foundation_design_button,
+                    ],
+                ),
+            ],
+        ),
     ]
 
     content_host = ft.Column(
@@ -2817,6 +3290,12 @@ def main(page: ft.Page) -> None:
         label="Analysis",
         disabled=True,
     )
+    foundation_destination = ft.NavigationRailDestination(
+        icon=ft.Icon(ft.Icons.FOUNDATION_OUTLINED, color="#506A67"),
+        selected_icon=ft.Icon(ft.Icons.FOUNDATION, color=ACCENT_DARK),
+        label="Foundations",
+        disabled=True,
+    )
 
     rail = ft.NavigationRail(
         extended=True,
@@ -2880,6 +3359,7 @@ def main(page: ft.Page) -> None:
                 label="Review",
             ),
             analysis_destination,
+            foundation_destination,
         ],
     )
 
@@ -2894,8 +3374,8 @@ def main(page: ft.Page) -> None:
         current_index = index
         rail.selected_index = index
         content_host.controls = [sections[index]]
-        visual_builder.visible = index != 5
-        running_summary_panel.visible = index != 5
+        visual_builder.visible = index not in (5, 6)
+        running_summary_panel.visible = index not in (5, 6)
         page.update()
         page.run_task(content_host.scroll_to, offset=0, duration=0)
 

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 import member_database as portal_members
+from foundation_design import DEFAULT_FOUNDATION_VALUES
 from roof_layout import calculate_roof_bracing_layout
 
 
@@ -79,6 +80,12 @@ DEFAULT_VALUES: dict[str, Any] = {
     "rafter_section": AUTOMATIC_SECTION,
     "column_section_type": "I-Sections",
     "column_section": AUTOMATIC_SECTION,
+    "use_eaves_haunch": False,
+    "eaves_haunch_length_m": "1.5",
+    "eaves_haunch_depth_mm": "450",
+    "use_apex_haunch": False,
+    "apex_haunch_length_m": "1.0",
+    "apex_haunch_depth_mm": "300",
     "base_support_condition": "Spring",
     "base_rotational_stiffness_knm_per_rad": "10000",
     "fundamental_basic_wind_speed": "32",
@@ -138,6 +145,7 @@ DEFAULT_VALUES: dict[str, Any] = {
     "truss_fire_load_kpa": "0",
     "truss_hvac_load_kpa": "0",
 }
+DEFAULT_VALUES.update(DEFAULT_FOUNDATION_VALUES)
 
 
 class InputValidationError(ValueError):
@@ -437,6 +445,68 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
     rafter_section = portal_section("rafter_section", rafter_section_type)
     column_section = portal_section("column_section", column_section_type)
 
+    use_eaves_haunch = (
+        structural_system == "Portal frame"
+        and bool(raw.get("use_eaves_haunch", False))
+    )
+    use_apex_haunch = (
+        structural_system == "Portal frame"
+        and bool(raw.get("use_apex_haunch", False))
+    )
+    eaves_haunch_length_m = 0.0
+    eaves_haunch_depth_mm = 0.0
+    apex_haunch_length_m = 0.0
+    apex_haunch_depth_mm = 0.0
+    if use_eaves_haunch:
+        eaves_haunch_length_m = number(
+            "eaves_haunch_length_m", strictly_positive=True
+        )
+        eaves_haunch_depth_mm = number(
+            "eaves_haunch_depth_mm", strictly_positive=True, maximum=2000
+        )
+    if use_apex_haunch:
+        apex_haunch_length_m = number(
+            "apex_haunch_length_m", strictly_positive=True
+        )
+        apex_haunch_depth_mm = number(
+            "apex_haunch_depth_mm", strictly_positive=True, maximum=2000
+        )
+    roof_slope_length_m = math.hypot(
+        width_m / (2 if roof_type == "Duo Pitched" else 1),
+        apex_m - eaves_m,
+    )
+    if (
+        use_eaves_haunch
+        and "eaves_haunch_length_m" not in errors
+        and eaves_haunch_length_m >= roof_slope_length_m
+    ):
+        errors["eaves_haunch_length_m"] = (
+            f"Length must be less than the roof slope length of "
+            f"{roof_slope_length_m:.2f} m."
+        )
+    if (
+        use_apex_haunch
+        and "apex_haunch_length_m" not in errors
+        and apex_haunch_length_m >= roof_slope_length_m
+    ):
+        errors["apex_haunch_length_m"] = (
+            f"Length must be less than the roof slope length of "
+            f"{roof_slope_length_m:.2f} m."
+        )
+    if (
+        use_eaves_haunch
+        and use_apex_haunch
+        and not {
+            "eaves_haunch_length_m",
+            "apex_haunch_length_m",
+        }.intersection(errors)
+        and eaves_haunch_length_m + apex_haunch_length_m
+        >= roof_slope_length_m
+    ):
+        errors["apex_haunch_length_m"] = (
+            "Eaves and apex haunch zones must not overlap on a roof slope."
+        )
+
     raw_crawls = raw.get("crawl_beams", [])
     if raw_crawls is None:
         raw_crawls = []
@@ -610,6 +680,12 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
             "rafter_section": rafter_section,
             "column_section_type": column_section_type,
             "column_section": column_section,
+            "use_eaves_haunch": "Yes" if use_eaves_haunch else "No",
+            "eaves_haunch_length": eaves_haunch_length_m * 1000,
+            "eaves_haunch_depth": eaves_haunch_depth_mm,
+            "use_apex_haunch": "Yes" if use_apex_haunch else "No",
+            "apex_haunch_length": apex_haunch_length_m * 1000,
+            "apex_haunch_depth": apex_haunch_depth_mm,
             "base_support_condition": base_support,
             "base_rotational_stiffness_knm_per_rad": base_stiffness,
             "use_crawl_beams": "Yes" if use_crawl_beams else "No",

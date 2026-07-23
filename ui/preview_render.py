@@ -13,6 +13,7 @@ SECONDARY = "#3E8E89"
 BRACE = "#C94B40"
 GABLE = "#D08A2E"
 CRAWL = "#7A3E9D"
+HAUNCH = "#176B68"
 MUTED = "#607472"
 PAPER = "#F8FBFA"
 
@@ -91,6 +92,15 @@ def frame_elevation_svg(preview: dict[str, Any]) -> str:
     ]
     for member in preview["frame_elevation"]["members"]:
         body.append(_line(member, x, y, color=INK, width=4))
+    for haunch in preview["frame_elevation"].get("haunches", []):
+        points = " ".join(
+            f'{x(float(point["x_mm"])):.2f},{y(float(point["y_mm"])):.2f}'
+            for point in haunch["points"]
+        )
+        body.append(
+            f'<polygon points="{points}" fill="{HAUNCH}" fill-opacity="0.34" '
+            f'stroke="{HAUNCH}" stroke-width="1.3"/>'
+        )
     for member in preview["frame_elevation"]["gable_columns"]:
         body.append(_line(member, x, y, color=GABLE, width=1.5, dash="5 4"))
     for crawl in preview["frame_elevation"].get("crawl_beams", []):

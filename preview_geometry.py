@@ -113,6 +113,41 @@ def _line(
     }
 
 
+def _haunch_triangle(
+    haunch_id: str,
+    zone: str,
+    root: tuple[float, float],
+    toward: tuple[float, float],
+    length_mm: float,
+    depth_mm: float,
+) -> dict[str, Any]:
+    dx = toward[0] - root[0]
+    dy = toward[1] - root[1]
+    full_length = math.hypot(dx, dy)
+    unit_x, unit_y = dx / full_length, dy / full_length
+    normal_options = ((unit_y, -unit_x), (-unit_y, unit_x))
+    normal_x, normal_y = min(normal_options, key=lambda item: item[1])
+    toe = (
+        root[0] + unit_x * length_mm,
+        root[1] + unit_y * length_mm,
+    )
+    root_bottom = (
+        root[0] + normal_x * depth_mm,
+        root[1] + normal_y * depth_mm,
+    )
+    return {
+        "id": haunch_id,
+        "zone": zone,
+        "length_mm": length_mm,
+        "depth_mm": depth_mm,
+        "points": [
+            {"x_mm": root[0], "y_mm": root[1]},
+            {"x_mm": root_bottom[0], "y_mm": root_bottom[1]},
+            {"x_mm": toe[0], "y_mm": toe[1]},
+        ],
+    }
+
+
 def _wall_braces(
     frame_positions: list[float],
     eaves_mm: float,
@@ -225,6 +260,51 @@ def build_preview_geometry(payload: Mapping[str, Any]) -> dict[str, Any]:
     else:
         portal_members.append(_line("C2", "column", (span, apex), (span, 0)))
 
+    haunches: list[dict[str, Any]] = []
+    left_eave = (0.0, eaves)
+    apex_point = (
+        (span / 2, apex)
+        if roof_type == "Duo Pitched"
+        else (span, apex)
+    )
+    right_eave = (span, eaves)
+    if str(building.get("use_eaves_haunch", "No")).lower() == "yes":
+        haunches.append(_haunch_triangle(
+            "HE1",
+            "eaves",
+            left_eave,
+            apex_point,
+            float(building.get("eaves_haunch_length", 0.0)),
+            float(building.get("eaves_haunch_depth", 0.0)),
+        ))
+        if roof_type == "Duo Pitched":
+            haunches.append(_haunch_triangle(
+                "HE2",
+                "eaves",
+                right_eave,
+                apex_point,
+                float(building.get("eaves_haunch_length", 0.0)),
+                float(building.get("eaves_haunch_depth", 0.0)),
+            ))
+    if str(building.get("use_apex_haunch", "No")).lower() == "yes":
+        haunches.append(_haunch_triangle(
+            "HA1",
+            "apex",
+            apex_point,
+            left_eave,
+            float(building.get("apex_haunch_length", 0.0)),
+            float(building.get("apex_haunch_depth", 0.0)),
+        ))
+        if roof_type == "Duo Pitched":
+            haunches.append(_haunch_triangle(
+                "HA2",
+                "apex",
+                apex_point,
+                right_eave,
+                float(building.get("apex_haunch_length", 0.0)),
+                float(building.get("apex_haunch_depth", 0.0)),
+            ))
+
     gable_columns: list[dict[str, Any]] = []
     if str(building.get("building_type")) != "Canopy":
         gable_count = _positive_integer(building, "gable_column_count")
@@ -310,6 +390,7 @@ def build_preview_geometry(payload: Mapping[str, Any]) -> dict[str, Any]:
         "roof_layout": layout,
         "frame_elevation": {
             "members": portal_members,
+            "haunches": haunches,
             "purlin_points": roof_points,
             "gable_columns": gable_columns,
             "crawl_beams": crawl_markers,
