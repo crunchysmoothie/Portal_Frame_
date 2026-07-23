@@ -20,12 +20,14 @@ from design_calculations import (
 from draughtsman_markup import write_markup
 from preview_geometry import build_preview_geometry
 from run_full_analysis import run_analysis
+from truss_design import design_truss, preview_truss
+from truss_report import write_truss_html, write_truss_json
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 JOBS_ROOT = PROJECT_ROOT / "output" / "analysis" / "jobs"
 _JOB_ID = re.compile(r"^[0-9a-f]{12}$")
-_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="portal-analysis")
+_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="structural-analysis")
 _LOCK = Lock()
 _JOBS: dict[str, dict[str, Any]] = {}
 
@@ -65,9 +67,17 @@ def _normalise_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     for key in ("project", "building_data", "wind_data"):
         if not isinstance(payload.get(key), Mapping):
             raise ValueError(f"{key} must be an object.")
+    structural_system = str(payload.get("structural_system", "Portal frame"))
+    if structural_system not in {"Portal frame", "Truss"}:
+        raise ValueError("structural_system must be 'Portal frame' or 'Truss'.")
+    if structural_system == "Truss" and not isinstance(payload.get("truss_data"), Mapping):
+        raise ValueError("truss_data must be an object for Truss analysis.")
     # This validates the complete geometry and finite layout choices before the
     # heavier analysis job is accepted.
-    build_preview_geometry(payload)
+    if structural_system == "Truss":
+        preview_truss(payload)
+    else:
+        build_preview_geometry(payload)
     required_wind = (
         "fundamental_basic_wind_speed",
         "return_period",
@@ -159,6 +169,29 @@ def _run_job(analysis_id: str, payload: dict[str, Any]) -> None:
     markup_dir = directory / "markup"
 
     try:
+        if payload.get("structural_system") == "Truss":
+            result = design_truss(payload)
+            report_html = write_truss_html(
+                result, report_dir / "preliminary_truss_design_report.html"
+            )
+            report_json = write_truss_json(
+                result, report_dir / "preliminary_truss_design_report.json"
+            )
+            job.update(
+                {
+                    "status": "complete",
+                    "completed": _now(),
+                    "message": "Preliminary truss, girder and eave-column design is complete.",
+                    "design_summary": result,
+                    "artifact_paths": {
+                        "truss-report-html": str(report_html),
+                        "truss-report-json": str(report_json),
+                    },
+                }
+            )
+            _write_job(job)
+            return
+
         written_snapshot = run_analysis(
             payload["building_data"],
             payload["wind_data"],

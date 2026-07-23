@@ -11,6 +11,7 @@ import flet as ft
 import httpx
 
 from preview_geometry import build_preview_geometry
+from truss_design import preview_truss
 from ui.analysis_render import combination_names, load_case_svg
 from ui.input_model import (
     AUTOMATIC_SECTION,
@@ -26,8 +27,14 @@ from ui.input_model import (
     PORTAL_SECTIONS_BY_FAMILY,
     ROOF_ACCESSIBILITY,
     ROOF_TYPES,
+    STRUCTURAL_SYSTEMS,
     STEEL_GRADES,
     TERRAIN_CATEGORIES,
+    TRUSS_CHORD_FORMS,
+    TRUSS_CENTRE_COLUMN_MATERIALS,
+    TRUSS_STEEL_SECTION_ORDERS,
+    TRUSS_INTERNAL_SUPPORTS,
+    TRUSS_TYPES,
     WIND_DESIGN_MODES,
     InputValidationError,
     build_analysis_payload,
@@ -35,6 +42,10 @@ from ui.input_model import (
 from ui.preview_render import (
     frame_elevation_svg,
     roof_plan_svg,
+    truss_girder_elevation_svg,
+    truss_elevation_svg,
+    truss_roof_plan_svg,
+    truss_type_reference_svg,
     wall_elevation_svg,
 )
 
@@ -52,7 +63,7 @@ ERROR_BG = "#FCE8E6"
 
 
 def main(page: ft.Page) -> None:
-    page.title = "PortalFrame Designer"
+    page.title = "Portal Frame and Truss Designer"
     page.padding = 0
     page.bgcolor = PAGE_BG
     page.theme = ft.Theme(
@@ -200,6 +211,13 @@ def main(page: ft.Page) -> None:
         "project_number", "Project number", col=6
     )
     designer = text_field("designer", "Designer", col=6)
+    structural_system = dropdown(
+        "structural_system",
+        "Structural system",
+        STRUCTURAL_SYSTEMS,
+        helper="Select one engineering system for this project.",
+        col=12,
+    )
     building_type = dropdown(
         "building_type",
         "Building type",
@@ -253,6 +271,30 @@ def main(page: ft.Page) -> None:
             eaves = float(controls["eaves_height_m"].value)
             apex = float(controls["apex_height_m"].value)
             width = float(controls["gable_width_m"].value)
+            if structural_system.value == "Truss":
+                bays = [
+                    float(value.strip())
+                    for value in controls["truss_transverse_bay_spans_m"].value.split(",")
+                ]
+                if not bays or any(value <= 0 for value in bays):
+                    raise ValueError
+                truss_total_width_text.value = f"{sum(bays):g} m"
+                minimum_depth = float(controls["truss_minimum_depth_m"].value)
+                maximum_depth = float(controls["truss_maximum_depth_m"].value)
+                pitch_text.value = f"{minimum_depth:.2f}–{maximum_depth:.2f} m"
+                longest_span = max(bays)
+                truss_depth_suggestion.value = (
+                    f"Suggested starting depths using the longest transverse span "
+                    f"({longest_span:g} m): span/14 = {longest_span / 14:.2f} m; "
+                    f"span/18 = {longest_span / 18:.2f} m."
+                )
+                spacing = float(controls["truss_spacing_m"].value)
+                frame_summary.value = (
+                    f"{controls['truss_type'].value} • {sum(bays):g} m total width • "
+                    f"{len(bays)} span(s) • "
+                    f"trusses at {spacing:g} m • purlins define panel points"
+                )
+                return
             span = width / 2 if building_roof.value == "Duo Pitched" else width
             pitch = math.degrees(math.atan((apex - eaves) / span))
             if width <= 0 or apex <= eaves:
@@ -265,6 +307,9 @@ def main(page: ft.Page) -> None:
         except (TypeError, ValueError):
             pitch_text.value = "—"
             frame_summary.value = "Enter valid geometry to calculate pitch and frame quantity."
+            if structural_system.value == "Truss":
+                truss_total_width_text.value = "—"
+                truss_depth_suggestion.value = "Enter valid transverse spans to calculate suggested depths."
 
     eaves_height = number_field(
         "eaves_height_m", "Eaves height", unit="m", on_change=update_pitch
@@ -283,6 +328,38 @@ def main(page: ft.Page) -> None:
     )
     building_length = number_field(
         "building_length_m", "Building length", unit="m", on_change=update_pitch
+    )
+    truss_bay_spans = text_field(
+        "truss_transverse_bay_spans_m",
+        "Transverse span lengths",
+        helper="Comma-separated in metres, for example 26, 24, 24, 26. Building width and span count are calculated automatically.",
+        col={"sm": 12, "md": 9},
+    )
+    truss_total_width_text = ft.Text(
+        "—", size=20, weight=ft.FontWeight.W_600, color=ACCENT_DARK
+    )
+    truss_total_width = ft.Container(
+        col={"sm": 12, "md": 3},
+        padding=ft.Padding.only(left=12, top=3),
+        content=ft.Column(
+            spacing=2,
+            controls=[
+                ft.Text("Total building width", size=12, color=TEXT_MUTED),
+                truss_total_width_text,
+            ],
+        ),
+    )
+    truss_building_length = number_field(
+        "truss_building_length_m", "Building length", unit="m"
+    )
+    truss_spacing = number_field(
+        "truss_spacing_m", "Truss spacing", unit="m"
+    )
+    truss_eaves_height = number_field(
+        "truss_eaves_height_m", "Eave-column height", unit="m"
+    )
+    truss_roof_pitch = number_field(
+        "truss_roof_pitch_deg", "Roof pitch", unit="°"
     )
 
     # Design basis and wind controls.
@@ -432,6 +509,191 @@ def main(page: ft.Page) -> None:
     )
     girt_spacing = number_field(
         "girt_max_spacing_mm", "Maximum girt spacing", unit="mm"
+    )
+    truss_type = dropdown(
+        "truss_type", "Truss type", TRUSS_TYPES, col=6
+    )
+    truss_chord_form = dropdown(
+        "truss_chord_form", "Chord form", TRUSS_CHORD_FORMS, col=6
+    )
+    truss_internal_support = dropdown(
+        "truss_internal_support", "Internal support", TRUSS_INTERNAL_SUPPORTS,
+        helper="Used only when more than one transverse span is entered.", col=12,
+    )
+    truss_design_centre_columns = ft.Checkbox(
+        key="truss_design_centre_columns",
+        label="Design centre columns",
+        value=bool(DEFAULT_VALUES["truss_design_centre_columns"]),
+        fill_color=ACCENT,
+        check_color="#FFFFFF",
+    )
+    controls["truss_design_centre_columns"] = truss_design_centre_columns
+    truss_centre_column_material = dropdown(
+        "truss_centre_column_material",
+        "Centre-column material",
+        TRUSS_CENTRE_COLUMN_MATERIALS,
+        helper="Steel is checked axially; concrete tilt-up is captured as a design hold point.",
+        col=6,
+    )
+    truss_centre_column_bracing_spacing = number_field(
+        "truss_centre_column_bracing_spacing_m",
+        "Centre-column brace spacing",
+        unit="m",
+        helper="Weak-axis effective length assumption for axial steel columns.",
+        col=6,
+    )
+    truss_centre_column_section_order = dropdown(
+        "truss_centre_column_steel_section_order",
+        "Steel section order",
+        TRUSS_STEEL_SECTION_ORDERS,
+        helper="Choose lightest passing or preferred database sections first.",
+        col=6,
+    )
+    truss_centre_column_concrete_width = number_field(
+        "truss_centre_column_concrete_width_mm",
+        "Tilt-up column width",
+        unit="mm",
+        col=6,
+    )
+    truss_centre_column_concrete_thickness = number_field(
+        "truss_centre_column_concrete_thickness_mm",
+        "Tilt-up column thickness",
+        unit="mm",
+        col=6,
+    )
+    truss_centre_column_concrete_bracing_spacing = number_field(
+        "truss_centre_column_concrete_bracing_spacing_m",
+        "Tilt-up brace/effective length spacing",
+        unit="m",
+        helper="Captured for the future concrete stability check and erection design.",
+        col=6,
+    )
+    truss_centre_column_concrete_fck = number_field(
+        "truss_centre_column_concrete_fck_mpa",
+        "Concrete strength fck",
+        unit="MPa",
+        col=6,
+    )
+    truss_centre_column_concrete_rebar_area = number_field(
+        "truss_centre_column_concrete_rebar_area_mm2",
+        "Longitudinal reinforcement area",
+        unit="mm²",
+        helper="Input only; capacity and detailing remain a hold point until the concrete design basis is confirmed.",
+        col=6,
+    )
+    truss_centre_column_steel_controls = ft.Column(
+        controls=[ft.ResponsiveRow(controls=[
+            truss_centre_column_bracing_spacing,
+            truss_centre_column_section_order,
+        ])],
+        spacing=12,
+    )
+    truss_centre_column_concrete_controls = ft.Column(
+        controls=[ft.ResponsiveRow(controls=[
+            truss_centre_column_concrete_width,
+            truss_centre_column_concrete_thickness,
+            truss_centre_column_concrete_bracing_spacing,
+            truss_centre_column_concrete_fck,
+            truss_centre_column_concrete_rebar_area,
+        ])],
+        spacing=12,
+        visible=False,
+    )
+    truss_centre_column_card = card(
+        "Centre-column design",
+        "Centre columns always use the internal bearing reactions for axial-only checking. Enable design to include steel column mass and a real section; concrete tilt-up is intentionally reported as a hold point until its design standard and erection basis are confirmed.",
+        ft.Column(controls=[
+            ft.ResponsiveRow(controls=[truss_design_centre_columns, truss_centre_column_material]),
+            truss_centre_column_steel_controls,
+            truss_centre_column_concrete_controls,
+        ], spacing=12),
+    )
+    truss_centre_column_card.visible = False
+    truss_type_reference = ft.Image(
+        src=truss_type_reference_svg(str(DEFAULT_VALUES["truss_type"])),
+        fit=ft.BoxFit.CONTAIN,
+        width=600,
+        height=225,
+        semantics_label="Warren, Pratt and Howe truss type reference",
+    )
+    truss_minimum_depth = number_field(
+        "truss_minimum_depth_m", "Minimum truss depth", unit="m"
+    )
+    truss_maximum_depth = number_field(
+        "truss_maximum_depth_m", "Maximum truss depth", unit="m"
+    )
+    truss_depth_increment = number_field(
+        "truss_depth_increment_m", "Depth search increment", unit="m"
+    )
+    truss_solution_count = number_field(
+        "truss_ranked_solution_count", "Ranked solutions", integer=True
+    )
+    truss_depth_suggestion = ft.Text(
+        "Suggested starting depths will be calculated from the entered span(s).",
+        size=12,
+        color=TEXT_MUTED,
+    )
+    truss_girder_span_bays = number_field(
+        "truss_girder_span_bays", "Girder span", unit="building bays", integer=True
+    )
+    truss_girder_minimum_depth = number_field(
+        "truss_girder_minimum_depth_m", "Minimum girder depth", unit="m"
+    )
+    truss_girder_maximum_depth = number_field(
+        "truss_girder_maximum_depth_m", "Maximum girder depth", unit="m"
+    )
+    truss_girder_depth_increment = number_field(
+        "truss_girder_depth_increment_m", "Girder depth increment", unit="m"
+    )
+    truss_girder_deflection = number_field(
+        "truss_girder_deflection_denominator", "Girder deflection: Span /"
+    )
+    girder_span_summary = ft.Text("", size=12, color=TEXT_MUTED)
+    girder_depth_suggestion = ft.Text(
+        "Suggested girder depth will be calculated from the girder span.",
+        size=12,
+        color=TEXT_MUTED,
+    )
+
+    def update_girder_depth_suggestion() -> None:
+        try:
+            girder_bays = int(float(truss_girder_span_bays.value))
+            grid_spacing = float(truss_spacing.value)
+            girder_depth_suggestion.value = (
+                f"Suggested starting girder depth: span/10 = "
+                f"{girder_bays * grid_spacing / 10:.2f} m."
+            )
+        except (TypeError, ValueError):
+            girder_depth_suggestion.value = (
+                "Enter valid bay count and truss spacing to calculate the suggested depth."
+            )
+    truss_top_brace_panels = number_field(
+        "truss_top_chord_brace_every_n_purlins", "Top chord: every Nth purlin",
+        helper="1 = every purlin, 2 = every second purlin, etc.",
+        integer=True,
+    )
+    truss_bottom_brace_panels = number_field(
+        "truss_bottom_chord_brace_every_n_purlins", "Bottom chord: every Nth purlin",
+        helper="Restraint is assumed across the entire building length.",
+        integer=True,
+    )
+    truss_deflection_limit = number_field(
+        "truss_deflection_denominator", "Vertical deflection: Span /"
+    )
+    truss_services_load = number_field(
+        "truss_services_load_kpa", "Services load", unit="kPa"
+    )
+    truss_ceiling_load = number_field(
+        "truss_ceiling_load_kpa", "Ceiling load", unit="kPa"
+    )
+    truss_solar_load = number_field(
+        "truss_solar_load_kpa", "Solar load", unit="kPa"
+    )
+    truss_fire_load = number_field(
+        "truss_fire_load_kpa", "Fire-services load", unit="kPa"
+    )
+    truss_hvac_load = number_field(
+        "truss_hvac_load_kpa", "HVAC load", unit="kPa"
     )
     use_crawl_beams = ft.Switch(
         key="use_crawl_beams",
@@ -733,6 +995,25 @@ def main(page: ft.Page) -> None:
         focused_border_color=ACCENT,
         menu_style=ft.MenuStyle(bgcolor="#FFFFFF", shadow_color="#607472"),
     )
+
+    def set_analysis_view_options(*, truss_deflection_only: bool) -> None:
+        option_values = (
+            (("Deflection", "Deflection (SLS)"),)
+            if truss_deflection_only
+            else (
+                ("Loading", "Loading"),
+                ("Deflection", "Deflection (SLS)"),
+                ("Internal forces", "Internal forces"),
+                ("Utilisation", "Utilisation (ULS)"),
+            )
+        )
+        analysis_view_dropdown.options = [
+            ft.DropdownOption(key=key, content=ft.Text(label, color=TEXT_PRIMARY))
+            for key, label in option_values
+        ]
+        valid_values = {key for key, _ in option_values}
+        if analysis_view_dropdown.value not in valid_values:
+            analysis_view_dropdown.value = option_values[0][0]
     analysis_component_dropdown = ft.Dropdown(
         label="Component",
         options=[],
@@ -915,7 +1196,31 @@ def main(page: ft.Page) -> None:
                 "entries. Magnitudes, axes and source cases are labelled directly at the arrows."
             )
         elif view == "deflection":
-            if component == "total deflection":
+            if current_visualisation.get("structural_system") == "Truss":
+                movements = selected.get("node_displacements_mm", {}).values()
+                if component == "total deflection":
+                    node_maximum = max(
+                        (
+                            math.hypot(
+                                float(movement.get("dx", 0.0)),
+                                float(movement.get("dy", 0.0)),
+                            )
+                            for movement in movements
+                        ),
+                        default=0.0,
+                    )
+                    component_label = "total"
+                else:
+                    movement_key = "dx" if component == "dx" else "dy"
+                    node_maximum = max(
+                        (
+                            abs(float(movement.get(movement_key, 0.0)))
+                            for movement in movements
+                        ),
+                        default=0.0,
+                    )
+                    component_label = str(component).upper()
+            elif component == "total deflection":
                 node_maximum = max(
                     (
                         math.hypot(
@@ -1160,7 +1465,11 @@ def main(page: ft.Page) -> None:
         clear_errors()
         try:
             payload = build_analysis_payload(raw_values())
-            preview = build_preview_geometry(payload)
+            preview = (
+                preview_truss(payload)
+                if payload["structural_system"] == "Truss"
+                else build_preview_geometry(payload)
+            )
         except (InputValidationError, ValueError) as exc:
             error_count = len(exc.errors) if isinstance(exc, InputValidationError) else 1
             if isinstance(exc, InputValidationError):
@@ -1185,6 +1494,84 @@ def main(page: ft.Page) -> None:
 
         building = payload["building_data"]
         wind = payload["wind_data"]
+        if payload["structural_system"] == "Truss":
+            geometry = preview["geometry"]
+            restraint = preview["chord_restraint_layout"]
+            frame_preview_image.src = truss_elevation_svg(preview)
+            roof_preview_image.src = truss_roof_plan_svg(preview)
+            wall_preview_image.src = truss_girder_elevation_svg(preview)
+            frame_preview_image.visible = True
+            roof_preview_image.visible = True
+            wall_preview_image.visible = True
+            preview_status.bgcolor = WARNING_BG
+            preview_status.content.controls[0].name = ft.Icons.WARNING_AMBER
+            preview_status.content.controls[0].color = "#B87900"
+            preview_status_text.value = "Generated preliminary truss layout"
+            preview_description.value = (
+                f"Middle search depth {geometry['depth_mm'] / 1000:g} m; "
+                f"{geometry['panel_count']} panels at {geometry['panel_width_mm']:.0f} mm. "
+                f"Calculated maximum restraint spacing: top "
+                f"{restraint['top_chord']['maximum_spacing_mm'] / 1000:.2f} m, "
+                f"bottom {restraint['bottom_chord']['maximum_spacing_mm'] / 1000:.2f} m. "
+                f"The plan contains {preview['building_layout']['columns']['eave_count']} main columns and "
+                f"{preview['building_layout']['columns']['internal_count']} internal support columns."
+            )
+            live_validation.bgcolor = WARNING_BG
+            live_validation.content.controls[0].name = ft.Icons.WARNING_AMBER
+            live_validation.content.controls[0].color = "#B87900"
+            live_validation.content.controls[1].value = (
+                "Inputs are ready for preliminary optimisation; project-specific engineering validation remains required."
+            )
+            live_summary.controls = [
+                compact_summary_line("Project", payload["project"]["name"], ft.Icons.FOLDER_OUTLINED),
+                compact_summary_line(
+                    "Structural system",
+                    f"{geometry['topology']} • {geometry['chord_form']} • pinned joints",
+                    ft.Icons.ACCOUNT_TREE_OUTLINED,
+                ),
+                compact_summary_line(
+                    "Search envelope",
+                    f"{payload['truss_data']['minimum_depth_mm'] / 1000:g} to "
+                    f"{payload['truss_data']['maximum_depth_mm'] / 1000:g} m • "
+                    f"{payload['truss_data']['depth_increment_mm']:.0f} mm increments",
+                    ft.Icons.TUNE,
+                ),
+                compact_summary_line(
+                    "Geometry",
+                    f"{building['gable_width'] / 1000:g} m span • "
+                    f"{building['rafter_spacing'] / 1000:g} m truss spacing • "
+                    f"{payload['truss_data']['span_count']} span(s) • "
+                    f"purlins/panels ≤ {payload['truss_data']['maximum_panel_width_mm']:.0f} mm",
+                    ft.Icons.STRAIGHTEN,
+                ),
+                compact_summary_line(
+                    "Chord restraint",
+                    f"Top every {payload['truss_data']['top_chord_brace_every_n_purlins']} purlin(s) • "
+                    f"bottom every {payload['truss_data']['bottom_chord_brace_every_n_purlins']} • full length",
+                    ft.Icons.SWAP_VERT,
+                ),
+                compact_summary_line(
+                    "Wind inputs",
+                    f"{wind['fundamental_basic_wind_speed']:g} m/s • terrain {wind['terrain_category']} • "
+                    f"{wind['return_period']} years",
+                    ft.Icons.AIR,
+                ),
+            ]
+            if submitted_payload_fingerprint is not None:
+                current_fingerprint = json.dumps(payload, sort_keys=True)
+                if current_fingerprint != submitted_payload_fingerprint:
+                    analysis_status_card.bgcolor = WARNING_BG
+                    analysis_status_icon.name = ft.Icons.WARNING_AMBER
+                    analysis_status_icon.color = "#B87900"
+                    analysis_status_text.value = "Inputs changed after analysis; run again before using outputs."
+                    view_report_button.disabled = True
+            if update_page:
+                page.update()
+            return
+
+        frame_preview_image.visible = True
+        roof_preview_image.visible = True
+        wall_preview_image.visible = True
         counts = preview["counts"]
         layout = preview["roof_layout"]
         frame_preview_image.src = frame_elevation_svg(preview)
@@ -1329,6 +1716,176 @@ def main(page: ft.Page) -> None:
     def show_analysis_results(result: dict[str, Any]) -> None:
         nonlocal current_visualisation
         summary = result["design_summary"]
+        if summary.get("structural_system") == "Truss":
+            ranked = list(summary.get("ranked_solutions", []))
+            best = ranked[0]
+            current_visualisation = dict(
+                best.get("load_case_visualisation", {})
+            )
+            set_analysis_view_options(truss_deflection_only=True)
+            analysis_view_dropdown.value = "Deflection"
+            ranked_text = " | ".join(
+                f"#{item['rank']}: {item['geometry']['depth_mm'] / 1000:g} m, "
+                f"{item['arrangement_mass_kg']:,.0f} kg steel, "
+                f"{item['practical_cost_equivalent_kg']:,.0f} kg-eq practical, "
+                f"util {item['governing_strength']['utilisation']:.3f}"
+                for item in ranked
+            )
+            chord_text = " | ".join(
+                f"Span {item['span']} {str(item['role']).replace('_', ' ')}: "
+                f"{item['section']} (util {item['governing_utilisation']:.3f})"
+                for item in best.get("chord_fabrication_groups", [])
+            )
+            web_groups = list(best.get("web_fabrication_groups", []))
+            web_sections = sorted({
+                str(item["section"]) for item in web_groups
+            })
+            web_text = (
+                f"{len(web_groups)} groups using {len(web_sections)} section(s): "
+                f"{', '.join(web_sections)}. Minimum group "
+                f"{min((item['member_count'] for item in web_groups), default=0)} panels; "
+                "smaller sections introduced only below 75% retained utilisation."
+            )
+            bearing_text = " | ".join(
+                f"{item['bearing_node']}: {item['section']['designation']} "
+                f"from {item['source']}"
+                for item in best.get("bearing_support_verticals", [])
+            )
+            analysis_result_summary.controls = [
+                analysis_summary_line(
+                    "Validation status", summary["validation_status"], ft.Icons.WARNING_AMBER
+                ),
+                analysis_summary_line(
+                    "Practical ranked solutions", ranked_text, ft.Icons.FORMAT_LIST_NUMBERED
+                ),
+                analysis_summary_line(
+                    "Lightest-member comparison",
+                    f"{best['lightest_member_arrangement_mass_kg']:,.0f} kg with individually "
+                    f"optimised webs versus {best['arrangement_mass_kg']:,.0f} kg using "
+                    "practical fabrication groups",
+                    ft.Icons.SCALE_OUTLINED,
+                ),
+                analysis_summary_line(
+                    "Rank 1 geometry",
+                    f"{best['geometry']['topology']} • {best['geometry']['chord_form']} • "
+                    f"{best['geometry']['panel_count']} panels at "
+                    f"{best['geometry']['panel_width_mm']:.0f} mm • depth "
+                    f"{best['geometry']['depth_mm'] / 1000:g} m",
+                    ft.Icons.ACCOUNT_TREE_OUTLINED,
+                ),
+                analysis_summary_line(
+                    "Rank 1 chord restraint",
+                    f"Top every {best['chord_restraint_layout']['top_chord']['brace_every_n_purlins']} purlin(s) "
+                    f"(max {best['chord_restraint_layout']['top_chord']['maximum_spacing_mm'] / 1000:.2f} m) • "
+                    f"bottom every {best['chord_restraint_layout']['bottom_chord']['brace_every_n_purlins']} "
+                    f"(max {best['chord_restraint_layout']['bottom_chord']['maximum_spacing_mm'] / 1000:.2f} m)",
+                    ft.Icons.SWAP_VERT,
+                ),
+                analysis_summary_line(
+                    "Common chord sections by span",
+                    chord_text or "No chord groups returned",
+                    ft.Icons.HORIZONTAL_RULE,
+                ),
+                analysis_summary_line(
+                    "Practical web groups",
+                    web_text or "No ordinary web groups returned",
+                    ft.Icons.GRID_VIEW,
+                ),
+                analysis_summary_line(
+                    "Bearing support verticals",
+                    bearing_text or "No bearing support verticals returned",
+                    ft.Icons.VERTICAL_ALIGN_CENTER,
+                ),
+                analysis_summary_line(
+                    "Rank 1 strength",
+                    f"{best['governing_strength']['member']} • "
+                    f"{best['governing_strength']['section']} • utilisation "
+                    f"{best['governing_strength']['utilisation']:.3f} • "
+                    f"{best['governing_strength']['check'].replace('_', ' ')}",
+                    ft.Icons.FACT_CHECK,
+                ),
+                analysis_summary_line(
+                    "Rank 1 serviceability",
+                    f"{best['serviceability']['maximum_vertical_deflection_mm']:.1f} mm / "
+                    f"{best['serviceability']['limit_mm']:.1f} mm "
+                    f"({best['serviceability']['governing_combination']})",
+                    ft.Icons.SWAP_VERT,
+                ),
+                analysis_summary_line(
+                    "Eave columns",
+                    f"{best['eave_column_design']['column_count']} × {best['eave_column_design']['section']} • "
+                    f"ULS utilisation {best['eave_column_design']['governing_strength']['utilisation']:.3f} • "
+                    f"SLS utilisation {best['eave_column_design']['serviceability']['utilisation']:.3f}",
+                    ft.Icons.VIEW_WEEK_OUTLINED,
+                ),
+                analysis_summary_line(
+                    "Longitudinal girder",
+                    (
+                        "Not required"
+                        if best["girder_design"]["status"] == "NOT_REQUIRED"
+                        else f"{best['girder_design']['geometry']['span_mm'] / 1000:g} m span • "
+                             f"{best['girder_design']['geometry']['depth_mm'] / 1000:g} m lightest depth • "
+                             f"utilisation {best['girder_design']['governing_strength']['utilisation']:.3f}"
+                    ),
+                    ft.Icons.ACCOUNT_TREE_OUTLINED,
+                ),
+                analysis_summary_line(
+                    "Centre columns",
+                    (
+                        "Not designed; main eave-column section used as a preliminary stiffness proxy"
+                        if best.get("centre_column_design", {}).get("status") == "NOT_DESIGNED"
+                        else (
+                            f"{best['centre_column_design'].get('column_count', 0)} Ã— "
+                            f"{best['centre_column_design'].get('section', 'steel section')} â€¢ "
+                            f"axial utilisation {best['centre_column_design'].get('governing_strength', {}).get('utilisation', 0):.3f}"
+                            if best.get("centre_column_design", {}).get("status") == "PASS"
+                            else "Concrete tilt-up inputs captured; concrete capacity is a hold point"
+                        )
+                    ),
+                    ft.Icons.VERTICAL_ALIGN_CENTER,
+                ),
+                analysis_summary_line(
+                    "Exclusions",
+                    "Independent validation, connections, restraint capacity and concrete tilt-up capacity/detailing",
+                    ft.Icons.REPORT_PROBLEM_OUTLINED,
+                ),
+            ]
+            artifacts = result.get("artifacts", {})
+            report = artifacts.get("truss-report-html")
+            if report:
+                view_report_button.url = ft.Url(
+                    url=f"{API_URL}{report['download_url']}", target=ft.UrlTarget.SELF
+                )
+                view_report_button.disabled = False
+            download_markup_button.disabled = True
+            all_names = combination_names(current_visualisation, "SLS")
+            analysis_view_dropdown.disabled = not all_names
+            open_analysis_button.disabled = not all_names
+            analysis_destination.disabled = not all_names
+            if all_names:
+                governing = str(best["serviceability"].get("governing_combination", ""))
+                load_case_dropdown.value = (
+                    governing if governing in all_names else all_names[0]
+                )
+                refresh_analysis_controls()
+            else:
+                load_case_description.value = (
+                    "This truss result does not contain SLS displacement data."
+                )
+            analysis_progress.visible = False
+            analysis_status_icon.visible = True
+            analysis_status_icon.name = ft.Icons.WARNING_AMBER
+            analysis_status_icon.color = "#B87900"
+            analysis_status_card.bgcolor = WARNING_BG
+            analysis_status_text.value = (
+                f"Truss calculation draft {result['analysis_id']} complete; "
+                "connections and independent project verification remain outstanding."
+            )
+            run_analysis_button.disabled = False
+            run_analysis_button.content = "Run analysis again"
+            page.update()
+            return
+        set_analysis_view_options(truss_deflection_only=False)
         sections = summary["portal_sections"]
         strength = summary["governing_strength"]
         serviceability = summary["serviceability"]
@@ -1559,12 +2116,111 @@ def main(page: ft.Page) -> None:
                 ft.Icons.CALL_SPLIT,
             ),
         ]
+        if payload["structural_system"] == "Truss":
+            truss = payload["truss_data"]
+            extra_load = sum(
+                truss[key] for key in (
+                    "services_load_kpa", "ceiling_load_kpa", "solar_load_kpa",
+                    "fire_load_kpa", "hvac_load_kpa",
+                )
+            )
+            review_summary.controls = [
+                summary_line(
+                    "System",
+                    f"{truss['topology']} • {truss['chord_form']} • {building['building_roof']}",
+                    ft.Icons.ACCOUNT_TREE_OUTLINED,
+                ),
+                summary_line(
+                    "Geometry search",
+                    f"{building['gable_width'] / 1000:g} m width • {truss['span_count']} span(s) • "
+                    f"{truss['minimum_depth_mm'] / 1000:g} to {truss['maximum_depth_mm'] / 1000:g} m depth",
+                    ft.Icons.STRAIGHTEN,
+                ),
+                summary_line(
+                    "Supports",
+                    (
+                        "Main column left • Main column right"
+                        if truss["span_count"] == 1
+                        else f"Main column left • {truss['internal_support']} • Main column right"
+                    ),
+                    ft.Icons.VIEW_WEEK_OUTLINED,
+                ),
+                summary_line(
+                    "Sections",
+                    "Common chords per span • independent web angles • minimum 50x50x5 • S355JR",
+                    ft.Icons.VIEW_WEEK_OUTLINED,
+                ),
+                summary_line(
+                    "Loads",
+                    f"PortalFrame environmental actions + {extra_load:g} kPa additional permanent load",
+                    ft.Icons.WIND_POWER,
+                ),
+                summary_line(
+                    "Hold point", "Project-specific validation and SANS editions pending",
+                    ft.Icons.WARNING_AMBER,
+                ),
+            ]
         json_preview.value = json.dumps(payload, indent=2)
         page.update()
         return True
 
+    def entered_truss_span_count() -> int:
+        return len([
+            value for value in str(truss_bay_spans.value).split(",")
+            if value.strip()
+        ])
+
     def update_conditionals(_=None) -> None:
         sync_portal_section_options()
+        is_truss = structural_system.value == "Truss"
+        if is_truss:
+            building_type.value = "Normal"
+            steel_grade.value = "Steel_S355"
+        building_type.disabled = is_truss
+        building_roof.disabled = False
+        steel_grade.disabled = is_truss
+        portal_system_controls.visible = not is_truss
+        truss_system_controls.visible = is_truss
+        portal_dimensions.visible = not is_truss
+        truss_dimensions.visible = is_truss
+        truss_additional_loads_card.visible = is_truss
+        apex_height.disabled = is_truss
+        span_count = entered_truss_span_count()
+        has_internal_support = is_truss and span_count > 1
+        truss_internal_support.disabled = not has_internal_support
+        uses_girder = (
+            has_internal_support
+            and truss_internal_support.value == "Longitudinal girders"
+        )
+        truss_girder_card.visible = uses_girder
+        uses_centre_columns = (
+            has_internal_support
+            and truss_internal_support.value == "Centre columns"
+        )
+        truss_centre_column_card.visible = uses_centre_columns
+        centre_design_enabled = uses_centre_columns and bool(
+            truss_design_centre_columns.value
+        )
+        truss_centre_column_material.disabled = not centre_design_enabled
+        is_concrete_centre = (
+            centre_design_enabled
+            and truss_centre_column_material.value == "Concrete tilt-up"
+        )
+        truss_centre_column_steel_controls.visible = (
+            centre_design_enabled and not is_concrete_centre
+        )
+        truss_centre_column_concrete_controls.visible = is_concrete_centre
+        try:
+            girder_bays = int(float(truss_girder_span_bays.value))
+            grid_spacing = float(truss_spacing.value)
+            girder_span_summary.value = (
+                f"Calculated girder span: {girder_bays} bays × "
+                f"{grid_spacing:g} m = {girder_bays * grid_spacing:g} m."
+            )
+        except (TypeError, ValueError):
+            girder_span_summary.value = "Enter valid bay count and truss spacing."
+        truss_type_reference.src = truss_type_reference_svg(str(truss_type.value))
+        update_girder_depth_suggestion()
         is_canopy = building_type.value == "Canopy"
         is_final_normal = not is_canopy and wind_design_mode.value == "Final design"
         blocking.disabled = not is_canopy
@@ -1579,7 +2235,7 @@ def main(page: ft.Page) -> None:
         spring_stiffness.disabled = base_support.value != "Spring"
         gable_column_count.disabled = is_canopy
         gable_brace_intervals.disabled = is_canopy
-        crawl_application.disabled = not use_crawl_beams.value
+        crawl_application.disabled = is_truss or not use_crawl_beams.value
         crawl_slope_values = (
             ("left", "right") if building_roof.value == "Duo Pitched" else ("single", "left")
         )
@@ -1597,21 +2253,63 @@ def main(page: ft.Page) -> None:
 
     building_type.on_select = update_conditionals
     building_roof.on_select = update_conditionals
+    structural_system.on_select = update_conditionals
     wind_design_mode.on_select = update_conditionals
     base_support.on_select = update_conditionals
     use_crawl_beams.on_change = update_conditionals
+    truss_internal_support.on_select = update_conditionals
+    truss_design_centre_columns.on_change = update_conditionals
+    truss_centre_column_material.on_select = update_conditionals
 
     def update_live_input(_=None) -> None:
+        if structural_system.value == "Truss":
+            span_count = entered_truss_span_count()
+            truss_internal_support.disabled = span_count <= 1
+            truss_girder_card.visible = (
+                span_count > 1
+                and truss_internal_support.value == "Longitudinal girders"
+            )
+            truss_centre_column_card.visible = (
+                span_count > 1
+                and truss_internal_support.value == "Centre columns"
+            )
+            centre_design_enabled = (
+                truss_centre_column_card.visible
+                and bool(truss_design_centre_columns.value)
+            )
+            is_concrete_centre = (
+                centre_design_enabled
+                and truss_centre_column_material.value == "Concrete tilt-up"
+            )
+            truss_centre_column_material.disabled = not centre_design_enabled
+            truss_centre_column_steel_controls.visible = (
+                centre_design_enabled and not is_concrete_centre
+            )
+            truss_centre_column_concrete_controls.visible = is_concrete_centre
+            try:
+                girder_bays = int(float(truss_girder_span_bays.value))
+                grid_spacing = float(truss_spacing.value)
+                girder_span_summary.value = (
+                    f"Calculated girder span: {girder_bays} bays × "
+                    f"{grid_spacing:g} m = {girder_bays * grid_spacing:g} m."
+                )
+            except (TypeError, ValueError):
+                girder_span_summary.value = "Enter valid bay count and truss spacing."
+            truss_type_reference.src = truss_type_reference_svg(str(truss_type.value))
+            update_girder_depth_suggestion()
         update_pitch()
         refresh_workspace()
 
     conditional_dropdowns = {
         building_type,
         building_roof,
+        structural_system,
         wind_design_mode,
         base_support,
         rafter_section_type,
         column_section_type,
+        truss_internal_support,
+        truss_centre_column_material,
     }
     for live_control in controls.values():
         if isinstance(live_control, ft.TextField):
@@ -1637,6 +2335,119 @@ def main(page: ft.Page) -> None:
             )
         return ft.Row(alignment=ft.MainAxisAlignment.END, controls=buttons)
 
+    secondary_steel_card = card(
+        "Purlins and girts",
+        "Portal purlins follow the roof layout; truss purlins coincide with calculated vertical panel points. Sections come from the lipped-channel database.",
+        ft.ResponsiveRow(controls=[
+            purlin_section, purlin_spacing, girt_section, girt_spacing
+        ]),
+    )
+    portal_system_controls = ft.Column(
+        spacing=18,
+        controls=[
+            card(
+                "Portal member sections",
+                "Choose automatic mass-ordered sizing or force a database section for checking.",
+                ft.ResponsiveRow(controls=[
+                    rafter_section_type, rafter_section,
+                    column_section_type, column_section,
+                ]),
+            ),
+            card(
+                "Portal support and bracing",
+                "Integer fields represent counts of modelled intervals or panels.",
+                ft.ResponsiveRow(controls=[
+                    base_support, spring_stiffness, col_bracing_spacing,
+                    column_bracing_type, rafter_bracing_spacing,
+                ]),
+            ),
+            card(
+                "Gable columns",
+                "Gables are pinned; the brace interval count controls their unbraced length.",
+                ft.ResponsiveRow(controls=[gable_column_count, gable_brace_intervals]),
+            ),
+            card(
+                "Crawl beam loading",
+                "Add each crawl beam, its roof position and hoist data.",
+                ft.Column(spacing=12, controls=[
+                    ft.ResponsiveRow(controls=[use_crawl_beams, crawl_application]),
+                    ft.Row(controls=[add_crawl_beam_button]),
+                    crawl_editor,
+                ]),
+            ),
+        ],
+    )
+    truss_additional_loads_card = card(
+        "Additional permanent roof actions",
+        "Enter project-specific characteristic area loads. Zero means the action is excluded.",
+        ft.ResponsiveRow(controls=[
+            truss_services_load, truss_ceiling_load, truss_solar_load,
+            truss_fire_load, truss_hvac_load,
+        ]),
+    )
+    truss_additional_loads_card.visible = False
+
+    truss_system_controls = ft.Column(
+        spacing=18,
+        visible=False,
+        controls=[
+            card(
+                "Truss form",
+                "Choose the web arrangement and chord geometry; the diagrams show the diagonal directions used by the model.",
+                ft.Column(controls=[
+                    ft.ResponsiveRow(controls=[
+                        truss_type, truss_chord_form, truss_internal_support,
+                    ]),
+                    truss_type_reference,
+                ]),
+            ),
+            truss_centre_column_card,
+            card(
+                "Truss depth search",
+                "Every depth within the limits is designed; passing arrangements are ranked by total modelled mass.",
+                ft.Column(controls=[
+                    truss_depth_suggestion,
+                    ft.ResponsiveRow(controls=[
+                        truss_minimum_depth, truss_maximum_depth,
+                        truss_depth_increment, truss_solution_count,
+                    ]),
+                ]),
+            ),
+            truss_girder_card := card(
+                "Longitudinal girder search",
+                "Column positions and girder length are calculated from the selected number of building bays.",
+                ft.Column(controls=[
+                    girder_span_summary,
+                    girder_depth_suggestion,
+                    ft.ResponsiveRow(controls=[
+                        truss_girder_span_bays,
+                        truss_girder_minimum_depth,
+                        truss_girder_maximum_depth,
+                        truss_girder_depth_increment,
+                        truss_girder_deflection,
+                    ]),
+                ]),
+            ),
+            card(
+                "Chord restraint and serviceability",
+                "Restraint is assumed across the full building length at every selected Nth purlin; vertical truss deflection defaults to Span/180.",
+                ft.ResponsiveRow(controls=[
+                    truss_top_brace_panels, truss_bottom_brace_panels,
+                    truss_deflection_limit,
+                ]),
+            ),
+            ft.Container(
+                bgcolor=ERROR_BG,
+                border_radius=10,
+                padding=14,
+                content=ft.Text(
+                    "CALCULATION SCOPE: member forces, axial resistance, slenderness and vertical deflection are calculated. Gussets, bolts, welds, bearings and restraint-member capacity still require separate design and an independent project check.",
+                    color="#9C3C16", weight=ft.FontWeight.BOLD,
+                ),
+            ),
+        ],
+    )
+
     sections: list[ft.Control] = [
         ft.Column(
             spacing=18,
@@ -1653,9 +2464,10 @@ def main(page: ft.Page) -> None:
                 card(
                     "Building configuration",
                     "These are finite model choices, so they are controlled selections.",
-                    ft.ResponsiveRow(
-                        controls=[building_type_field, building_roof_field]
-                    ),
+                    ft.Column(controls=[
+                        ft.ResponsiveRow(controls=[structural_system]),
+                        ft.ResponsiveRow(controls=[building_type_field, building_roof_field]),
+                    ]),
                 ),
                 footer_buttons(None, 1),
             ],
@@ -1667,7 +2479,7 @@ def main(page: ft.Page) -> None:
                     "Geometry",
                     "Enter measured dimensions in metres; the analysis payload converts them to millimetres.",
                 ),
-                card(
+                portal_dimensions := card(
                     "Portal dimensions",
                     "Apex/high-side height must be greater than eaves height.",
                     ft.ResponsiveRow(
@@ -1694,6 +2506,14 @@ def main(page: ft.Page) -> None:
                         ]
                     ),
                 ),
+                truss_dimensions := card(
+                    "Truss building geometry",
+                    "Enter each transverse span length; their count and total establish the span arrangement and building width.",
+                    ft.ResponsiveRow(controls=[
+                        truss_bay_spans, truss_total_width, truss_building_length,
+                        truss_spacing, truss_eaves_height, truss_roof_pitch,
+                    ]),
+                ),
                 footer_buttons(0, 2),
             ],
         ),
@@ -1701,8 +2521,8 @@ def main(page: ft.Page) -> None:
             spacing=18,
             controls=[
                 section_heading(
-                    "Design basis & wind",
-                    "Select code-defined choices and enter site-specific numerical values.",
+                    "Design and Loading",
+                    "Select the design basis and enter the loading inputs shared by portal-frame and truss buildings.",
                 ),
                 card(
                     "Design basis",
@@ -1725,6 +2545,7 @@ def main(page: ft.Page) -> None:
                         ]
                     ),
                 ),
+                truss_additional_loads_card,
                 card(
                     "Wall openings",
                     "Used to resolve internal pressure for a normal building in Final design mode.",
@@ -1742,58 +2563,12 @@ def main(page: ft.Page) -> None:
             spacing=18,
             controls=[
                 section_heading(
-                    "Frame & secondary steel",
-                    "Configure restraints, bracing topology, gables, purlins, girts and crawl loading.",
+                    "Structural system design",
+                    "Configure the selected portal-frame or preliminary truss design workflow.",
                 ),
-                card(
-                    "Portal member sections",
-                    "Choose automatic mass-ordered sizing or force a database section for checking.",
-                    ft.ResponsiveRow(
-                        controls=[
-                            rafter_section_type,
-                            rafter_section,
-                            column_section_type,
-                            column_section,
-                        ]
-                    ),
-                ),
-                card(
-                    "Portal support and bracing",
-                    "Integer fields represent counts of modelled intervals or panels.",
-                    ft.ResponsiveRow(
-                        controls=[
-                            base_support,
-                            spring_stiffness,
-                            col_bracing_spacing,
-                            column_bracing_type,
-                            rafter_bracing_spacing,
-                        ]
-                    ),
-                ),
-                card(
-                    "Gable columns",
-                    "Gables are pinned; the brace interval count controls their unbraced length.",
-                    ft.ResponsiveRow(controls=[gable_column_count, gable_brace_intervals]),
-                ),
-                card(
-                    "Purlins and girts",
-                    "Sections are searchable dropdowns sourced from the Lipped Channels database.",
-                    ft.ResponsiveRow(
-                        controls=[purlin_section, purlin_spacing, girt_section, girt_spacing]
-                    ),
-                ),
-                card(
-                    "Crawl beam loading",
-                    "Add each crawl beam, its roof position and hoist data. The marker is shown on the live frame preview.",
-                    ft.Column(
-                        spacing=12,
-                        controls=[
-                            ft.ResponsiveRow(controls=[use_crawl_beams, crawl_application]),
-                            ft.Row(controls=[add_crawl_beam_button]),
-                            crawl_editor,
-                        ],
-                    ),
-                ),
+                secondary_steel_card,
+                portal_system_controls,
+                truss_system_controls,
                 footer_buttons(2, 4),
             ],
         ),
@@ -1893,8 +2668,8 @@ def main(page: ft.Page) -> None:
                     ),
                 ),
                 card(
-                    "Portal frame",
-                    "The selected engineering quantity is labelled directly on a dedicated frame diagram.",
+                    "Structural model",
+                    "The selected engineering quantity is labelled directly on the portal-frame or truss diagram.",
                     ft.Column(
                         spacing=10,
                         controls=[
@@ -2092,7 +2867,7 @@ def main(page: ft.Page) -> None:
             ft.NavigationRailDestination(
                 icon=ft.Icon(ft.Icons.AIR_OUTLINED, color="#506A67"),
                 selected_icon=ft.Icon(ft.Icons.AIR, color=ACCENT_DARK),
-                label="Design & wind",
+                label="Design & loading",
             ),
             ft.NavigationRailDestination(
                 icon=ft.Icon(ft.Icons.ACCOUNT_TREE_OUTLINED, color="#506A67"),
@@ -2139,7 +2914,7 @@ def main(page: ft.Page) -> None:
                     spacing=1,
                     controls=[
                         ft.Text(
-                            "Portal frame design",
+                            "Portal frame and truss design",
                             size=18,
                             weight=ft.FontWeight.BOLD,
                             color=TEXT_PRIMARY,
