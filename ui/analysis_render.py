@@ -227,6 +227,15 @@ def load_case_svg(
     if view == "forces":
         _force_definition(component or "")
 
+    if str(visualisation.get("structural_system", "")).lower() == "truss":
+        if view != "deflection":
+            raise ValueError(
+                "The current truss analysis visualisation contains SLS deflection results only."
+            )
+        return _truss_deflection_svg(
+            visualisation, combination, component or "total deflection"
+        )
+
     members = list(combination.get("members", []))
     nodes = list(combination.get("nodes", []))
     if not members or not nodes:
@@ -358,6 +367,151 @@ def load_case_svg(
     return _data_url(
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" '
         f'role="img" aria-label="{safe_name}">{"".join(body)}</svg>'
+    )
+
+
+def _truss_deflection_svg(
+    visualisation: dict[str, Any],
+    combination: dict[str, Any],
+    component: str,
+) -> str:
+    """Render an uncluttered truss deformation diagram from compact nodal results."""
+
+    geometry = visualisation.get("geometry", {})
+    nodes = list(geometry.get("nodes", []))
+    members = list(geometry.get("members", []))
+    movements = combination.get("node_displacements_mm", {})
+    if not nodes or not members or not movements:
+        raise ValueError("Truss deflection visualisation geometry is empty.")
+
+    width, height = 980, 560
+    plot_left, plot_right, plot_top, plot_bottom = 65, 915, 95, 430
+    all_x = [float(node["x_mm"]) for node in nodes]
+    all_y = [float(node["y_mm"]) for node in nodes]
+    min_x, max_x = min(all_x), max(all_x)
+    min_y, max_y = min(all_y), max(all_y)
+    extent_x = max(max_x - min_x, 1.0)
+    extent_y = max(max_y - min_y, 1.0)
+    geometry_scale = min(
+        (plot_right - plot_left) / extent_x,
+        (plot_bottom - plot_top) / extent_y,
+    )
+    fitted_width = extent_x * geometry_scale
+    fitted_height = extent_y * geometry_scale
+    origin_x = plot_left + ((plot_right - plot_left) - fitted_width) / 2.0
+    baseline = plot_bottom - ((plot_bottom - plot_top) - fitted_height) / 2.0
+
+    def sx(value: float) -> float:
+        return origin_x + (value - min_x) * geometry_scale
+
+    def sy(value: float) -> float:
+        return baseline - (value - min_y) * geometry_scale
+
+    is_total = component == "total deflection"
+
+    def vector(node_name: str) -> tuple[float, float]:
+        movement = movements.get(node_name, {})
+        dx = float(movement.get("dx", 0.0))
+        dy = float(movement.get("dy", 0.0))
+        if is_total:
+            return dx, dy
+        return (dx, 0.0) if component == "dx" else (0.0, dy)
+
+    def value(node_name: str) -> float:
+        dx, dy = vector(node_name)
+        return math.hypot(dx, dy) if is_total else (dx if component == "dx" else dy)
+
+    maximum_node = max(nodes, key=lambda node: abs(value(str(node["name"]))))
+    maximum_name = str(maximum_node["name"])
+    maximum_value = value(maximum_name)
+    maximum_magnitude = abs(maximum_value)
+    model_size = max(extent_x, extent_y)
+    deformation_scale = (
+        1.0
+        if maximum_magnitude <= 1e-9
+        else min(150.0, 0.10 * model_size / maximum_magnitude)
+    )
+
+    node_by_name = {str(node["name"]): node for node in nodes}
+    factors = ", ".join(
+        f"{html.escape(str(case))}={float(factor):g}"
+        for case, factor in combination.get("factors", {}).items()
+        if abs(float(factor)) > 1e-12
+    )
+    safe_name = html.escape(str(combination.get("name", "SLS combination")))
+    body = [
+        f'<rect width="{width}" height="{height}" rx="14" fill="{PAPER}"/>',
+        f'<text x="28" y="32" fill="{INK}" font-family="Arial,sans-serif" font-size="18" font-weight="700">{safe_name}</text>',
+        f'<text x="28" y="53" fill="{MUTED}" font-family="Arial,sans-serif" font-size="12">SLS &#183; {factors}</text>',
+    ]
+
+    for member in members:
+        start = node_by_name[str(member["i_node"])]
+        end = node_by_name[str(member["j_node"])]
+        is_support_vertical = member.get("role") == "support_vertical"
+        body.append(
+            f'<line x1="{sx(float(start["x_mm"])):.2f}" y1="{sy(float(start["y_mm"])):.2f}" '
+            f'x2="{sx(float(end["x_mm"])):.2f}" y2="{sy(float(end["y_mm"])):.2f}" '
+            f'stroke="{"#C17B00" if is_support_vertical else GRID}" '
+            f'stroke-width="{3.2 if is_support_vertical else 1.8}"/>'
+        )
+
+    for support_name in geometry.get("support_nodes", []):
+        support = node_by_name[str(support_name)]
+        support_x = sx(float(support["x_mm"]))
+        support_y = sy(float(support["y_mm"]))
+        body.append(
+            f'<path d="M {support_x - 7:.2f} {support_y + 10:.2f} '
+            f'L {support_x + 7:.2f} {support_y + 10:.2f} '
+            f'L {support_x:.2f} {support_y:.2f} Z" fill="#C17B00" opacity="0.8"/>'
+        )
+
+    deformed_positions: dict[str, tuple[float, float]] = {}
+    for node in nodes:
+        name = str(node["name"])
+        dx, dy = vector(name)
+        deformed_positions[name] = (
+            float(node["x_mm"]) + deformation_scale * dx,
+            float(node["y_mm"]) + deformation_scale * dy,
+        )
+    for member in members:
+        start_x, start_y = deformed_positions[str(member["i_node"])]
+        end_x, end_y = deformed_positions[str(member["j_node"])]
+        body.append(
+            f'<line data-role="deformed-member" x1="{sx(start_x):.2f}" y1="{sy(start_y):.2f}" '
+            f'x2="{sx(end_x):.2f}" y2="{sy(end_y):.2f}" '
+            f'stroke="{DEFORMED}" stroke-width="2.8" stroke-linecap="round"/>'
+        )
+
+    max_x_position, max_y_position = deformed_positions[maximum_name]
+    max_screen_x, max_screen_y = sx(max_x_position), sy(max_y_position)
+    body.extend([
+        f'<circle cx="{max_screen_x:.2f}" cy="{max_screen_y:.2f}" r="5" fill="{DEFORMED}"/>',
+        _halo_text(
+            (
+                f"{maximum_name} Total {maximum_magnitude:.2f} mm"
+                if is_total
+                else f"{maximum_name} {component.upper()} {maximum_value:+.2f} mm"
+            ),
+            max_screen_x,
+            max_screen_y - 12,
+            colour=DEFORMED,
+            size=11,
+        ),
+    ])
+
+    limit_mm = float(visualisation.get("deflection_limit_mm", 0.0) or 0.0)
+    utilisation = maximum_magnitude / limit_mm if limit_mm > 0 else 0.0
+    component_label = "Total" if is_total else component.upper()
+    body.extend([
+        f'<text x="28" y="482" fill="{INK}" font-family="Arial,sans-serif" font-size="12" font-weight="700">{component_label} deflection &#183; maximum {maximum_magnitude:.2f} mm &#183; limit {limit_mm:.2f} mm &#183; utilisation {utilisation:.3f}</text>',
+        f'<line x1="28" y1="510" x2="68" y2="510" stroke="{GRID}" stroke-width="2"/><text x="76" y="514" fill="{MUTED}" font-family="Arial,sans-serif" font-size="11">undeformed truss</text>',
+        f'<line x1="205" y1="510" x2="245" y2="510" stroke="{DEFORMED}" stroke-width="3"/><text x="253" y="514" fill="{MUTED}" font-family="Arial,sans-serif" font-size="11">deformed truss displayed &#215;{deformation_scale:.1f}</text>',
+        f'<text x="28" y="542" fill="{MUTED}" font-family="Arial,sans-serif" font-size="10">Geometry uses one physical scale horizontally and vertically. Deformation is magnified; the labelled displacement is the exact calculated value.</text>',
+    ])
+    return _data_url(
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" '
+        f'role="img" aria-label="{safe_name} truss deflection">{"".join(body)}</svg>'
     )
 
 

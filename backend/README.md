@@ -1,7 +1,7 @@
-# PortalFrame API
+# Portal Frame and Truss API
 
-The API is the boundary between the Flet UI and the existing PortalFrame
-calculation/reporting code.
+The API is the boundary between the Flet UI, the existing PortalFrame engine,
+and the generic preliminary truss engine.
 
 ## Install
 
@@ -25,7 +25,7 @@ The available endpoints are:
 
 - `GET /api/health` — liveness check.
 - `GET /api/project` — exposed capability information.
-- `POST /api/preview` - analysis-independent frame, purlin, girt and bracing geometry.
+- `POST /api/preview` - system-specific analysis-independent geometry.
 - `POST /api/analysis` - validate the request and queue a structural analysis job.
 - `GET /api/analysis/{analysis_id}/status` - retrieve queued, running, complete or failed status.
 - `GET /api/analysis/{analysis_id}/results` - retrieve the completed design summary and artifact links.
@@ -43,10 +43,20 @@ The API workflow generates the design report as printable HTML; it no longer
 creates the legacy equation-layout PDF. The browser print dialog can save the
 HTML report as a PDF when required.
 
-Completed results include a renderer-neutral `load_case_visualisation` object.
+Completed portal-frame results include a renderer-neutral `load_case_visualisation` object.
 It contains all ULS and SLS combinations, factored member loads, member
 utilisations, model geometry, local member axes, sampled global displacement
 points and sampled axial, shear and bending-moment results. Deflection views use
 SLS combinations only and utilisation views use ULS combinations only. The API
 performs these calculations; clients should render the stored values rather than
 reproduce engineering formulae.
+
+Truss jobs return `preliminary_generic_truss_v0.4`, mass-ranked solutions,
+transverse and longitudinal building geometry, automatic support layouts,
+eave-column checks, optional longitudinal-girder design, calculated top- and
+bottom-chord restraint nodes, member schedules, ULS reactions, governing checks
+and printable HTML/JSON artifacts. Chords use a common section within each
+fabricated span, web members are independently selected, and the minimum base
+angle is 50x50x5. Restraint is selected as every Nth purlin and
+is assumed across the whole building. Results remain preliminary until checked
+against independent calculations and the applicable SANS editions are confirmed.

@@ -21,15 +21,16 @@ from backend.analysis_service import (
     submit_analysis_job,
 )
 from preview_geometry import build_preview_geometry
+from truss_design import preview_truss
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_SNAPSHOT_PATH = PROJECT_ROOT / "output" / "analysis" / "analysis_results.json"
 
 app = FastAPI(
-    title="PortalFrame API",
-    description="Local application API for PortalFrame analysis and reporting.",
-    version="0.1.0",
+    title="PortalFrame and Truss API",
+    description="Local application API for portal-frame and preliminary truss analysis.",
+    version="0.4.0",
 )
 
 
@@ -37,7 +38,7 @@ app = FastAPI(
 def health() -> dict[str, str]:
     """Return a small liveness response for the UI and local tooling."""
 
-    return {"status": "ok", "service": "portalframe-api"}
+    return {"status": "ok", "service": "structural-designer-api"}
 
 
 @app.get("/api/project", tags=["system"])
@@ -45,14 +46,17 @@ def project_info() -> dict[str, Any]:
     """Describe the capabilities currently exposed by the application API."""
 
     return {
-        "name": "PortalFrame",
+        "name": "PortalFrame and Truss Designer",
         "api_version": app.version,
         "analysis_engine": "portal_frame_analysis",
+        "analysis_engines": ["portal_frame_analysis", "preliminary_generic_truss_v0.4"],
         "capabilities": {
             "latest_analysis": DEFAULT_SNAPSHOT_PATH.exists(),
             "layout_preview": True,
             "submit_analysis": True,
             "generate_reports": True,
+            "structural_systems": ["Portal frame", "Truss"],
+            "truss_validation_status": "Calculation draft; connections and independent project verification outstanding",
         },
     }
 
@@ -62,6 +66,8 @@ def preview(payload: dict[str, Any]) -> dict[str, Any]:
     """Return analysis-independent frame, purlin, girt and bracing geometry."""
 
     try:
+        if payload.get("structural_system") == "Truss":
+            return preview_truss(payload)
         return build_preview_geometry(payload)
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
