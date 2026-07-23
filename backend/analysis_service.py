@@ -18,6 +18,8 @@ from design_calculations import (
     write_json_data,
 )
 from draughtsman_markup import write_markup
+from foundation_design import design_pad_foundations
+from analysis_snapshot import load_analysis_snapshot
 from preview_geometry import build_preview_geometry
 from run_full_analysis import run_analysis
 from truss_design import design_truss, preview_truss
@@ -121,6 +123,18 @@ def _design_summary(calculation_data, analysis_id: str) -> dict[str, Any]:
         "portal_sections": {
             "rafter": project.get("rafter_section", ""),
             "column": project.get("column_section", ""),
+        },
+        "haunches": {
+            "eaves": {
+                "used": project.get("use_eaves_haunch", "No") == "Yes",
+                "length_mm": project.get("eaves_haunch_length_mm", 0),
+                "depth_mm": project.get("eaves_haunch_depth_mm", 0),
+            },
+            "apex": {
+                "used": project.get("use_apex_haunch", "No") == "Yes",
+                "length_mm": project.get("apex_haunch_length_mm", 0),
+                "depth_mm": project.get("apex_haunch_depth_mm", 0),
+            },
         },
         "governing_strength": {
             "status": frame.get("overall_status", ""),
@@ -303,3 +317,34 @@ def get_analysis_artifact(analysis_id: str, artifact: str) -> Path:
     if directory not in path.parents or not path.is_file():
         raise KeyError("Analysis artifact is unavailable.")
     return path
+
+
+def design_foundations(
+    analysis_id: str, inputs: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Run and persist a post-analysis isolated-pad design."""
+
+    job = get_analysis_job(analysis_id)
+    if job.get("status") != "complete":
+        raise ValueError("Foundation design requires a completed analysis.")
+    snapshot_value = job.get("snapshot_path")
+    if not snapshot_value:
+        raise ValueError(
+            "Foundation design is currently available for portal-frame "
+            "analyses only."
+        )
+    snapshot_path = Path(snapshot_value)
+    if not snapshot_path.is_file():
+        raise ValueError("The analysis snapshot is unavailable.")
+    result = design_pad_foundations(
+        load_analysis_snapshot(snapshot_path), inputs
+    )
+    output_path = _job_dir(analysis_id) / "foundation" / "foundation_design.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    artifact_paths = dict(job.get("artifact_paths", {}))
+    artifact_paths["foundation-design-json"] = str(output_path)
+    job["artifact_paths"] = artifact_paths
+    job["foundation_design"] = result
+    _write_job(job)
+    return result

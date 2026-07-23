@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 
 from analysis_snapshot import load_analysis_snapshot
 from backend.analysis_service import (
+    design_foundations,
     get_analysis_artifact,
     get_analysis_job,
     public_analysis_job,
@@ -30,7 +31,7 @@ DEFAULT_SNAPSHOT_PATH = PROJECT_ROOT / "output" / "analysis" / "analysis_results
 app = FastAPI(
     title="PortalFrame and Truss API",
     description="Local application API for portal-frame and preliminary truss analysis.",
-    version="0.4.0",
+    version="0.5.0",
 )
 
 
@@ -55,6 +56,8 @@ def project_info() -> dict[str, Any]:
             "layout_preview": True,
             "submit_analysis": True,
             "generate_reports": True,
+            "rafter_haunches": True,
+            "post_analysis_pad_foundations": True,
             "structural_systems": ["Portal frame", "Truss"],
             "truss_validation_status": "Calculation draft; connections and independent project verification outstanding",
         },
@@ -104,6 +107,25 @@ def analysis_results(analysis_id: str) -> dict[str, Any]:
     if job["status"] not in {"complete", "failed"}:
         raise HTTPException(status_code=409, detail="Analysis is not complete.")
     return public_analysis_job(job)
+
+
+@app.post(
+    "/api/analysis/{analysis_id}/foundation",
+    tags=["foundation"],
+)
+def foundation_design(
+    analysis_id: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Design isolated pad foundations from stored support reactions."""
+
+    try:
+        return design_foundations(analysis_id, payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (TypeError, ValueError) as exc:
+        errors = getattr(exc, "errors", None)
+        detail = {"message": str(exc), "errors": errors} if errors else str(exc)
+        raise HTTPException(status_code=422, detail=detail) from exc
 
 
 @app.get("/api/analysis/{analysis_id}/artifacts/{artifact}", tags=["analysis"])

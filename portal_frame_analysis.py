@@ -14,6 +14,12 @@ from strength_checks import (
     member_design,
 )
 from frame_model import load_portal_frame, PortalFrame
+from haunch_design import (
+    HaunchProfile,
+    TaperedPhysMember,
+    composite_haunch_properties,
+    haunch_extra_mass_kg,
+)
 
 # Weight-ordered batches retain the lightest-pair guarantee while limiting the
 # number of PyNite worker processes.
@@ -59,6 +65,25 @@ def build_model(r_mem, c_mem, data: PortalFrame):
     for name, node in data.nodes.items():
         frame.add_node(name, node.x, node.y, node.z)
 
+    haunch_profile = HaunchProfile(data.frame_data[0])
+    if haunch_profile.enabled:
+        existing = [
+            (float(node.X), float(node.Y)) for node in frame.nodes.values()
+        ]
+        for index, (x_value, y_value) in enumerate(
+            haunch_profile.discretisation_points(), 1
+        ):
+            if any(
+                math.hypot(x_value - x, y_value - y) <= 1e-4
+                for x, y in existing
+            ):
+                continue
+            name = f"HN{index}"
+            while name in frame.nodes:
+                name += "A"
+            frame.add_node(name, x_value, y_value, 0.0)
+            existing.append((x_value, y_value))
+
     # Define supports
     for node, support in data.supports.items():
         frame.def_support(
@@ -81,7 +106,28 @@ def build_model(r_mem, c_mem, data: PortalFrame):
 
         # Select properties based on member-type
         if member_type == 'rafter':
-            frame.add_member(name, i_node, j_node, material, r_mem["Designation"])
+            if haunch_profile.enabled:
+                def select_properties(x_value, y_value, *, base=r_mem):
+                    added_depth = haunch_profile.added_depth_at(
+                        x_value, y_value
+                    )
+                    if added_depth <= 1e-6:
+                        return None
+                    return composite_haunch_properties(base, added_depth)
+
+                frame.members[name] = TaperedPhysMember(
+                    frame,
+                    name,
+                    frame.nodes[i_node],
+                    frame.nodes[j_node],
+                    material,
+                    r_mem["Designation"],
+                    property_selector=select_properties,
+                )
+            else:
+                frame.add_member(
+                    name, i_node, j_node, material, r_mem["Designation"]
+                )
 
         elif member_type == 'column':
             frame.add_member(name, i_node, j_node, material, c_mem["Designation"])
@@ -123,6 +169,50 @@ def build_model(r_mem, c_mem, data: PortalFrame):
                 load.x,
                 load.case,
             )
+
+    # Add the steel added by the haunch. The parent rafter self-weight is still
+    # applied through PyNite below; this load is only the composite increment.
+    if haunch_profile.enabled:
+        for data_member in data.members:
+            if data_member.type.lower() != "rafter":
+                continue
+            physical = frame.members[data_member.name]
+            physical.descritize()
+            axis_x = physical.j_node.X - physical.i_node.X
+            axis_y = physical.j_node.Y - physical.i_node.Y
+            length = physical.L()
+            unit_x = axis_x / length
+            unit_y = axis_y / length
+            for sub_member in physical.sub_members.values():
+                properties = getattr(
+                    sub_member, "portal_properties", None
+                )
+                if not properties:
+                    continue
+                extra_area = float(
+                    properties.get("haunch_extra_area_mm2", 0.0)
+                )
+                if extra_area <= 1e-9:
+                    continue
+                x1 = (
+                    (sub_member.i_node.X - physical.i_node.X) * unit_x
+                    + (sub_member.i_node.Y - physical.i_node.Y) * unit_y
+                )
+                x2 = (
+                    (sub_member.j_node.X - physical.i_node.X) * unit_x
+                    + (sub_member.j_node.Y - physical.i_node.Y) * unit_y
+                )
+                density = float(physical.material.rho)
+                added_weight = -extra_area * density
+                frame.add_member_dist_load(
+                    data_member.name,
+                    "FY",
+                    added_weight,
+                    added_weight,
+                    min(x1, x2),
+                    max(x1, x2),
+                    "D",
+                )
 
     # Add member self-weight (optional, adjust as needed)
     frame.add_member_self_weight('FY', -1, 'D')  # Example: Adding self-weight in FY direction
@@ -205,7 +295,12 @@ def analyze_combination(args):
             return None   # automatic sizing rejects strength failures
 
     # --- weight (kN) --------------------------------------------------------
-    weight = round(r_mem['m'] * r_total_m + c_mem['m'] * c_total_m, 1)
+    weight = round(
+        r_mem['m'] * r_total_m
+        + c_mem['m'] * c_total_m
+        + haunch_extra_mass_kg(r_mem, data.frame_data[0]),
+        1,
+    )
 
     return (weight,          # 0  – used for min()
             r_name,          # 1
@@ -469,41 +564,95 @@ def extract_member_actions(frame, r_type, r_mem, c_type, c_mem,
     internal_loads = []
 
     for mem in data.members:
-        l = mem.length
-        sec_type = r_type if mem.type == "rafter" else c_type
-        mem_type = mem.type
-        t_sec = r_mem['Designation'] if mem.type == 'rafter' else c_mem['Designation']
-        Cu = round(frame.members[mem.name].max_axial(combo), 3)
-        Mx_max = round(max(frame.members[mem.name].max_moment('Mz', combo),
-                          abs(frame.members[mem.name].min_moment('Mz', combo)))/1000, 3)
-        Mx_top = round(frame.members[mem.name].moment('Mz', 0, combo)/1000, 3)
-        Mx_bot = round(frame.members[mem.name].moment('Mz', l * 999, combo)/1000, 3)
+        physical = frame.members[mem.name]
+        base_properties = r_mem if mem.type == "rafter" else c_mem
+        design_segments = []
+        if mem.type == "rafter":
+            haunched = [
+                (name, sub_member)
+                for name, sub_member in physical.sub_members.items()
+                if hasattr(sub_member, "portal_properties")
+            ]
+            if haunched:
+                design_segments = list(physical.sub_members.items())
+        if not design_segments:
+            design_segments = [(mem.name, physical)]
 
-        w1, w2 = element_properties(Mx_max, Mx_top, Mx_bot)
-        lx = (raf_kx if mem_type == 'rafter' else data.frame_data[0]['eaves_height']) / 1000
-        kx = 1.0 if mem_type == 'rafter' else 1.2
-        ly = l
-        ky = 1.0
+        for segment_index, (segment_name, analysis_member) in enumerate(
+            design_segments, 1
+        ):
+            properties = getattr(
+                analysis_member, "portal_properties", base_properties
+            )
+            is_haunch = properties is not base_properties
+            result_name = (
+                f"{mem.name}[H{segment_index}]"
+                if is_haunch
+                else (
+                    f"{mem.name}[R{segment_index}]"
+                    if len(design_segments) > 1
+                    else mem.name
+                )
+            )
+            member_length_mm = analysis_member.L()
+            end_position = max(member_length_mm - 1e-6, 0.0)
+            Cu = round(analysis_member.max_axial(combo), 3)
+            Mx_max = round(
+                max(
+                    analysis_member.max_moment('Mz', combo),
+                    abs(analysis_member.min_moment('Mz', combo)),
+                ) / 1000,
+                3,
+            )
+            Mx_top = round(
+                analysis_member.moment('Mz', 0, combo) / 1000, 3
+            )
+            Mx_bot = round(
+                analysis_member.moment('Mz', end_position, combo) / 1000, 3
+            )
 
-        internal_loads.append({
-            'Name': mem.name,
-            'kly': ky * ly,
-            'klx': kx * lx,
-            'kx': kx,
-            'lx': lx,
-            'ky': ky,
-            'ly': ly,
-            'type': mem_type,
-            'section_type': sec_type,
-            'section': t_sec,
-            'Cu': Cu,
-            'Class': member_class_check(Cu, r_mem if mem.type == 'rafter' else c_mem, steel_grade),
-            'Mx_max': Mx_max,
-            'Mx_top': Mx_top,
-            'Mx_bot': Mx_bot,
-            'w1': w1,
-            'w2': w2
-        })
+            w1, w2 = element_properties(Mx_max, Mx_top, Mx_bot)
+            mem_type = mem.type
+            lx = (
+                raf_kx
+                if mem_type == 'rafter'
+                else data.frame_data[0]['eaves_height']
+            ) / 1000
+            kx = 1.0 if mem_type == 'rafter' else 1.2
+            # Stability lengths remain the physical brace-panel length; the
+            # numerical haunch sub-elements are not additional restraints.
+            ly = mem.length
+            ky = 1.0
+
+            action = {
+                'Name': result_name,
+                'parent_member': mem.name,
+                'kly': ky * ly,
+                'klx': kx * lx,
+                'kx': kx,
+                'lx': lx,
+                'ky': ky,
+                'ly': ly,
+                'type': mem_type,
+                'section_type': (
+                    "Haunched rafter"
+                    if is_haunch
+                    else (r_type if mem.type == "rafter" else c_type)
+                ),
+                'section': properties['Designation'],
+                'Cu': Cu,
+                'Class': member_class_check(
+                    Cu, properties, steel_grade
+                ),
+                'Mx_max': Mx_max,
+                'Mx_top': Mx_top,
+                'Mx_bot': Mx_bot,
+                'w1': w1,
+                'w2': w2,
+            }
+            if is_haunch:
+                action['section_properties'] = dict(properties)
+            internal_loads.append(action)
 
     return internal_loads
 
@@ -516,7 +665,11 @@ def internal_forces(frame, r_type, r_mem, c_type, c_mem, data: PortalFrame, comb
     mat_props = data.steel_grade
 
     for memb in internal_loads:
-        mem_props = mdb.member_properties(memb['section_type'], memb['section'], md)
+        mem_props = memb.get('section_properties')
+        if mem_props is None:
+            mem_props = mdb.member_properties(
+                memb['section_type'], memb['section'], md
+            )
         CSS, OMS, LTB = member_design(mem_props, memb, mat_props[0])
         member_des.append({
             'Name': memb['Name'],

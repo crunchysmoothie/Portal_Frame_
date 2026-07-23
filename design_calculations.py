@@ -589,7 +589,11 @@ def collect_member_calculations(
                 if actions["type"] == "rafter"
                 else column_section_type
             )
-            properties = mdb.member_properties(section_type, actions["section"], member_db)
+            properties = actions.get("section_properties")
+            if properties is None:
+                properties = mdb.member_properties(
+                    section_type, actions["section"], member_db
+                )
             result = calculate_member_design(properties, actions, material, name)
             if not math.isfinite(result.governing_ratio):
                 raise ValueError(
@@ -658,7 +662,14 @@ def build_frame_summary(data, member_db, rafter_section_type, column_section_typ
     column_members = [member for member in data.members if member.type == "column"]
     rafter_length = sum(float(member.length) for member in rafter_members)
     column_length = sum(float(member.length) for member in column_members)
-    steel_mass = rafter_length * float(rafter["m"]) + column_length * float(column["m"])
+    from haunch_design import haunch_extra_mass_kg
+
+    haunch_mass = haunch_extra_mass_kg(rafter, frame_data)
+    steel_mass = (
+        rafter_length * float(rafter["m"])
+        + column_length * float(column["m"])
+        + haunch_mass
+    )
     mass_breakdown = _build_steel_mass_breakdown(
         data, member_db, steel_mass, dict(bracing_design or {})
     )
@@ -679,6 +690,7 @@ def build_frame_summary(data, member_db, rafter_section_type, column_section_typ
         "rafter_count": len(rafter_members),
         "column_length_m": column_length,
         "rafter_length_m": rafter_length,
+        "haunch_mass_per_frame_kg": haunch_mass,
         "estimated_frame_steel_mass_kg": steel_mass,
         "steel_mass_breakdown": mass_breakdown,
         "roof_pitch_deg": float(frame_data.get("roof_pitch", 0.0)),
@@ -877,7 +889,13 @@ def build_calculation_sheet_data_from_frame(
         column_section_type,
         data.steel_grade[0],
     )
-    combo_names = [item["name"] for item in data.load_combinations]
+    combo_names = list(dict.fromkeys(
+        item["name"]
+        for item in (
+            list(data.load_combinations)
+            + list(data.serviceability_load_combinations)
+        )
+    ))
     reactions = collect_reactions(frame, combo_names, data.supports.keys())
     frame_data = dict(data.frame_data[0])
     wind_data = dict(data.wind_data[0]) if data.wind_data else {}
@@ -931,6 +949,12 @@ def build_calculation_sheet_data_from_frame(
         "actual_purlin_spacing_mm": frame_data.get("actual_purlin_spacing_mm", 0),
         "girt_section": frame_data.get("girt_section", ""),
         "girt_max_spacing_mm": frame_data.get("girt_max_spacing_mm", 0),
+        "use_eaves_haunch": frame_data.get("use_eaves_haunch", "No"),
+        "eaves_haunch_length_mm": frame_data.get("eaves_haunch_length", 0),
+        "eaves_haunch_depth_mm": frame_data.get("eaves_haunch_depth", 0),
+        "use_apex_haunch": frame_data.get("use_apex_haunch", "No"),
+        "apex_haunch_length_mm": frame_data.get("apex_haunch_length", 0),
+        "apex_haunch_depth_mm": frame_data.get("apex_haunch_depth", 0),
     }
     if project_metadata:
         project.update(
@@ -952,6 +976,16 @@ def build_calculation_sheet_data_from_frame(
         "For tension-bending, both clause 13.9 checks are retained. The additive Tu/Tr term prevents axial tension from reducing the governing utilisation.",
         "Results must be independently reviewed by the responsible competent engineer.",
     ]
+    if (
+        str(frame_data.get("use_eaves_haunch", "No")).lower() == "yes"
+        or str(frame_data.get("use_apex_haunch", "No")).lower() == "yes"
+    ):
+        assumptions.extend([
+            "Rafter haunches are modelled as cut from the selected rafter and welded below it.",
+            "Each tapered haunch zone uses eight constant-property PyNite sub-elements with composite properties sampled at each sub-element midpoint.",
+            "The inclined haunch flange is numerically tapered over its final flange thickness so area and Ixx converge to the parent rafter at the toe.",
+            "Haunch sub-elements retain the parent rafter brace-panel stability length; numerical subdivision is not treated as lateral restraint.",
+        ])
     if internal_pressure.get("uniform_opening_distribution_assumed"):
         assumptions.append(
             "Wall openings are assumed uniformly distributed over each entered face when determining representative external pressure."
@@ -976,6 +1010,16 @@ def build_calculation_sheet_data_from_frame(
         bracing_design=dict(bracing_design or {}),
         warnings=[
             "Tension-member net-section fracture and connection resistance are outside the current input model.",
+            *(
+                [
+                    "Haunch welds, end plates, bolts, local web/flange checks and tapered-member connection detailing require separate design."
+                ]
+                if (
+                    str(frame_data.get("use_eaves_haunch", "No")).lower() == "yes"
+                    or str(frame_data.get("use_apex_haunch", "No")).lower() == "yes"
+                )
+                else []
+            ),
         ],
         visualisation=visualisation,
     )
