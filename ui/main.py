@@ -15,11 +15,13 @@ from preview_geometry import build_preview_geometry
 from truss_design import preview_truss
 from ui.analysis_render import combination_names, load_case_svg
 from ui.input_model import (
+    AUTOMATIC_GABLE_SECTION,
     AUTOMATIC_SECTION,
     BASE_SUPPORTS,
     BUILDING_TYPES,
     COLUMN_BRACING_TYPES,
     CRAWL_APPLICATIONS,
+    GABLE_SECTION_ORDERS,
     HOIST_CLASSES,
     DEFAULT_VALUES,
     LIPPED_CHANNEL_SECTIONS,
@@ -39,6 +41,11 @@ from ui.input_model import (
     WIND_DESIGN_MODES,
     InputValidationError,
     build_analysis_payload,
+)
+from ui.project_file import (
+    ProjectInputFileError,
+    dump_project_inputs,
+    load_project_inputs,
 )
 from ui.preview_render import (
     frame_elevation_svg,
@@ -79,6 +86,8 @@ def main(page: ft.Page) -> None:
     )
 
     controls: dict[str, Any] = {}
+    input_file_picker = ft.FilePicker()
+    page.services.append(input_file_picker)
 
     def dropdown(
         key: str,
@@ -378,6 +387,20 @@ def main(page: ft.Page) -> None:
         "Load-combination standard",
         LOAD_COMBINATION_STANDARDS,
     )
+    ignore_dead_live_vertical_limit = ft.Switch(
+        key="ignore_1_1_dl_1_0_ll_vertical_deflection_limit",
+        label="Ignore vertical span/deflection limit for 1.1 DL + 1.0 LL",
+        value=bool(
+            DEFAULT_VALUES[
+                "ignore_1_1_dl_1_0_ll_vertical_deflection_limit"
+            ]
+        ),
+        active_color=ACCENT,
+        col=12,
+    )
+    controls[
+        "ignore_1_1_dl_1_0_ll_vertical_deflection_limit"
+    ] = ignore_dead_live_vertical_limit
     steel_grade = dropdown("steel_grade", "Steel grade", STEEL_GRADES)
     wind_speed = number_field(
         "fundamental_basic_wind_speed", "Basic wind speed", unit="m/s"
@@ -413,7 +436,7 @@ def main(page: ft.Page) -> None:
         "rafter_section",
         "Rafter section",
         (AUTOMATIC_SECTION,) + PORTAL_SECTIONS_BY_FAMILY["I-Sections"],
-        helper="Automatic selects the lightest passing section; otherwise the chosen size is checked.",
+        helper="Manual choices are ordered by section height, width and mass; Automatic selects the lightest passing section.",
         searchable=True,
     )
     column_section_type = dropdown(
@@ -426,7 +449,7 @@ def main(page: ft.Page) -> None:
         "column_section",
         "Column section",
         (AUTOMATIC_SECTION,) + PORTAL_SECTIONS_BY_FAMILY["I-Sections"],
-        helper="Automatic selects the lightest passing section; otherwise the chosen size is checked.",
+        helper="Manual choices are ordered by section height, width and mass; Automatic selects the lightest passing section.",
         searchable=True,
     )
     use_eaves_haunch = ft.Switch(
@@ -527,7 +550,7 @@ def main(page: ft.Page) -> None:
     gable_column_count = number_field(
         "gable_column_count",
         "Internal gable columns per end",
-        helper="Positive odd number: 1, 3, 5, ...",
+        helper="Any positive whole number; columns are spaced evenly.",
         integer=True,
     )
     gable_brace_intervals = number_field(
@@ -536,6 +559,42 @@ def main(page: ft.Page) -> None:
         helper="Equal unbraced intervals over each pinned gable column.",
         integer=True,
     )
+    gable_section_type = dropdown(
+        "gable_column_section_type",
+        "Gable column section family",
+        PORTAL_SECTION_FAMILIES,
+        helper="Select the I- or H-section database family.",
+    )
+    gable_section = dropdown(
+        "gable_column_section",
+        "Gable column section",
+        (AUTOMATIC_GABLE_SECTION,)
+        + PORTAL_SECTIONS_BY_FAMILY["I-Sections"],
+        helper="Manual choices are ordered by section height, width and mass; Automatic uses the design-order setting.",
+        searchable=True,
+    )
+    gable_section_order = dropdown(
+        "gable_column_section_order",
+        "Gable steel section order",
+        GABLE_SECTION_ORDERS,
+        helper="Choose lightest passing or preferred database sections first.",
+        col=12,
+    )
+
+    def sync_gable_section_options() -> None:
+        family = str(gable_section_type.value)
+        values = (AUTOMATIC_GABLE_SECTION,) + PORTAL_SECTIONS_BY_FAMILY.get(
+            family, ()
+        )
+        gable_section.options = [
+            ft.DropdownOption(
+                key=value,
+                content=ft.Text(value, color=TEXT_PRIMARY),
+            )
+            for value in values
+        ]
+        if gable_section.value not in values:
+            gable_section.value = AUTOMATIC_GABLE_SECTION
     purlin_section = dropdown(
         "purlin_section",
         "Purlin section",
@@ -1613,6 +1672,135 @@ def main(page: ft.Page) -> None:
         ]
         return values
 
+    def additional_roof_load_text(building: dict[str, Any]) -> str:
+        load_items = (
+            ("services_load_kpa", "services"),
+            ("ceiling_load_kpa", "ceiling"),
+            ("solar_load_kpa", "solar"),
+            ("fire_load_kpa", "fire services"),
+            ("hvac_load_kpa", "HVAC"),
+        )
+        values = [
+            (label, float(building.get(key, 0.0) or 0.0))
+            for key, label in load_items
+        ]
+        maximum_total = sum(value for _, value in values)
+        minimum_total = sum(
+            value
+            for label, value in values
+            if label not in {"services", "solar"}
+        )
+        included = ", ".join(
+            f"{label} {value:g}" for label, value in values if value > 0
+        )
+        return (
+            f"D_MAX +{maximum_total:g} kPa; D_MIN +{minimum_total:g} kPa "
+            f"(services and solar excluded from D_MIN). Entered: {included}"
+            if included
+            else "D_MAX +0 kPa; D_MIN +0 kPa (no additional permanent roof load)"
+        )
+
+    def show_input_file_message(message: str, *, error: bool = False) -> None:
+        page.show_dialog(
+            ft.SnackBar(
+                ft.Text(message, color="#FFFFFF"),
+                bgcolor="#A92F28" if error else ACCENT_DARK,
+                show_close_icon=True,
+                close_icon_color="#FFFFFF",
+            )
+        )
+        page.update()
+
+    async def save_inputs(_=None) -> None:
+        project_name_value = str(controls["project_name"].value or "portalframe")
+        safe_name = "".join(
+            character if character.isalnum() or character in "-_" else "-"
+            for character in project_name_value.strip()
+        ).strip("-") or "portalframe"
+        try:
+            destination = await input_file_picker.save_file(
+                dialog_title="Save PortalFrame inputs",
+                file_name=f"{safe_name}.portalframe.json",
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["json"],
+                src_bytes=dump_project_inputs(raw_values()),
+            )
+        except (OSError, ValueError) as exc:
+            show_input_file_message(f"Inputs could not be saved: {exc}", error=True)
+            return
+        if destination is not None:
+            show_input_file_message(
+                "Inputs saved. The file can be loaded later on this or another run."
+            )
+
+    def apply_loaded_inputs(inputs: dict[str, Any]) -> None:
+        nonlocal crawl_row_counter
+        for key, value in inputs.items():
+            control = controls.get(key)
+            if control is None or key == "crawl_beams":
+                continue
+            if isinstance(control, (ft.Checkbox, ft.Switch)):
+                control.value = bool(value)
+            elif isinstance(control, (ft.TextField, ft.Dropdown)):
+                control.value = str(value)
+
+        for row in crawl_rows:
+            for field in row["fields"].values():
+                controls.pop(field.key, None)
+        crawl_rows.clear()
+        crawl_row_counter = 0
+        refresh_crawl_editor()
+
+        for saved_row in inputs.get("crawl_beams", []):
+            add_crawl_beam()
+            fields = crawl_rows[-1]["fields"]
+            family = str(saved_row.get("section_type", "I-Sections"))
+            section_values = PORTAL_SECTIONS_BY_FAMILY.get(family, ())
+            fields["section"].options = [
+                ft.DropdownOption(
+                    key=item, content=ft.Text(item, color=TEXT_PRIMARY)
+                )
+                for item in section_values
+            ]
+            for field_name, control in fields.items():
+                if field_name not in saved_row:
+                    continue
+                value = saved_row[field_name]
+                if isinstance(control, (ft.TextField, ft.Dropdown)):
+                    control.value = str(value)
+
+        controls["use_crawl_beams"].value = bool(inputs["use_crawl_beams"])
+        clear_errors()
+        update_conditionals()
+        validate_form()
+
+    async def load_inputs(_=None) -> None:
+        try:
+            files = await input_file_picker.pick_files(
+                dialog_title="Load PortalFrame inputs",
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["json"],
+                allow_multiple=False,
+                with_data=True,
+            )
+            if not files:
+                return
+            if files[0].bytes is None:
+                raise ProjectInputFileError("The selected file contents were not available.")
+            inputs = load_project_inputs(files[0].bytes)
+            build_analysis_payload(inputs)
+        except (InputValidationError, ProjectInputFileError, OSError, ValueError) as exc:
+            if isinstance(exc, InputValidationError):
+                detail = f"{len(exc.errors)} saved input(s) are no longer valid."
+            else:
+                detail = str(exc)
+            show_input_file_message(f"Inputs could not be loaded: {detail}", error=True)
+            return
+        apply_loaded_inputs(inputs)
+        show_input_file_message(
+            f"Loaded {files[0].name}. Review the inputs, then run the analysis."
+        )
+
     def set_validation_error(key: str, message: str) -> None:
         control = controls.get(key)
         if control is None and key.startswith("crawl_beams["):
@@ -1836,6 +2024,11 @@ def main(page: ft.Page) -> None:
                     f"{wind['return_period']} years",
                     ft.Icons.AIR,
                 ),
+                compact_summary_line(
+                    "Additional permanent roof load",
+                    additional_roof_load_text(building),
+                    ft.Icons.VERTICAL_ALIGN_BOTTOM,
+                ),
             ]
             if submitted_payload_fingerprint is not None:
                 current_fingerprint = json.dumps(payload, sort_keys=True)
@@ -1901,6 +2094,11 @@ def main(page: ft.Page) -> None:
                 ft.Icons.AIR,
             ),
             compact_summary_line(
+                "Additional permanent roof load",
+                additional_roof_load_text(building),
+                ft.Icons.VERTICAL_ALIGN_BOTTOM,
+            ),
+            compact_summary_line(
                 "Portal member selection",
                 f"Rafter {building['rafter_section']} | "
                 f"Column {building['column_section']}",
@@ -1942,7 +2140,8 @@ def main(page: ft.Page) -> None:
                 "Not included for canopy"
                 if building["building_type"] == "Canopy"
                 else f"{building['gable_column_count']} columns/end | "
-                f"{building['gable_column_brace_intervals']} restraint intervals",
+                f"{building['gable_column_brace_intervals']} restraint intervals | "
+                f"{building['gable_column_section'] if building['gable_column_section'] != AUTOMATIC_GABLE_SECTION else building['gable_column_section_order']}",
                 ft.Icons.CELL_TOWER,
             ),
         ]
@@ -2002,8 +2201,9 @@ def main(page: ft.Page) -> None:
         )
 
     def show_analysis_failure(message: str) -> None:
-        nonlocal current_analysis_id
+        nonlocal current_analysis_id, current_visualisation
         current_analysis_id = None
+        current_visualisation = {}
         analysis_progress.visible = False
         analysis_status_card.bgcolor = ERROR_BG
         analysis_status_icon.visible = True
@@ -2012,6 +2212,22 @@ def main(page: ft.Page) -> None:
         analysis_status_text.value = message
         run_analysis_button.disabled = False
         run_analysis_button.content = "Run analysis"
+        analysis_result_summary.controls = [
+            ft.Text(
+                "No current analysis results are available. Correct the inputs "
+                "or design settings and run the analysis again.",
+                size=13,
+                color=TEXT_MUTED,
+            )
+        ]
+        view_report_button.disabled = True
+        open_analysis_button.disabled = True
+        download_markup_button.disabled = True
+        load_case_dropdown.disabled = True
+        previous_load_case_button.disabled = True
+        next_load_case_button.disabled = True
+        expand_load_case_button.disabled = True
+        load_case_image.visible = False
         analysis_destination.disabled = True
         foundation_destination.disabled = True
         foundation_design_button.disabled = True
@@ -2033,7 +2249,7 @@ def main(page: ft.Page) -> None:
             analysis_view_dropdown.value = "Deflection"
             ranked_text = " | ".join(
                 f"#{item['rank']}: {item['geometry']['depth_mm'] / 1000:g} m, "
-                f"{item['arrangement_mass_kg']:,.0f} kg steel, "
+                f"{item['arrangement_mass_kg']:,.0f} kg total steel, "
                 f"{item['practical_cost_equivalent_kg']:,.0f} kg-eq practical, "
                 f"util {item['governing_strength']['utilisation']:.3f}"
                 for item in ranked
@@ -2069,8 +2285,16 @@ def main(page: ft.Page) -> None:
                     "Lightest-member comparison",
                     f"{best['lightest_member_arrangement_mass_kg']:,.0f} kg with individually "
                     f"optimised webs versus {best['arrangement_mass_kg']:,.0f} kg using "
-                    "practical fabrication groups",
+                    "practical fabrication groups; both totals include purlins",
                     ft.Icons.SCALE_OUTLINED,
+                ),
+                analysis_summary_line(
+                    "Purlins included in total",
+                    f"{best['purlins']['section']} | "
+                    f"{best['purlins']['line_count']} lines × "
+                    f"{best['purlins']['building_length_m']:.1f} m | "
+                    f"{best['purlins']['mass_kg']:,.1f} kg",
+                    ft.Icons.HORIZONTAL_RULE,
                 ),
                 analysis_summary_line(
                     "Rank 1 geometry",
@@ -2220,6 +2444,11 @@ def main(page: ft.Page) -> None:
             f"{item['member_type']}: {item['section']} ({float(item['utilisation']):.3f})"
             for item in summary.get("bracing_members", [])
         ) or "No gable or longitudinal bracing design required."
+        gable_text = ", ".join(
+            f"{item['name']}: {item['section']} | "
+            f"{item['status']} {float(item['utilisation']):.3f}"
+            for item in summary.get("gable_columns", [])
+        ) or "No gable columns required."
         current_visualisation = dict(
             summary.get("load_case_visualisation", {})
         )
@@ -2263,7 +2492,14 @@ def main(page: ft.Page) -> None:
             analysis_summary_line(
                 "Serviceability results",
                 f"Horizontal {deflection_text(serviceability['max_horizontal_deflection_mm'], serviceability.get('horizontal_deflection_ratio'), 'Eaves')} | "
-                f"Vertical {deflection_text(serviceability['max_vertical_deflection_mm'], serviceability.get('vertical_deflection_ratio'), 'Span')}",
+                f"Checked vertical {deflection_text(serviceability['max_vertical_deflection_mm'], serviceability.get('vertical_deflection_ratio'), 'Span')}"
+                + (
+                    " | Ignored 1.1 DL + 1.0 LL vertical "
+                    f"{float(serviceability['ignored_vertical_deflections'][0]['max_dy']):.2f} mm "
+                    "(still reported)"
+                    if serviceability.get("ignored_vertical_deflections")
+                    else ""
+                ),
                 ft.Icons.SWAP_VERT,
             ),
             analysis_summary_line(
@@ -2272,6 +2508,11 @@ def main(page: ft.Page) -> None:
                 f"Gables {float(gable_mass):,.1f} kg | Purlins {float(purlin_mass):,.1f} kg | "
                 f"Total {float(total_mass):,.1f} kg",
                 ft.Icons.SCALE_OUTLINED,
+            ),
+            analysis_summary_line(
+                "Gable columns (selected section and utilisation)",
+                gable_text,
+                ft.Icons.VERTICAL_ALIGN_CENTER,
             ),
             analysis_summary_line(
                 "Bracing members (section and utilisation)",
@@ -2440,9 +2681,26 @@ def main(page: ft.Page) -> None:
                 ft.Icons.GAVEL,
             ),
             summary_line(
+                "Vertical deflection acceptance",
+                (
+                    "1.1 DL + 1.0 LL limit ignored; result still reported"
+                    if building[
+                        "ignore_1_1_dl_1_0_ll_vertical_deflection_limit"
+                    ]
+                    == "Yes"
+                    else "All SLS combinations checked"
+                ),
+                ft.Icons.SWAP_VERT,
+            ),
+            summary_line(
                 "Wind",
                 f"{wind['fundamental_basic_wind_speed']:g} m/s • terrain {wind['terrain_category']} • {wind['return_period']} years",
                 ft.Icons.WIND_POWER,
+            ),
+            summary_line(
+                "Additional permanent roof load",
+                additional_roof_load_text(building),
+                ft.Icons.VERTICAL_ALIGN_BOTTOM,
             ),
             summary_line(
                 "Portal sections",
@@ -2469,14 +2727,17 @@ def main(page: ft.Page) -> None:
             ),
             summary_line(
                 "Bracing",
-                f"{building['column_bracing_type']}-bracing • {building['gable_column_count']} gable columns/end",
+                f"{building['column_bracing_type']}-bracing • "
+                f"{building['gable_column_count']} evenly spaced gable columns/end • "
+                f"{building['gable_column_section'] if building['gable_column_section'] != AUTOMATIC_GABLE_SECTION else building['gable_column_section_order']}",
                 ft.Icons.CALL_SPLIT,
             ),
         ]
         if payload["structural_system"] == "Truss":
             truss = payload["truss_data"]
             extra_load = sum(
-                truss[key] for key in (
+                float(building.get(key, 0.0) or 0.0)
+                for key in (
                     "services_load_kpa", "ceiling_load_kpa", "solar_load_kpa",
                     "fire_load_kpa", "hvac_load_kpa",
                 )
@@ -2529,6 +2790,7 @@ def main(page: ft.Page) -> None:
 
     def update_conditionals(_=None) -> None:
         sync_portal_section_options()
+        sync_gable_section_options()
         is_truss = structural_system.value == "Truss"
         if is_truss:
             building_type.value = "Normal"
@@ -2540,7 +2802,7 @@ def main(page: ft.Page) -> None:
         truss_system_controls.visible = is_truss
         portal_dimensions.visible = not is_truss
         truss_dimensions.visible = is_truss
-        truss_additional_loads_card.visible = is_truss
+        truss_additional_loads_card.visible = True
         apex_height.disabled = is_truss
         span_count = entered_truss_span_count()
         has_internal_support = is_truss and span_count > 1
@@ -2592,6 +2854,7 @@ def main(page: ft.Page) -> None:
         spring_stiffness.disabled = base_support.value != "Spring"
         use_eaves_haunch.disabled = is_truss
         use_apex_haunch.disabled = is_truss
+        ignore_dead_live_vertical_limit.disabled = is_truss
         eaves_haunch_fields.visible = (
             not is_truss and bool(use_eaves_haunch.value)
         )
@@ -2600,6 +2863,11 @@ def main(page: ft.Page) -> None:
         )
         gable_column_count.disabled = is_canopy
         gable_brace_intervals.disabled = is_canopy
+        gable_section_type.disabled = is_canopy
+        gable_section.disabled = is_canopy
+        gable_section_order.disabled = (
+            is_canopy or gable_section.value != AUTOMATIC_GABLE_SECTION
+        )
         crawl_application.disabled = is_truss or not use_crawl_beams.value
         crawl_slope_values = (
             ("left", "right") if building_roof.value == "Duo Pitched" else ("single", "left")
@@ -2623,10 +2891,13 @@ def main(page: ft.Page) -> None:
     base_support.on_select = update_conditionals
     use_eaves_haunch.on_change = update_conditionals
     use_apex_haunch.on_change = update_conditionals
+    ignore_dead_live_vertical_limit.on_change = update_conditionals
     use_crawl_beams.on_change = update_conditionals
     truss_internal_support.on_select = update_conditionals
     truss_design_centre_columns.on_change = update_conditionals
     truss_centre_column_material.on_select = update_conditionals
+    gable_section_type.on_select = update_conditionals
+    gable_section.on_select = update_conditionals
 
     def update_live_input(_=None) -> None:
         if structural_system.value == "Truss":
@@ -2675,6 +2946,8 @@ def main(page: ft.Page) -> None:
         base_support,
         rafter_section_type,
         column_section_type,
+        gable_section_type,
+        gable_section,
         truss_internal_support,
         truss_centre_column_material,
     }
@@ -2726,7 +2999,9 @@ def main(page: ft.Page) -> None:
                 "Rafter haunches",
                 "Haunches are cut from the selected rafter. The tapered composite "
                 "stiffness is discretised internally; welds and connection detailing "
-                "remain separate design checks.",
+                "remain separate design checks. For a like-for-like deflection "
+                "comparison, keep the rafter and column sections fixed; Automatic "
+                "sizing can exchange the added stiffness for lighter members.",
                 ft.Column(
                     spacing=10,
                     controls=[
@@ -2748,8 +3023,16 @@ def main(page: ft.Page) -> None:
             ),
             card(
                 "Gable columns",
-                "Gables are pinned; the brace interval count controls their unbraced length.",
-                ft.ResponsiveRow(controls=[gable_column_count, gable_brace_intervals]),
+                "Pinned columns are spaced evenly across the gable; the brace interval count controls their unbraced length.",
+                ft.ResponsiveRow(
+                    controls=[
+                        gable_column_count,
+                        gable_brace_intervals,
+                        gable_section_type,
+                        gable_section,
+                        gable_section_order,
+                    ]
+                ),
             ),
             card(
                 "Crawl beam loading",
@@ -2764,13 +3047,13 @@ def main(page: ft.Page) -> None:
     )
     truss_additional_loads_card = card(
         "Additional permanent roof actions",
-        "Enter project-specific characteristic area loads. Zero means the action is excluded.",
+        "Applied to portal-frame rafters or truss panel points as permanent load. Enter characteristic area loads; zero excludes an action.",
         ft.ResponsiveRow(controls=[
             truss_services_load, truss_ceiling_load, truss_solar_load,
             truss_fire_load, truss_hvac_load,
         ]),
     )
-    truss_additional_loads_card.visible = False
+    truss_additional_loads_card.visible = True
 
     truss_system_controls = ft.Column(
         spacing=18,
@@ -2912,8 +3195,26 @@ def main(page: ft.Page) -> None:
                 card(
                     "Design basis",
                     "Selections map directly to implemented calculation branches.",
-                    ft.ResponsiveRow(
-                        controls=[wind_design_mode, roof_accessibility, load_standard, steel_grade]
+                    ft.Column(
+                        spacing=10,
+                        controls=[
+                            ft.ResponsiveRow(
+                                controls=[
+                                    wind_design_mode,
+                                    roof_accessibility,
+                                    load_standard,
+                                    steel_grade,
+                                ]
+                            ),
+                            ignore_dead_live_vertical_limit,
+                            ft.Text(
+                                "When enabled, this combination is still analysed "
+                                "and reported, but its vertical deflection does not "
+                                "reject an automatically selected portal section.",
+                                size=12,
+                                color=TEXT_MUTED,
+                            ),
+                        ],
                     ),
                 ),
                 card(
@@ -3404,6 +3705,16 @@ def main(page: ft.Page) -> None:
                 ),
                 ft.Row(
                     controls=[
+                        ft.OutlinedButton(
+                            "Load inputs",
+                            icon=ft.Icons.UPLOAD_FILE,
+                            on_click=load_inputs,
+                        ),
+                        ft.OutlinedButton(
+                            "Save inputs",
+                            icon=ft.Icons.SAVE_OUTLINED,
+                            on_click=save_inputs,
+                        ),
                         api_status,
                         ft.OutlinedButton(
                             "Check API", icon=ft.Icons.SYNC, on_click=check_api

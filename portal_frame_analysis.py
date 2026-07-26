@@ -38,6 +38,67 @@ def import_data(file: str) -> PortalFrame:
     """Load ``file`` and return a :class:`PortalFrame` instance."""
     return load_portal_frame(file)
 
+
+def _project_haunch_point_to_rafter(
+    x_value: float,
+    y_value: float,
+    data: PortalFrame,
+) -> tuple[float, float]:
+    """Project an ideal haunch point onto the nearest generated rafter segment.
+
+    The input generator rounds intermediate roof nodes to two decimals. An
+    ideal point calculated from the overall roof slope can therefore miss a
+    segmented physical member by a few thousandths of a millimetre. PyNite
+    then leaves that node disconnected and reports an instability.
+    """
+
+    closest = None
+    for member in data.members:
+        if member.type.lower() != "rafter":
+            continue
+        i_node = data.nodes[member.i_node]
+        j_node = data.nodes[member.j_node]
+        axis_x = float(j_node.x) - float(i_node.x)
+        axis_y = float(j_node.y) - float(i_node.y)
+        length_squared = axis_x ** 2 + axis_y ** 2
+        if length_squared <= 1e-12:
+            continue
+        fraction = (
+            (x_value - float(i_node.x)) * axis_x
+            + (y_value - float(i_node.y)) * axis_y
+        ) / length_squared
+        if fraction < -1e-9 or fraction > 1 + 1e-9:
+            continue
+        fraction = max(0.0, min(1.0, fraction))
+        projected_x = float(i_node.x) + fraction * axis_x
+        projected_y = float(i_node.y) + fraction * axis_y
+        distance = math.hypot(x_value - projected_x, y_value - projected_y)
+        if closest is None or distance < closest[0]:
+            closest = (distance, projected_x, projected_y)
+    if closest is None or closest[0] > 1.0:
+        raise ValueError(
+            "A haunch discretisation point could not be placed on a rafter."
+        )
+    return closest[1], closest[2]
+
+
+def _vertical_deflection_limit_applies(
+    frame_data: dict,
+    combination_name: str,
+) -> bool:
+    """Return whether vertical deflection is an automatic-selection gate."""
+
+    ignored = (
+        str(
+            frame_data.get(
+                "ignore_1_1_dl_1_0_ll_vertical_deflection_limit", "No"
+            )
+        ).lower()
+        == "yes"
+    )
+    return not (ignored and combination_name == "1.1 DL + 1.0 LL")
+
+
 def build_model(r_mem, c_mem, data: PortalFrame):
     """
     Builds and returns the FE model based on the imported JSON data.
@@ -73,6 +134,9 @@ def build_model(r_mem, c_mem, data: PortalFrame):
         for index, (x_value, y_value) in enumerate(
             haunch_profile.discretisation_points(), 1
         ):
+            x_value, y_value = _project_haunch_point_to_rafter(
+                x_value, y_value, data
+            )
             if any(
                 math.hypot(x_value - x, y_value - y) <= 1e-4
                 for x, y in existing
@@ -270,8 +334,8 @@ def analyze_combination(args):
 
     # --- deflection checks --------------------------------------------------
     worst_v = worst_h = 0.0
+    worst_checked_v = 0.0
     worst_v_combo = worst_h_combo = ""
-
     for combo in data.serviceability_load_combinations:
         cn = combo['name']
         for nd in frame.nodes.values():
@@ -284,11 +348,16 @@ def analyze_combination(args):
                 return None
             if dy > worst_v:
                 worst_v, worst_v_combo = dy, cn
+            if (
+                _vertical_deflection_limit_applies(data.frame_data[0], cn)
+                and dy > worst_checked_v
+            ):
+                worst_checked_v = dy
             if dx > worst_h:
                 worst_h, worst_h_combo = dx, cn
 
     if not allow_failed_checks:
-        if worst_v > v_lim or worst_h > h_lim:
+        if worst_checked_v > v_lim or worst_h > h_lim:
             return None   # automatic sizing rejects serviceability failures
 
         if not member_design_checks(frame, r_type, r_mem, c_type, c_mem, data, member_db):

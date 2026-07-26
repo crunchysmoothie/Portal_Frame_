@@ -31,11 +31,37 @@ open, navigate to <http://127.0.0.1:8550>.
 Changing an input makes previous results stale. Run the analysis again before
 using reports or drawings.
 
+Portal-frame **Design basis** includes an optional switch to ignore the vertical
+span/deflection acceptance limit for `1.1 DL + 1.0 LL`. The combination is
+still analysed and reported; only its vertical deflection is removed as an
+automatic section-selection rejection criterion. Horizontal drift, all other
+SLS limits and all ULS strength checks remain active.
+
+The **Additional permanent roof actions** inputs apply to portal frames and
+trusses. Services, ceiling, solar, fire-services and HVAC characteristic area
+loads are all added to `D_MAX`. `D_MIN` includes ceiling, fire-services and
+HVAC, while services and solar are excluded. Portal-frame area loads are
+multiplied by the frame spacing to obtain downward rafter line loads.
+
+Use **Save inputs** to keep the current project form as a
+`.portalframe.json` file. Use **Load inputs** in a later session to restore and
+validate the form, then select **Run analysis**. The saved file contains inputs
+only; it does not treat old results as a current analysis.
+
 ## Section selection
 
 Rafters and columns may use **Automatic - lightest passing** or an explicit
 section. An explicit section is analysed and reported as selected, including
-utilisations and deflections above the acceptance limit.
+utilisations and deflections above the acceptance limit. Manual section
+dropdowns are ordered by section height, then flange width, then mass; this
+display order does not change the automatic lightest-passing search.
+
+Gable columns may use an explicitly selected I/H section, or automatic sizing
+with **Automatic - lightest passing** or **Preferred sections first** ordering.
+An explicit section is retained and reported with its actual utilisation,
+including a FAIL when it is inadequate. Enter any positive whole number of
+internal gable columns per end; the columns are placed at equal spacing across
+the gable width, for both odd and even counts.
 
 ## Preliminary generic truss workflow
 

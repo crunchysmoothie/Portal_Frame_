@@ -8,7 +8,11 @@ from foundation_design import (
 )
 from frame_model import Member, Node, PortalFrame
 from haunch_design import composite_haunch_properties
-from portal_frame_analysis import build_model
+from portal_frame_analysis import (
+    _vertical_deflection_limit_applies,
+    build_model,
+)
+from design_calculations import governing_serviceability_deflections
 from ui.input_model import (
     DEFAULT_VALUES,
     InputValidationError,
@@ -49,23 +53,31 @@ class HaunchDesignTests(unittest.TestCase):
     def test_pynite_rafter_retains_physical_name_and_gets_tapered_subsections(self):
         nodes = {
             "N1": Node("N1", 0, 0, 0),
-            "N2": Node("N2", 0, 6000, 0),
-            "N3": Node("N3", 5000, 7000, 0),
-            "N4": Node("N4", 10000, 6000, 0),
-            "N5": Node("N5", 10000, 0, 0),
+            "N2": Node("N2", 0, 6500, 0),
+            "N3": Node("N3", 3000, 7033.33, 0),
+            "N4": Node("N4", 6000, 7566.67, 0),
+            "N5": Node("N5", 9000, 8100, 0),
+            "N6": Node("N6", 12000, 7566.67, 0),
+            "N7": Node("N7", 15000, 7033.33, 0),
+            "N8": Node("N8", 18000, 6500, 0),
+            "N9": Node("N9", 18000, 0, 0),
         }
         members = [
-            Member("M1", "N1", "N2", "Steel_S355", "column", 6.0),
-            Member("M2", "N2", "N3", "Steel_S355", "rafter", 5.099),
-            Member("M3", "N3", "N4", "Steel_S355", "rafter", 5.099),
-            Member("M4", "N4", "N5", "Steel_S355", "column", 6.0),
+            Member("M1", "N1", "N2", "Steel_S355", "column", 6.5),
+            Member("M2", "N2", "N3", "Steel_S355", "rafter", 3.047),
+            Member("M3", "N3", "N4", "Steel_S355", "rafter", 3.047),
+            Member("M4", "N4", "N5", "Steel_S355", "rafter", 3.047),
+            Member("M5", "N5", "N6", "Steel_S355", "rafter", 3.047),
+            Member("M6", "N6", "N7", "Steel_S355", "rafter", 3.047),
+            Member("M7", "N7", "N8", "Steel_S355", "rafter", 3.047),
+            Member("M8", "N8", "N9", "Steel_S355", "column", 6.5),
         ]
         data = PortalFrame(
             frame_data=[{
                 "building_roof": "Duo Pitched",
-                "gable_width": 10000,
-                "eaves_height": 6000,
-                "apex_height": 7000,
+                "gable_width": 18000,
+                "eaves_height": 6500,
+                "apex_height": 8100,
                 "use_eaves_haunch": "Yes",
                 "eaves_haunch_length": 1500,
                 "eaves_haunch_depth": 450,
@@ -77,7 +89,7 @@ class HaunchDesignTests(unittest.TestCase):
             members=members,
             supports={
                 "N1": {"DX": True, "DY": True, "DZ": True},
-                "N5": {"DX": True, "DY": True, "DZ": True},
+                "N9": {"DX": True, "DY": True, "DZ": True},
             },
             materials={
                 "Steel_S355": {
@@ -95,11 +107,23 @@ class HaunchDesignTests(unittest.TestCase):
         )
         frame = build_model(self.rafter, self.column, data)
         self.assertIn("M2", frame.members)
-        frame.members["M2"].descritize()
-        sections = [
-            member.section.name
-            for member in frame.members["M2"].sub_members.values()
+        connected_nodes = set()
+        sections = []
+        for member in members:
+            if member.type != "rafter":
+                continue
+            physical = frame.members[member.name]
+            physical.descritize()
+            for sub_member in physical.sub_members.values():
+                connected_nodes.update(
+                    (id(sub_member.i_node), id(sub_member.j_node))
+                )
+                sections.append(sub_member.section.name)
+        haunch_nodes = [
+            node for name, node in frame.nodes.items() if name.startswith("HN")
         ]
+        self.assertTrue(haunch_nodes)
+        self.assertTrue(all(id(node) in connected_nodes for node in haunch_nodes))
         self.assertTrue(any("haunch" in name for name in sections))
         self.assertTrue(any(name == self.rafter_name for name in sections))
 
@@ -114,6 +138,59 @@ class HaunchDesignTests(unittest.TestCase):
         with self.assertRaises(InputValidationError) as context:
             build_analysis_payload(values)
         self.assertIn("apex_haunch_length_m", context.exception.errors)
+
+    def test_dead_live_vertical_limit_can_be_ignored_without_removing_combo(self):
+        frame_data = {
+            "ignore_1_1_dl_1_0_ll_vertical_deflection_limit": "Yes"
+        }
+        self.assertFalse(
+            _vertical_deflection_limit_applies(
+                frame_data, "1.1 DL + 1.0 LL"
+            )
+        )
+        self.assertTrue(
+            _vertical_deflection_limit_applies(
+                frame_data, "1.1 DL + 0.6 W0_0.3M2"
+            )
+        )
+        values = dict(DEFAULT_VALUES)
+        values[
+            "ignore_1_1_dl_1_0_ll_vertical_deflection_limit"
+        ] = True
+        payload = build_analysis_payload(values)
+        self.assertEqual(
+            payload["building_data"][
+                "ignore_1_1_dl_1_0_ll_vertical_deflection_limit"
+            ],
+            "Yes",
+        )
+        deflections = [
+            {
+                "load_combination": "1.1 DL + 1.0 LL",
+                "max_dx": 4.0,
+                "max_dy": 120.0,
+            },
+            {
+                "load_combination": "1.1 DL + 0.6 W0_0.3M2",
+                "max_dx": 20.0,
+                "max_dy": 75.0,
+            },
+        ]
+        governing_dx, governing_dy, ignored = (
+            governing_serviceability_deflections(
+                deflections,
+                payload["building_data"],
+            )
+        )
+        self.assertEqual(
+            governing_dx["load_combination"],
+            "1.1 DL + 0.6 W0_0.3M2",
+        )
+        self.assertEqual(
+            governing_dy["load_combination"],
+            "1.1 DL + 0.6 W0_0.3M2",
+        )
+        self.assertEqual(ignored, [deflections[0]])
 
 
 class FoundationDesignTests(unittest.TestCase):

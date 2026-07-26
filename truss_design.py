@@ -70,6 +70,47 @@ def _float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _purlin_quantity(
+    geometry: Mapping[str, Any], building_data: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Return the full-building purlin quantity for one truss layout."""
+
+    section = str(building_data.get("purlin_section", "")).strip()
+    rows = load_bracing_database().get("Lipped Channels", [])
+    properties = next(
+        (item for item in rows if str(item.get("Designation", "")) == section),
+        None,
+    )
+    if properties is None:
+        raise ValueError(
+            f"Mass data was not found for Lipped Channels {section}."
+        )
+    building_length_m = _float(building_data.get("building_length")) / 1000.0
+    if building_length_m <= 0:
+        raise ValueError(
+            "building_length must be positive for the purlin quantity."
+        )
+    line_count = len(geometry.get("top_node_names", []))
+    if line_count <= 0:
+        raise ValueError(
+            "The truss geometry does not contain purlin support lines."
+        )
+    mass_per_m = float(properties["m"])
+    total_length_m = line_count * building_length_m
+    return {
+        "section": section,
+        "line_count": line_count,
+        "building_length_m": building_length_m,
+        "total_length_m": total_length_m,
+        "mass_per_m_kg": mass_per_m,
+        "mass_kg": total_length_m * mass_per_m,
+        "design_status": (
+            "Included in total mass; purlin resistance and restraint "
+            "connections require separate verification"
+        ),
+    }
+
+
 def load_angle_candidates(
     database_path: str | Path = DEFAULT_DATABASE,
 ) -> list[AngleCandidate]:
@@ -1402,20 +1443,32 @@ def design_truss(payload: Mapping[str, Any]) -> dict[str, Any]:
         truss_count = len(result["building_layout"]["longitudinal"]["grid_labels"])
         result["truss_count"] = truss_count
         result["total_truss_mass_kg"] = result["mass_kg"] * truss_count
-        result["arrangement_mass_kg"] = (
+        result["purlins"] = _purlin_quantity(
+            result["geometry"], building_data
+        )
+        result["primary_arrangement_mass_kg"] = (
             result["total_truss_mass_kg"]
             + result["eave_column_design"]["total_mass_kg"]
             + float(result["girder_design"].get("total_mass_kg", 0.0))
             + float(result.get("centre_column_design", {}).get("total_mass_kg", 0.0))
         )
-        result["lightest_member_arrangement_mass_kg"] = (
+        result["arrangement_mass_kg"] = (
+            result["primary_arrangement_mass_kg"]
+            + result["purlins"]["mass_kg"]
+        )
+        result["lightest_member_primary_mass_kg"] = (
             result["individually_optimised_web_mass_kg"] * truss_count
             + result["eave_column_design"]["total_mass_kg"]
             + float(result["girder_design"].get("total_mass_kg", 0.0))
             + float(result.get("centre_column_design", {}).get("total_mass_kg", 0.0))
         )
+        result["lightest_member_arrangement_mass_kg"] = (
+            result["lightest_member_primary_mass_kg"]
+            + result["purlins"]["mass_kg"]
+        )
         result["platework_cost_allowance_equivalent_kg"] = (
-            PLATEWORK_COST_ALLOWANCE * result["arrangement_mass_kg"]
+            PLATEWORK_COST_ALLOWANCE
+            * result["primary_arrangement_mass_kg"]
         )
         result["practical_cost_equivalent_kg"] = (
             result["arrangement_mass_kg"]
@@ -1445,7 +1498,7 @@ def design_truss(payload: Mapping[str, Any]) -> dict[str, Any]:
     lightest_ranked = lightest_order[:requested]
 
     return {
-        "engine": "preliminary_generic_truss_v0.6",
+        "engine": "preliminary_generic_truss_v0.7",
         "validation_status": "CALCULATION DRAFT - member resistance and serviceability checks complete; connection design and independent verification outstanding",
         "project": dict(payload.get("project", {})),
         "structural_system": "Truss",

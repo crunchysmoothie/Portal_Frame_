@@ -54,6 +54,18 @@ as a completed concrete capacity check.
 Portal rafters and columns can be left on **Automatic - lightest passing** or
 set to an explicit I- or H-section. An explicit section is still checked through
 the full SLS and ULS workflow; it is not treated as automatically adequate.
+Manual portal, gable and crawl section dropdowns are ordered by section height,
+then width and mass without changing automatic design-search ordering.
+Internal gable columns accept any positive count and are spaced evenly across
+the gable width. Their I/H section can be selected explicitly and checked as
+chosen, or automatic sizing can use either the lightest passing section or
+preferred database sections first.
+
+Use **Save inputs** in the header to create a versioned
+`.portalframe.json` file. **Load inputs** restores that file, validates it
+against the current application, and repopulates the complete form, including
+configured crawl beams. Analysis results are deliberately not stored in the
+input file; select **Run analysis** after loading.
 
 On the Review step, select **Run analysis** to submit the validated inputs. The
 UI shows job progress and then displays the member-design status, selected portal
@@ -72,9 +84,16 @@ on the true-scale undeformed geometry, labels the governing node and reports the
 exact displacement, limit, utilisation and display magnification. Truss force and
 utilisation diagrams remain future work.
 
-The shared **Design and Loading** page contains the common design basis and wind
-inputs. Truss-only additional permanent roof actions appear on that page when the
-Truss structural system is selected.
+The shared **Design and Loading** page contains the common design basis, wind
+inputs and additional permanent roof actions for both structural systems.
+Portal-frame design basis also provides an optional switch to ignore only the
+vertical span/deflection acceptance limit for `1.1 DL + 1.0 LL`. The result
+remains analysed, displayed and reported; horizontal drift, other SLS limits
+and all ULS checks continue to govern automatic section selection.
+Services, ceiling, solar, fire-services and HVAC loads are included in `D_MAX`.
+`D_MIN` includes ceiling, fire-services and HVAC but excludes services and
+solar. Portal inputs are converted from kPa to rafter line loads using the frame
+spacing; truss inputs follow the same source-load path into panel-point actions.
 
 **View report** opens the printable HTML calculation sheet in the current browser tab;
 use the browser Back action to return to the designer.

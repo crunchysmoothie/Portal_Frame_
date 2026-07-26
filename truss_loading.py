@@ -22,6 +22,11 @@ EXTRA_PERMANENT_LOAD_KEYS = (
     "fire_load_kpa",
     "hvac_load_kpa",
 )
+MINIMUM_PERMANENT_LOAD_KEYS = (
+    "ceiling_load_kpa",
+    "fire_load_kpa",
+    "hvac_load_kpa",
+)
 
 
 def _add_node_load(
@@ -99,6 +104,9 @@ def _consistent_segment_loads(
     segment_start_mm: float,
     segment_end_mm: float,
     member_length_mm: float,
+    *,
+    shape_start: float = 0.0,
+    shape_end: float = 1.0,
 ) -> list[tuple[dict, float, float]]:
     """Integrate piecewise-linear line loads to the two truss panel nodes."""
 
@@ -122,9 +130,13 @@ def _consistent_segment_loads(
         def values(local_mm: float) -> tuple[float, float, float]:
             load_fraction = 0.0 if end <= start else (local_mm - start) / (end - start)
             intensity = w1 + (w2 - w1) * load_fraction
-            node_j_fraction = (
+            overlap_fraction = (
                 (local_mm - segment_start_mm)
                 / (segment_end_mm - segment_start_mm)
+            )
+            node_j_fraction = (
+                shape_start
+                + (shape_end - shape_start) * overlap_fraction
             )
             return intensity, 1.0 - node_j_fraction, node_j_fraction
 
@@ -235,7 +247,10 @@ def build_panel_point_loads(
 ) -> dict[str, Any]:
     """Return characteristic nodal load cases and existing SANS combinations."""
 
-    source = _source_portal_data(building_data, wind_data, geometry)
+    shared_building_data = dict(building_data)
+    for key in EXTRA_PERMANENT_LOAD_KEYS:
+        shared_building_data.setdefault(key, truss_data.get(key, 0.0))
+    source = _source_portal_data(shared_building_data, wind_data, geometry)
     source_loads: dict[str, dict[str, list[dict]]] = {}
     for load in source.get("member_loads", []):
         source_loads.setdefault(load["member"], {}).setdefault(load["case"], []).append(load)
@@ -246,52 +261,79 @@ def build_panel_point_loads(
     top_members = [
         member for member in geometry.members if member.role == "top_chord"
     ]
+    source_rafter_members = [
+        member
+        for member in source["members"]
+        if str(member.get("type", "")).lower() == "rafter"
+    ]
     for member in top_members:
         i_node = nodes[member.i_node]
         j_node = nodes[member.j_node]
-        midpoint_x = (i_node.x_mm + j_node.x_mm) / 2.0
-        source_member, _ = _source_rafter_at_x(source, midpoint_x)
-        source_i = source_nodes[source_member["i_node"]]
-        source_j = source_nodes[source_member["j_node"]]
-        source_dx = float(source_j["x"]) - float(source_i["x"])
-        source_dy = float(source_j["y"]) - float(source_i["y"])
-        source_length = float(source_member["length"])
-        if abs(source_dx) <= 1e-9 or source_length <= 0:
-            raise ValueError(f"Source rafter {source_member['name']} has invalid geometry.")
-        local_i = (
-            (i_node.x_mm - float(source_i["x"])) / source_dx * source_length
-        )
-        local_j = (
-            (j_node.x_mm - float(source_i["x"])) / source_dx * source_length
-        )
-        loads_by_case = source_loads.get(source_member["name"], {})
-        for case, loads in loads_by_case.items():
-            for load, i_force_kn, j_force_kn in _consistent_segment_loads(
-                loads, local_i, local_j, source_length
-            ):
-                if str(load["direction"]) == "FY":
-                    i_fx_kn, i_fy_kn = 0.0, i_force_kn
-                    j_fx_kn, j_fy_kn = 0.0, j_force_kn
-                else:
-                    # Existing roof wind loads use source-member local Fy.
-                    normal_x = -source_dy / source_length
-                    normal_y = source_dx / source_length
-                    i_fx_kn, i_fy_kn = i_force_kn * normal_x, i_force_kn * normal_y
-                    j_fx_kn, j_fy_kn = j_force_kn * normal_x, j_force_kn * normal_y
-                _add_node_load(cases, case, member.i_node, i_fx_kn, i_fy_kn)
-                _add_node_load(cases, case, member.j_node, j_fx_kn, j_fy_kn)
+        truss_dx = j_node.x_mm - i_node.x_mm
+        if abs(truss_dx) <= 1e-9:
+            continue
+        truss_low, truss_high = sorted((i_node.x_mm, j_node.x_mm))
+        for source_member in source_rafter_members:
+            source_i = source_nodes[source_member["i_node"]]
+            source_j = source_nodes[source_member["j_node"]]
+            source_dx = float(source_j["x"]) - float(source_i["x"])
+            source_dy = float(source_j["y"]) - float(source_i["y"])
+            source_low, source_high = sorted(
+                (float(source_i["x"]), float(source_j["x"]))
+            )
+            overlap_low = max(truss_low, source_low)
+            overlap_high = min(truss_high, source_high)
+            if overlap_high - overlap_low <= 1e-9:
+                continue
+            source_length_mm = float(source_member["length"]) * 1000.0
+            if abs(source_dx) <= 1e-9 or source_length_mm <= 0:
+                raise ValueError(
+                    f"Source rafter {source_member['name']} has invalid geometry."
+                )
+            local_start = (
+                (overlap_low - float(source_i["x"]))
+                / source_dx
+                * source_length_mm
+            )
+            local_end = (
+                (overlap_high - float(source_i["x"]))
+                / source_dx
+                * source_length_mm
+            )
+            shape_start = (overlap_low - i_node.x_mm) / truss_dx
+            shape_end = (overlap_high - i_node.x_mm) / truss_dx
+            loads_by_case = source_loads.get(source_member["name"], {})
+            for case, loads in loads_by_case.items():
+                for load, i_force_kn, j_force_kn in _consistent_segment_loads(
+                    loads,
+                    local_start,
+                    local_end,
+                    source_length_mm,
+                    shape_start=shape_start,
+                    shape_end=shape_end,
+                ):
+                    if str(load["direction"]) == "FY":
+                        i_fx_kn, i_fy_kn = 0.0, i_force_kn
+                        j_fx_kn, j_fy_kn = 0.0, j_force_kn
+                    else:
+                        # Existing roof wind loads use source-member local Fy.
+                        normal_x = -source_dy / source_length_mm
+                        normal_y = source_dx / source_length_mm
+                        i_fx_kn = i_force_kn * normal_x
+                        i_fy_kn = i_force_kn * normal_y
+                        j_fx_kn = j_force_kn * normal_x
+                        j_fy_kn = j_force_kn * normal_y
+                    _add_node_load(cases, case, member.i_node, i_fx_kn, i_fy_kn)
+                    _add_node_load(cases, case, member.j_node, j_fx_kn, j_fy_kn)
 
-    extra_kpa = sum(float(truss_data.get(key, 0.0) or 0.0) for key in EXTRA_PERMANENT_LOAD_KEYS)
-    spacing_m = float(building_data["rafter_spacing"]) / 1000.0
-    if extra_kpa > 0:
-        vertical_line_kn_m = extra_kpa * spacing_m
-        for member in top_members:
-            i_node = nodes[member.i_node]
-            j_node = nodes[member.j_node]
-            total_kn = -vertical_line_kn_m * abs(j_node.x_mm - i_node.x_mm) / 1000.0
-            for case in ("D_MAX", "D_MIN"):
-                _add_node_load(cases, case, member.i_node, 0.0, total_kn / 2.0)
-                _add_node_load(cases, case, member.j_node, 0.0, total_kn / 2.0)
+    extra_kpa = sum(
+        float(shared_building_data.get(key, 0.0) or 0.0)
+        for key in EXTRA_PERMANENT_LOAD_KEYS
+    )
+    minimum_extra_kpa = sum(
+        float(shared_building_data.get(key, 0.0) or 0.0)
+        for key in MINIMUM_PERMANENT_LOAD_KEYS
+    )
 
     return {
         "cases": {
@@ -308,6 +350,8 @@ def build_panel_point_loads(
             "base_dead_load_min_kpa": 0.25,
             "roof_imposed_load_kpa": 0.25,
             "extra_permanent_load_kpa": extra_kpa,
+            "minimum_extra_permanent_load_kpa": minimum_extra_kpa,
+            "d_min_excluded_extra_loads": ["services_load_kpa", "solar_load_kpa"],
             "purlins_at_panel_points": True,
         },
         "eave_column_wall_actions": _eave_column_wall_actions(source),

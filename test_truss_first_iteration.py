@@ -266,14 +266,15 @@ class TrussWorkflowTests(unittest.TestCase):
         self.assertEqual(girder_layout["span_count"], 2)
         result = design_truss(payload)
         solution = result["ranked_solutions"][0]
-        self.assertEqual(result["engine"], "preliminary_generic_truss_v0.6")
+        self.assertEqual(result["engine"], "preliminary_generic_truss_v0.7")
         self.assertEqual(solution["girder_design"]["status"], "PASS")
         self.assertEqual(solution["girder_design"]["geometry"]["span_mm"], 12_000)
         self.assertAlmostEqual(
             solution["arrangement_mass_kg"],
             solution["total_truss_mass_kg"]
             + solution["eave_column_design"]["total_mass_kg"]
-            + solution["girder_design"]["total_mass_kg"],
+            + solution["girder_design"]["total_mass_kg"]
+            + solution["purlins"]["mass_kg"],
         )
         for group in solution["girder_design"]["chord_fabrication_groups"]:
             sections = {
@@ -339,11 +340,26 @@ class TrussWorkflowTests(unittest.TestCase):
         ))
         self.assertAlmostEqual(
             solution["platework_cost_allowance_equivalent_kg"],
-            0.08 * solution["arrangement_mass_kg"],
+            0.08 * solution["primary_arrangement_mass_kg"],
         )
         self.assertAlmostEqual(
             solution["practical_cost_equivalent_kg"],
-            1.08 * solution["arrangement_mass_kg"],
+            solution["arrangement_mass_kg"]
+            + 0.08 * solution["primary_arrangement_mass_kg"],
+        )
+        purlins = solution["purlins"]
+        self.assertEqual(purlins["section"], DEFAULT_VALUES["purlin_section"])
+        self.assertEqual(
+            purlins["line_count"],
+            len(solution["geometry"]["top_node_names"]),
+        )
+        self.assertAlmostEqual(
+            purlins["total_length_m"],
+            purlins["line_count"] * 60.0,
+        )
+        self.assertAlmostEqual(
+            solution["arrangement_mass_kg"],
+            solution["primary_arrangement_mass_kg"] + purlins["mass_kg"],
         )
         for group in solution["chord_fabrication_groups"]:
             sections = {
@@ -358,7 +374,8 @@ class TrussWorkflowTests(unittest.TestCase):
             report = html.read_text(encoding="utf-8")
             self.assertIn("Truss Design Calculation - Draft", report)
             self.assertIn("Every 1 purlin", report)
-            self.assertIn("Arrangement mass", report)
+            self.assertIn("Total modelled mass", report)
+            self.assertIn("Purlin quantity", report)
             self.assertIn("Minimum base angle: 50x50x5", report)
             self.assertIn("Chord fabrication groups", report)
             self.assertIn("Web fabrication groups", report)

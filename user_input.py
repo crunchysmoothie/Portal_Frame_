@@ -12,6 +12,20 @@ from crawl_beam_loading import (
 from crawl_beam_inputs import ALL_AT_ONCE, ONE_AT_A_TIME, resolve_crawl_selection
 from roof_layout import calculate_roof_bracing_layout
 
+
+ADDITIONAL_PERMANENT_LOAD_KEYS = (
+    "services_load_kpa",
+    "ceiling_load_kpa",
+    "solar_load_kpa",
+    "fire_load_kpa",
+    "hvac_load_kpa",
+)
+MINIMUM_PERMANENT_LOAD_KEYS = (
+    "ceiling_load_kpa",
+    "fire_load_kpa",
+    "hvac_load_kpa",
+)
+
 # Function to generate nodes based on the portal frame structure with static values
 def generate_nodes(b_data):
     eaves_height = b_data['eaves_height']
@@ -591,12 +605,26 @@ def add_live_loads(json_filename):
         json.dump(data, json_file, indent=2)
 
 def add_dead_loads(json_filename):
-    """Generate live loads and append them to the member loads list."""
+    """Append base and project-specific permanent roof loads to rafters."""
     with open(json_filename, 'r') as file:
         data = json.load(file)
 
-    dead_load_max = round(data["frame_data"][0]["rafter_spacing"] / 1000 * -0.35/1000, 5)
-    dead_load_min = round(data["frame_data"][0]["rafter_spacing"] / 1000 * -0.25/1000, 5)
+    frame = data["frame_data"][0]
+    additional_permanent_max_kpa = sum(
+        float(frame.get(key, 0.0) or 0.0)
+        for key in ADDITIONAL_PERMANENT_LOAD_KEYS
+    )
+    additional_permanent_min_kpa = sum(
+        float(frame.get(key, 0.0) or 0.0)
+        for key in MINIMUM_PERMANENT_LOAD_KEYS
+    )
+    spacing_m = float(frame["rafter_spacing"]) / 1000
+    dead_load_max = round(
+        spacing_m * -(0.35 + additional_permanent_max_kpa) / 1000, 5
+    )
+    dead_load_min = round(
+        spacing_m * -(0.25 + additional_permanent_min_kpa) / 1000, 5
+    )
 
     for member in data["members"]:
         if member["type"] == "rafter":

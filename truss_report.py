@@ -73,6 +73,7 @@ def write_truss_html(result: Mapping[str, Any], path: str | Path) -> Path:
     support_arrangement = layout.get("support_arrangement", {})
     eave_column = best.get("eave_column_design", {})
     centre_column = best.get("centre_column_design", {})
+    purlins = best.get("purlins", {})
     column_strength = eave_column.get("governing_strength", {})
     column_serviceability = eave_column.get("serviceability", {})
     girder = best.get("girder_design", {})
@@ -151,13 +152,14 @@ small{{color:#667681}} @media print{{body{{margin:10mm}} .no-print{{display:none
 <div>Building layout</div><div>{_number(longitudinal.get('building_length_mm', 0) / 1000, 1)} m long; transverse bays {escape(' / '.join(_number(value / 1000, 1) for value in transverse.get('bay_spans_mm', [])))} m</div>
 <div>Support sequence</div><div>{escape(' / '.join(str(value) for value in support_arrangement.get('sequence', [])))}</div>
   <div>Columns</div><div>{layout_columns.get('eave_count', '')} main eave columns; {layout_columns.get('internal_count', '')} internal support columns</div>
-  <div>Rank 1 mass</div><div>{_number(best.get('total_truss_mass_kg', 0), 1)} kg trusses + {_number(eave_column.get('total_mass_kg', 0), 1)} kg eave columns + {_number(girder.get('total_mass_kg', 0), 1)} kg girders + {_number(centre_column.get('total_mass_kg', 0), 1)} kg centre columns = {_number(best.get('arrangement_mass_kg', 0), 1)} kg modelled arrangement</div>
+  <div>Rank 1 mass</div><div>{_number(best.get('total_truss_mass_kg', 0), 1)} kg trusses + {_number(eave_column.get('total_mass_kg', 0), 1)} kg eave columns + {_number(girder.get('total_mass_kg', 0), 1)} kg girders + {_number(centre_column.get('total_mass_kg', 0), 1)} kg centre columns + {_number(purlins.get('mass_kg', 0), 1)} kg purlins = {_number(best.get('arrangement_mass_kg', 0), 1)} kg total modelled steel</div>
+  <div>Purlin quantity</div><div>{escape(str(purlins.get('section', '')))}; {int(purlins.get('line_count', 0))} lines × {_number(purlins.get('building_length_m', 0), 1)} m = {_number(purlins.get('total_length_m', 0), 1)} m at {_number(purlins.get('mass_per_m_kg', 0), 2)} kg/m</div>
   <div>Centre-column design</div><div>{escape(str(centre_column.get('status', 'NOT_DESIGNED')))}; {escape(str(centre_column.get('material', 'Steel')))}; {escape(str(centre_column.get('section', 'main-column proxy')))}; axial-only check</div>
-  <div>Practical cost comparison</div><div>{_number(best.get('practical_cost_equivalent_kg', 0), 1)} kg-equivalent including an {_number(float(basis.get('platework_cost_allowance_fraction', 0)) * 100, 0)}% platework allowance; individually optimised-web comparison {_number(best.get('lightest_member_arrangement_mass_kg', 0), 1)} kg</div>
+  <div>Practical cost comparison</div><div>{_number(best.get('practical_cost_equivalent_kg', 0), 1)} kg-equivalent including an {_number(float(basis.get('platework_cost_allowance_fraction', 0)) * 100, 0)}% platework allowance on primary truss, column and girder steel; purlins are included without that allowance. Individually optimised-web comparison {_number(best.get('lightest_member_arrangement_mass_kg', 0), 1)} kg total</div>
 </div>
 <div class="warning"><strong>Engineering hold point</strong><ul>{warnings}</ul></div>
 <h2>Ranked passing solutions</h2>
-<table><thead><tr><th>Practical rank</th><th>Depth (m)</th><th>Panels</th><th>Panel (mm)</th><th>Arrangement mass (kg)</th><th>Practical kg-eq.</th><th>Individual-web comparison (kg)</th><th>Unique sections</th><th>ULS util.</th><th>SLS dy / limit (mm)</th></tr></thead><tbody>{ranked_rows}</tbody></table>
+<table><thead><tr><th>Practical rank</th><th>Depth (m)</th><th>Panels</th><th>Panel (mm)</th><th>Total modelled mass (kg)</th><th>Practical kg-eq.</th><th>Individual-web total (kg)</th><th>Unique sections</th><th>ULS util.</th><th>SLS dy / limit (mm)</th></tr></thead><tbody>{ranked_rows}</tbody></table>
 <h2>Chord fabrication groups</h2>
 <p>Each top chord and bottom chord uses one section designation throughout each transverse span.</p>
 <table><thead><tr><th>Span</th><th>Chord</th><th>Common section</th><th>Members</th><th>Governing member</th><th>Util.</th></tr></thead><tbody>{chord_group_rows}</tbody></table>

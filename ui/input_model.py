@@ -29,11 +29,13 @@ CRAWL_SLOPES = ("left", "right", "single")
 HOIST_CLASSES = ("C1", "C2", "C3", "C4")
 PORTAL_SECTION_FAMILIES = ("I-Sections", "H-Sections")
 AUTOMATIC_SECTION = "Automatic - lightest passing"
+AUTOMATIC_GABLE_SECTION = "Automatic - use section order"
 TRUSS_TYPES = ("Warren with verticals", "Pratt", "Howe")
 TRUSS_CHORD_FORMS = ("Parallel chords", "Horizontal bottom chord")
 TRUSS_INTERNAL_SUPPORTS = ("Centre columns", "Longitudinal girders")
 TRUSS_CENTRE_COLUMN_MATERIALS = ("Steel", "Concrete tilt-up")
 TRUSS_STEEL_SECTION_ORDERS = ("Automatic - lightest passing", "Preferred sections first")
+GABLE_SECTION_ORDERS = TRUSS_STEEL_SECTION_ORDERS
 
 
 def load_lipped_channel_sections() -> tuple[str, ...]:
@@ -55,8 +57,32 @@ LIPPED_CHANNEL_SECTIONS = load_lipped_channel_sections()
 _PORTAL_MEMBER_DATABASE = portal_members.load_member_database(
     PROJECT_ROOT / "member_database.csv"
 )
+
+
+def _section_geometry_sort_key(
+    designation: str,
+    properties: Mapping[str, Any],
+) -> tuple[float, float, float, str]:
+    """Order manual section choices by depth, width, mass and designation."""
+
+    return (
+        float(properties.get("h", math.inf)),
+        float(properties.get("b", math.inf)),
+        float(properties.get("m", math.inf)),
+        designation.casefold(),
+    )
+
+
 PORTAL_SECTIONS_BY_FAMILY: dict[str, tuple[str, ...]] = {
-    family: tuple(_PORTAL_MEMBER_DATABASE[family])
+    family: tuple(
+        sorted(
+            _PORTAL_MEMBER_DATABASE[family],
+            key=lambda designation: _section_geometry_sort_key(
+                designation,
+                _PORTAL_MEMBER_DATABASE[family][designation],
+            ),
+        )
+    )
     for family in PORTAL_SECTION_FAMILIES
 }
 
@@ -75,6 +101,7 @@ DEFAULT_VALUES: dict[str, Any] = {
     "wind_design_mode": "Prelim",
     "roof_accessibility": "Inaccessible",
     "load_combination_standard": "SANS 10160-1:2019",
+    "ignore_1_1_dl_1_0_ll_vertical_deflection_limit": False,
     "steel_grade": "Steel_S355",
     "rafter_section_type": "I-Sections",
     "rafter_section": AUTOMATIC_SECTION,
@@ -103,6 +130,9 @@ DEFAULT_VALUES: dict[str, Any] = {
     "rafter_bracing_spacing": "2",
     "gable_column_count": "3",
     "gable_column_brace_intervals": "2",
+    "gable_column_section_order": "Preferred sections first",
+    "gable_column_section_type": "I-Sections",
+    "gable_column_section": AUTOMATIC_GABLE_SECTION,
     "purlin_section": "175x65x20x2.5",
     "purlin_max_spacing_mm": "1600",
     "girt_section": "175x65x20x2.5",
@@ -237,6 +267,9 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
     )
     column_section_type = choice(
         "column_section_type", PORTAL_SECTION_FAMILIES
+    )
+    gable_section_type = choice(
+        "gable_column_section_type", PORTAL_SECTION_FAMILIES
     )
 
     eaves_m = number("eaves_height_m", strictly_positive=True)
@@ -422,8 +455,11 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
 
     col_intervals = integer("col_bracing_spacing", minimum=1)
     roof_panels = integer("rafter_bracing_spacing", minimum=1)
-    gable_columns = integer("gable_column_count", minimum=1, odd=True)
+    gable_columns = integer("gable_column_count", minimum=1)
     gable_intervals = integer("gable_column_brace_intervals", minimum=1)
+    gable_section_order = choice(
+        "gable_column_section_order", GABLE_SECTION_ORDERS
+    )
     purlin_spacing = number("purlin_max_spacing_mm", strictly_positive=True)
     girt_spacing = number("girt_max_spacing_mm", strictly_positive=True)
 
@@ -444,6 +480,15 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
 
     rafter_section = portal_section("rafter_section", rafter_section_type)
     column_section = portal_section("column_section", column_section_type)
+    gable_section = str(raw.get("gable_column_section", "")).strip()
+    if (
+        gable_section != AUTOMATIC_GABLE_SECTION
+        and gable_section
+        not in PORTAL_SECTIONS_BY_FAMILY.get(gable_section_type, ())
+    ):
+        errors["gable_column_section"] = (
+            f"Choose Automatic or a section from {gable_section_type}."
+        )
 
     use_eaves_haunch = (
         structural_system == "Portal frame"
@@ -658,6 +703,19 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
             "wind_design_mode": wind_mode,
             "roof_accessibility": roof_accessibility,
             "load_combination_standard": combination_standard,
+            "ignore_1_1_dl_1_0_ll_vertical_deflection_limit": (
+                "Yes"
+                if (
+                    structural_system == "Portal frame"
+                    and bool(
+                        raw.get(
+                            "ignore_1_1_dl_1_0_ll_vertical_deflection_limit",
+                            False,
+                        )
+                    )
+                )
+                else "No"
+            ),
             "blocking_factor": blocking_factor,
             "opening_areas_m2": openings,
             "eaves_height": eaves_m * 1000,
@@ -675,6 +733,14 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
             "girt_max_spacing_mm": girt_spacing,
             "gable_column_count": gable_columns,
             "gable_column_brace_intervals": gable_intervals,
+            "gable_column_section_order": gable_section_order,
+            "gable_column_section_type": gable_section_type,
+            "gable_column_section": gable_section,
+            "services_load_kpa": truss_loads["services"],
+            "ceiling_load_kpa": truss_loads["ceiling"],
+            "solar_load_kpa": truss_loads["solar"],
+            "fire_load_kpa": truss_loads["fire"],
+            "hvac_load_kpa": truss_loads["hvac"],
             "steel_grade": steel_grade,
             "rafter_section_type": rafter_section_type,
             "rafter_section": rafter_section,

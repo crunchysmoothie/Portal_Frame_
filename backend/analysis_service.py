@@ -106,6 +106,19 @@ def _design_summary(calculation_data, analysis_id: str) -> dict[str, Any]:
         }
         for item in bracing.get("bracing_members", [])
     ]
+    gable_columns = [
+        {
+            "name": item.get("name", ""),
+            "section": item.get("section", ""),
+            "utilisation": item.get("utilisation", 0.0),
+            "status": (
+                "PASS"
+                if float(item.get("utilisation", 0.0)) <= 1.0
+                else "FAIL"
+            ),
+        }
+        for item in bracing.get("gable_columns", [])
+    ]
     return {
         "analysis_id": analysis_id,
         "project": {
@@ -120,6 +133,15 @@ def _design_summary(calculation_data, analysis_id: str) -> dict[str, Any]:
             "length_mm": project.get("building_length_mm", 0),
             "roof_pitch_deg": frame.get("roof_pitch_deg", 0),
         },
+        "additional_permanent_roof_loads_kpa": project.get(
+            "additional_permanent_roof_loads_kpa", {}
+        ),
+        "additional_permanent_roof_load_total_kpa": project.get(
+            "additional_permanent_roof_load_total_kpa", 0
+        ),
+        "minimum_additional_permanent_roof_load_total_kpa": project.get(
+            "minimum_additional_permanent_roof_load_total_kpa", 0
+        ),
         "portal_sections": {
             "rafter": project.get("rafter_section", ""),
             "column": project.get("column_section", ""),
@@ -145,6 +167,13 @@ def _design_summary(calculation_data, analysis_id: str) -> dict[str, Any]:
             "utilisation": frame.get("governing_utilisation", 0),
         },
         "serviceability": {
+            "ignored_vertical_limit_combinations": (
+                ["1.1 DL + 1.0 LL"]
+                if project.get(
+                    "ignore_1_1_dl_1_0_ll_vertical_deflection_limit", False
+                )
+                else []
+            ),
             "max_horizontal_deflection_mm": frame.get(
                 "max_horizontal_deflection_mm", 0
             ),
@@ -163,8 +192,12 @@ def _design_summary(calculation_data, analysis_id: str) -> dict[str, Any]:
             "vertical_combination": frame.get(
                 "vertical_deflection_combination", ""
             ),
+            "ignored_vertical_deflections": frame.get(
+                "ignored_vertical_deflections", []
+            ),
         },
         "steel_mass_breakdown": frame.get("steel_mass_breakdown", {}),
+        "gable_columns": gable_columns,
         "bracing_members": brace_members,
         "load_case_visualisation": dict(calculation_data.visualisation),
         "warnings": list(calculation_data.warnings),

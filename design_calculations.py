@@ -650,6 +650,50 @@ def collect_deflections(
     return results
 
 
+def governing_serviceability_deflections(
+    deflections: list[dict[str, Any]],
+    frame_data: Mapping[str, Any],
+) -> tuple[
+    dict[str, Any] | None,
+    dict[str, Any] | None,
+    list[dict[str, Any]],
+]:
+    """Select governing checked deflections and retain ignored vertical rows."""
+
+    governing_dx = max(
+        deflections,
+        key=lambda item: abs(float(item["max_dx"])),
+        default=None,
+    )
+    ignore_dead_live_vertical = (
+        str(
+            frame_data.get(
+                "ignore_1_1_dl_1_0_ll_vertical_deflection_limit", "No"
+            )
+        ).lower()
+        == "yes"
+    )
+    ignored_names = (
+        {"1.1 DL + 1.0 LL"} if ignore_dead_live_vertical else set()
+    )
+    ignored_vertical = [
+        dict(item)
+        for item in deflections
+        if item["load_combination"] in ignored_names
+    ]
+    checked_vertical = [
+        item
+        for item in deflections
+        if item["load_combination"] not in ignored_names
+    ]
+    governing_dy = max(
+        checked_vertical,
+        key=lambda item: abs(float(item["max_dy"])),
+        default=None,
+    )
+    return governing_dx, governing_dy, ignored_vertical
+
+
 def build_frame_summary(data, member_db, rafter_section_type, column_section_type,
                         rafter_section, column_section, member_results,
                         reactions, deflections, bracing_design=None):
@@ -678,8 +722,9 @@ def build_frame_summary(data, member_db, rafter_section_type, column_section_typ
         member_results,
         key=lambda item: item.governing_ratio if math.isfinite(item.governing_ratio) else math.inf,
     )
-    governing_dx = max(deflections, key=lambda item: abs(item["max_dx"]), default=None)
-    governing_dy = max(deflections, key=lambda item: abs(item["max_dy"]), default=None)
+    governing_dx, governing_dy, ignored_vertical = (
+        governing_serviceability_deflections(deflections, frame_data)
+    )
     governing_fx = max(reactions, key=lambda item: abs(item.fx), default=None)
     governing_fy = max(reactions, key=lambda item: abs(item.fy), default=None)
 
@@ -712,6 +757,7 @@ def build_frame_summary(data, member_db, rafter_section_type, column_section_typ
         "vertical_deflection_ratio": governing_dy.get("vertical_ratio") if governing_dy else None,
         "vertical_deflection_node": governing_dy["dy_node"] if governing_dy else "",
         "vertical_deflection_combination": governing_dy["load_combination"] if governing_dy else "",
+        "ignored_vertical_deflections": ignored_vertical,
         "max_abs_horizontal_reaction_kN": abs(governing_fx.fx) if governing_fx else 0.0,
         "horizontal_reaction_node": governing_fx.node if governing_fx else "",
         "horizontal_reaction_combination": governing_fx.load_combination if governing_fx else "",
@@ -912,6 +958,16 @@ def build_calculation_sheet_data_from_frame(
         rafter_section, column_section, all_members, reactions, deflections,
         bracing_design,
     )
+    additional_permanent_roof_loads = {
+        key: float(frame_data.get(key, 0.0) or 0.0)
+        for key in (
+            "services_load_kpa",
+            "ceiling_load_kpa",
+            "solar_load_kpa",
+            "fire_load_kpa",
+            "hvac_load_kpa",
+        )
+    }
     project = {
         "generated": datetime.now().astimezone().isoformat(timespec="seconds"),
         "input_file": str(input_path.resolve()),
@@ -919,6 +975,14 @@ def build_calculation_sheet_data_from_frame(
         "roof_type": frame_data.get("building_roof", ""),
         "roof_accessibility": frame_data.get("roof_accessibility", ""),
         "load_combination_standard": frame_data.get("load_combination_standard", ""),
+        "ignore_1_1_dl_1_0_ll_vertical_deflection_limit": (
+            str(
+                frame_data.get(
+                    "ignore_1_1_dl_1_0_ll_vertical_deflection_limit", "No"
+                )
+            ).lower()
+            == "yes"
+        ),
         "wind_design_mode": internal_pressure.get(
             "mode", frame_data.get("wind_design_mode", "Prelim")
         ),
@@ -938,6 +1002,18 @@ def build_calculation_sheet_data_from_frame(
         "rafter_spacing_mm": frame_data.get("rafter_spacing", 0),
         "building_length_mm": frame_data.get("building_length", 0),
         "roof_pitch_deg": frame_data.get("roof_pitch", 0),
+        "additional_permanent_roof_loads_kpa": additional_permanent_roof_loads,
+        "additional_permanent_roof_load_total_kpa": sum(
+            additional_permanent_roof_loads.values()
+        ),
+        "minimum_additional_permanent_roof_load_total_kpa": sum(
+            additional_permanent_roof_loads[key]
+            for key in (
+                "ceiling_load_kpa",
+                "fire_load_kpa",
+                "hvac_load_kpa",
+            )
+        ),
         "rafter_section": rafter_section,
         "column_section": column_section,
         "column_bracing_type": frame_data.get("column_bracing_type", "X"),
@@ -968,6 +1044,7 @@ def build_calculation_sheet_data_from_frame(
         "Two-dimensional transverse portal-frame analysis.",
         "Member self-weight is applied in load case D.",
         "Roof permanent actions are represented by D_MIN and D_MAX.",
+        "Project-specific services, ceiling, solar, fire-services and HVAC area loads are added to D_MAX; D_MIN excludes services and solar.",
         "Utilisation ratios are calculated using the existing strength_checks.py design model.",
         "SANS 10162-1:2011, including Amendment No. 1, is used for the reported steel resistance equations.",
         "The current in-plane effective-length factors are Kx = 1.2 for columns and Kx = 1.0 for rafters; Ky = 1.0 between modeled brace points.",
@@ -986,6 +1063,12 @@ def build_calculation_sheet_data_from_frame(
             "The inclined haunch flange is numerically tapered over its final flange thickness so area and Ixx converge to the parent rafter at the toe.",
             "Haunch sub-elements retain the parent rafter brace-panel stability length; numerical subdivision is not treated as lateral restraint.",
         ])
+    if project["ignore_1_1_dl_1_0_ll_vertical_deflection_limit"]:
+        assumptions.append(
+            "The 1.1 DL + 1.0 LL combination is analysed and reported, but "
+            "its vertical span/deflection result is excluded from automatic "
+            "portal-section acceptance."
+        )
     if internal_pressure.get("uniform_opening_distribution_assumed"):
         assumptions.append(
             "Wall openings are assumed uniformly distributed over each entered face when determining representative external pressure."
@@ -1018,6 +1101,17 @@ def build_calculation_sheet_data_from_frame(
                     str(frame_data.get("use_eaves_haunch", "No")).lower() == "yes"
                     or str(frame_data.get("use_apex_haunch", "No")).lower() == "yes"
                 )
+                else []
+            ),
+            *(
+                [
+                    "The vertical deflection limit for 1.1 DL + 1.0 LL was "
+                    "ignored for automatic section selection; its calculated "
+                    "deflection remains in the results."
+                ]
+                if project[
+                    "ignore_1_1_dl_1_0_ll_vertical_deflection_limit"
+                ]
                 else []
             ),
         ],
@@ -1430,6 +1524,7 @@ def _bracing_html(bracing, project=None):
         _fmt(item["tributary_width_mm"], 0), _fmt(item["top_shear_kn"]),
         _fmt(item["major_moment_knm"]), _fmt(item["mcr_knm"]),
         _fmt(item["bending_resistance_knm"]), _fmt(item["utilisation"]),
+        "PASS" if float(item.get("utilisation", 0)) <= 1 else "FAIL",
     ) for item in columns]
     gable_calculation_rows = []
     wind_factor = float(bracing.get("wind_uls_factor", 0))
@@ -1523,7 +1618,7 @@ def _bracing_html(bracing, project=None):
     <b>total top shear:</b> {_fmt(bracing.get('total_gable_top_shear_kn', 0))} kN.</p>
     {_html_table(("Case", "Wall zone", "cpi", "|Pressure| (kPa)"), pressure_rows)}
     <h3>Gable-end elevation</h3><svg class="layout" viewBox="0 0 700 300" role="img" aria-label="Gable column layout">{''.join(gable_lines)}</svg>
-    {_html_table(("Column", "Roof node", "Section", "Tributary width (mm)", "Top shear (kN)", "M (kNm)", "Mcr (kNm)", "Mr (kNm)", "Util."), column_rows)}
+    {_html_table(("Column", "Roof node", "Section", "Tributary width (mm)", "Top shear (kN)", "M (kNm)", "Mcr (kNm)", "Mr (kNm)", "Util.", "Status"), column_rows)}
     <h3>Gable-column design calculations</h3>
     {_html_table(("Column", "Ref.", "Calculation", "Equation", "Substitution", "Result"), gable_calculation_rows, "details")}
     <h3>Roof-bracing plan - first braced bay</h3><svg class="layout" viewBox="0 0 700 220" role="img" aria-label="Roof X bracing layout">{''.join(plan_lines)}</svg>
@@ -1555,6 +1650,15 @@ def write_html_report(data, output_path):
         ("Steel", escape(str(data.project["steel_grade"]))),
         ("Sections", f"Rafter {escape(str(data.project['rafter_section']))}; column {escape(str(data.project['column_section']))}"),
         ("Roof accessibility", escape(str(data.project["roof_accessibility"]))),
+        (
+            "Additional permanent roof loads",
+            escape(
+                f"{data.project.get('additional_permanent_roof_loads_kpa', {})}; "
+                f"D_MAX addition {_fmt(data.project.get('additional_permanent_roof_load_total_kpa', 0))} kPa; "
+                f"D_MIN addition {_fmt(data.project.get('minimum_additional_permanent_roof_load_total_kpa', 0))} kPa "
+                "(services and solar excluded)"
+            ),
+        ),
         ("Combinations", escape(str(data.project["load_combination_standard"]))),
         ("Wind design mode", escape(str(data.project.get("wind_design_mode", "Prelim")))),
         ("Wall openings", escape(str(data.project.get("wall_openings_m2", "Not required")))),
@@ -2174,12 +2278,13 @@ def write_pdf_from_json(json_path, output_path):
             drawing.add(String(x+3.5*mm,(7*mm+gy(item["height_mm"]))/2,f"{result.get('section','')}",fontSize=5.5,angle=90))
         story += [drawing]
 
-        column_rows = [["Column","Node","Section","Trib. mm","V kN","M kNm","Mcr","Mr","Util."]] + [[
+        column_rows = [["Column","Node","Section","Trib. mm","V kN","M kNm","Mcr","Mr","Util.","Status"]] + [[
             item["name"],item["roof_node"],item["section"],_fmt(item["tributary_width_mm"],0),
             _fmt(item["top_shear_kn"]),_fmt(item["major_moment_knm"]),_fmt(item["mcr_knm"]),
             _fmt(item["bending_resistance_knm"]),_fmt(item["utilisation"]),
+            "PASS" if float(item.get("utilisation", 0)) <= 1 else "FAIL",
         ] for item in bracing.get("gable_columns", [])]
-        column_table = Table(column_rows, colWidths=[15*mm,15*mm,25*mm,20*mm,18*mm,18*mm,18*mm,18*mm,15*mm], repeatRows=1)
+        column_table = Table(column_rows, colWidths=[14*mm,14*mm,23*mm,18*mm,16*mm,16*mm,16*mm,16*mm,14*mm,15*mm], repeatRows=1)
         column_table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#174f78")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),0.3,colors.HexColor("#cbd2d9")),("FONTSIZE",(0,0),(-1,-1),6.2)]))
         story += [column_table, Paragraph("Gable-column design calculations", styles["CalcH4"])]
         gable_calc_rows = [["Column","Ref.","Calculation","Equation","Substitution","Result"]]

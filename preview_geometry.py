@@ -308,8 +308,6 @@ def build_preview_geometry(payload: Mapping[str, Any]) -> dict[str, Any]:
     gable_columns: list[dict[str, Any]] = []
     if str(building.get("building_type")) != "Canopy":
         gable_count = _positive_integer(building, "gable_column_count")
-        if gable_count % 2 == 0:
-            raise ValueError("gable_column_count must be a positive odd number.")
         for index in range(1, gable_count + 1):
             x = span * index / (gable_count + 1)
             if roof_type == "Mono Pitched":
