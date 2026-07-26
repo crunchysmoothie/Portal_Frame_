@@ -6,6 +6,12 @@ import base64
 import html
 from typing import Any, Callable
 
+from truss_model import (
+    WARREN_ALL_VERTICALS,
+    WARREN_INTERMEDIATE_VERTICALS,
+    WARREN_NO_VERTICALS,
+)
+
 
 INK = "#173C3A"
 GRID = "#B8C9C7"
@@ -238,18 +244,27 @@ def truss_elevation_svg(preview: dict[str, Any]) -> str:
 def truss_type_reference_svg(selected: str) -> str:
     """Show the load-path distinction between the supported web layouts."""
 
-    width, height = 600, 225
-    types = ("Warren with verticals", "Pratt", "Howe")
+    width, height = 600, 390
+    types = (
+        WARREN_NO_VERTICALS,
+        WARREN_INTERMEDIATE_VERTICALS,
+        WARREN_ALL_VERTICALS,
+        "Pratt",
+        "Howe",
+    )
     body: list[str] = []
     for type_index, name in enumerate(types):
-        x0 = 25 + type_index * 193
-        box_width = 172
+        row, column = divmod(type_index, 3)
+        x0 = 18 + column * 194
+        y0 = 18 + row * 180
+        box_width = 176
         selected_fill = "#E4F5EE" if name == selected else "#FFFFFF"
         stroke = SECONDARY if name == selected else GRID
         body.append(
-            f'<rect x="{x0}" y="48" width="{box_width}" height="145" rx="10" fill="{selected_fill}" stroke="{stroke}" stroke-width="{2 if name == selected else 1}"/>'
+            f'<rect x="{x0}" y="{y0}" width="{box_width}" height="158" rx="10" fill="{selected_fill}" stroke="{stroke}" stroke-width="{2 if name == selected else 1}"/>'
         )
-        left, right, top_y, bottom_y = x0 + 16, x0 + box_width - 16, 82, 154
+        left, right = x0 + 16, x0 + box_width - 16
+        top_y, bottom_y = y0 + 42, y0 + 106
         panels = 6
         dx = (right - left) / panels
         for index in range(panels):
@@ -257,11 +272,25 @@ def truss_type_reference_svg(selected: str) -> str:
                 f'<line x1="{left + index * dx:.2f}" y1="{top_y:.2f}" x2="{left + (index + 1) * dx:.2f}" y2="{top_y:.2f}" stroke="{INK}" stroke-width="2"/>',
                 f'<line x1="{left + index * dx:.2f}" y1="{bottom_y:.2f}" x2="{left + (index + 1) * dx:.2f}" y2="{bottom_y:.2f}" stroke="{INK}" stroke-width="2"/>',
             ])
-        for index in range(panels + 1):
-            xx = left + index * dx
-            body.append(f'<line x1="{xx:.2f}" y1="{top_y:.2f}" x2="{xx:.2f}" y2="{bottom_y:.2f}" stroke="{SECONDARY}" stroke-width="1"/>')
+        if name in {WARREN_INTERMEDIATE_VERTICALS, WARREN_ALL_VERTICALS}:
+            vertical_indices = (
+                range(1, panels, 2)
+                if name == WARREN_INTERMEDIATE_VERTICALS
+                else range(panels + 1)
+            )
+            for index in vertical_indices:
+                xx = left + index * dx
+                body.append(
+                    f'<line x1="{xx:.2f}" y1="{top_y:.2f}" '
+                    f'x2="{xx:.2f}" y2="{bottom_y:.2f}" '
+                    f'stroke="{SECONDARY}" stroke-width="1"/>'
+                )
         for index in range(panels):
-            if name == "Warren with verticals":
+            if name in {
+                WARREN_NO_VERTICALS,
+                WARREN_INTERMEDIATE_VERTICALS,
+                WARREN_ALL_VERTICALS,
+            }:
                 left_top = index % 2 == 0
             else:
                 left_top = index < panels / 2
@@ -271,7 +300,9 @@ def truss_type_reference_svg(selected: str) -> str:
             y1, y2 = (top_y, bottom_y) if left_top else (bottom_y, top_y)
             body.append(f'<line x1="{x1:.2f}" y1="{y1:.2f}" x2="{x2:.2f}" y2="{y2:.2f}" stroke="{BRACE}" stroke-width="2"/>')
         body.append(
-            f'<text x="{x0 + box_width / 2:.2f}" y="178" text-anchor="middle" fill="{INK}" font-family="Arial,sans-serif" font-size="11" font-weight="700">{html.escape(name)}</text>'
+            f'<text x="{x0 + box_width / 2:.2f}" y="{y0 + 132}" '
+            f'text-anchor="middle" fill="{INK}" font-family="Arial,sans-serif" '
+            f'font-size="10" font-weight="700">{html.escape(name)}</text>'
         )
     return _data_url(_svg_document("Truss type reference", "".join(body), width, height))
 

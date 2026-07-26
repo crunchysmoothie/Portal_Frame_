@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from html import escape
 import json
+import math
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -26,6 +27,8 @@ def _member_calculation_rows(schedule: list[Mapping[str, Any]]) -> str:
     return "".join(
         "<tr>"
         f"<td>{escape(str(item.get('member', '')))}</td>"
+        f"<td>{escape(str(item.get('role', '')).replace('_', ' '))}</td>"
+        f"<td>{escape(str(item.get('i_node', '')))} - {escape(str(item.get('j_node', '')))}</td>"
         f"<td>{escape(str(item.get('fabrication_group', '')).replace('_', ' '))}</td>"
         f"<td>{escape(str(item.get('section', {}).get('designation', '')))}</td>"
         f"<td>{_number(item.get('length_mm', 0), 0)}</td>"
@@ -36,9 +39,241 @@ def _member_calculation_rows(schedule: list[Mapping[str, Any]]) -> str:
         f"<td>{_number(item.get('maximum_compression_kn', 0), 1)} / {_number(item.get('compression_kn', 0), 1)}<br><small>{escape(str(item.get('compression_combination', '')))}</small></td>"
         f"<td>{_number(item.get('tension_utilisation', 0), 3)} / {_number(item.get('compression_utilisation', 0), 3)} / {_number(item.get('slenderness_utilisation', 0), 3)}</td>"
         f"<td>{escape(str(item.get('governing_check', '')).replace('_', ' '))}: {_number(item.get('utilisation', 0), 3)}</td>"
+        f"<td>{'PASS' if float(item.get('utilisation', 0) or 0) <= 1 else 'FAIL'}</td>"
         "</tr>"
         for item in schedule
     )
+
+
+def write_truss_markup_html(
+    result: Mapping[str, Any], path: str | Path
+) -> Path:
+    """Write a member-marked rank-1 elevation and section schedule."""
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    solutions = list(result.get("ranked_solutions", []))
+    if not solutions:
+        raise ValueError("A truss markup requires at least one ranked solution.")
+    best = solutions[0]
+    geometry = best["geometry"]
+    nodes = {
+        str(item["name"]): item for item in geometry.get("nodes", [])
+    }
+    schedule = {
+        str(item["member"]): item
+        for item in best.get("member_schedule", [])
+    }
+    designations = sorted({
+        str(item.get("section", {}).get("designation", ""))
+        for item in schedule.values()
+        if item.get("section", {}).get("designation")
+    })
+    section_marks = {
+        designation: f"S{index}"
+        for index, designation in enumerate(designations, 1)
+    }
+
+    width, height = 1800, 760
+    plot_left, plot_right, plot_top, plot_bottom = 70, 1730, 110, 610
+    x_values = [float(item["x_mm"]) for item in nodes.values()]
+    y_values = [float(item["y_mm"]) for item in nodes.values()]
+    min_x, max_x = min(x_values), max(x_values)
+    min_y, max_y = min(y_values), max(y_values)
+    scale = min(
+        (plot_right - plot_left) / max(max_x - min_x, 1.0),
+        (plot_bottom - plot_top) / max(max_y - min_y, 1.0),
+    )
+    fitted_width = (max_x - min_x) * scale
+    fitted_height = (max_y - min_y) * scale
+    origin_x = plot_left + (plot_right - plot_left - fitted_width) / 2
+    baseline_y = plot_bottom - (plot_bottom - plot_top - fitted_height) / 2
+
+    def sx(value: float) -> float:
+        return origin_x + (value - min_x) * scale
+
+    def sy(value: float) -> float:
+        return baseline_y - (value - min_y) * scale
+
+    role_colours = {
+        "top_chord": "#173C3A",
+        "bottom_chord": "#173C3A",
+        "diagonal": "#C94B40",
+        "vertical": "#3E8E89",
+        "support_vertical": "#C17B00",
+    }
+    svg: list[str] = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}">',
+        f'<rect width="{width}" height="{height}" fill="#FFFFFF"/>',
+        '<style>text{font-family:Arial,sans-serif}.label{paint-order:stroke;stroke:#fff;stroke-width:4px;stroke-linejoin:round}</style>',
+        f'<text x="50" y="48" font-size="28" font-weight="700" fill="#173C3A">{escape(str(result.get("project", {}).get("name", "Truss")))} - member markup</text>',
+        f'<text x="50" y="78" font-size="16" fill="#607472">Rank 1 - {escape(str(geometry.get("topology", "")))} - depth {_number(float(geometry.get("depth_mm", 0)) / 1000, 2)} m - section order {escape(str(result.get("design_basis", {}).get("member_section_order", {}).get("selected", "")))}</text>',
+    ]
+    for member in geometry.get("members", []):
+        name = str(member["name"])
+        start = nodes[str(member["i_node"])]
+        end = nodes[str(member["j_node"])]
+        x1, y1 = sx(float(start["x_mm"])), sy(float(start["y_mm"]))
+        x2, y2 = sx(float(end["x_mm"])), sy(float(end["y_mm"]))
+        colour = role_colours.get(str(member.get("role", "")), "#173C3A")
+        svg.append(
+            f'<line x1="{x1:.2f}" y1="{y1:.2f}" x2="{x2:.2f}" y2="{y2:.2f}" '
+            f'stroke="{colour}" stroke-width="4" stroke-linecap="round"/>'
+        )
+    for support in geometry.get("support_nodes", []):
+        node = nodes[str(support)]
+        x_value, y_value = sx(float(node["x_mm"])), sy(float(node["y_mm"]))
+        svg.append(
+            f'<path d="M {x_value - 11:.2f} {y_value + 15:.2f} '
+            f'L {x_value + 11:.2f} {y_value + 15:.2f} L {x_value:.2f} '
+            f'{y_value:.2f} Z" fill="#C17B00"/>'
+        )
+    svg.extend([
+        '<text x="50" y="690" font-size="15" font-weight="700" fill="#173C3A">Full elevation overview - see enlarged labelled strips below</text>',
+        '<text x="50" y="718" font-size="13" fill="#607472">Section marks and utilisations are calculation-review information. Connections are not shown.</text>',
+        "</svg>",
+    ])
+
+    detail_svgs: list[str] = []
+    # Keep the calculation markup legible when a truss has many short panels.
+    # A strip normally carries no more than about fourteen member callouts.
+    detail_count = min(8, max(1, int(math.ceil(len(schedule) / 14))))
+    for detail_index in range(detail_count):
+        zone_start = min_x + (max_x - min_x) * detail_index / detail_count
+        zone_end = min_x + (max_x - min_x) * (detail_index + 1) / detail_count
+        zone_members = [
+            member
+            for member in geometry.get("members", [])
+            if zone_start - 1e-6
+            <= (
+                float(nodes[str(member["i_node"])]["x_mm"])
+                + float(nodes[str(member["j_node"])]["x_mm"])
+            ) / 2.0
+            <= zone_end + 1e-6
+        ]
+        detail_width, detail_height = 1800, 560
+        d_left, d_right, d_top, d_bottom = 60, 1740, 80, 470
+        d_scale = min(
+            (d_right - d_left) / max(zone_end - zone_start, 1.0),
+            (d_bottom - d_top) / max(max_y - min_y, 1.0),
+        )
+        d_origin_x = d_left
+        d_baseline = d_bottom - (
+            (d_bottom - d_top) - (max_y - min_y) * d_scale
+        ) / 2
+
+        def dsx(value: float) -> float:
+            return d_origin_x + (value - zone_start) * d_scale
+
+        def dsy(value: float) -> float:
+            return d_baseline - (value - min_y) * d_scale
+
+        detail = [
+            f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {detail_width} {detail_height}">',
+            f'<rect width="{detail_width}" height="{detail_height}" fill="#FFFFFF"/>',
+            '<style>text{font-family:Arial,sans-serif}</style>',
+            f'<text x="50" y="40" font-size="23" font-weight="700" fill="#173C3A">Detail {detail_index + 1} of {detail_count} - x = {_number(zone_start / 1000, 1)} to {_number(zone_end / 1000, 1)} m</text>',
+        ]
+        for member_index, member in enumerate(zone_members):
+            name = str(member["name"])
+            start = nodes[str(member["i_node"])]
+            end = nodes[str(member["j_node"])]
+            x1, y1 = dsx(float(start["x_mm"])), dsy(float(start["y_mm"]))
+            x2, y2 = dsx(float(end["x_mm"])), dsy(float(end["y_mm"]))
+            item = schedule.get(name, {})
+            designation = str(item.get("section", {}).get("designation", ""))
+            section_mark = section_marks.get(designation, "-")
+            utilisation = float(item.get("utilisation", 0.0) or 0.0)
+            colour = role_colours.get(
+                str(member.get("role", "")), "#173C3A"
+            )
+            detail.append(
+                f'<line x1="{x1:.2f}" y1="{y1:.2f}" x2="{x2:.2f}" '
+                f'y2="{y2:.2f}" stroke="{colour}" stroke-width="5" '
+                f'stroke-linecap="round"/>'
+            )
+            dx, dy = x2 - x1, y2 - y1
+            length_screen = max(math.hypot(dx, dy), 1.0)
+            role = str(member.get("role", ""))
+            label_x, label_y = (x1 + x2) / 2, (y1 + y2) / 2
+            if role == "top_chord":
+                label_y -= 18.0
+            elif role == "bottom_chord":
+                label_y += 28.0
+            elif role in {"vertical", "support_vertical"}:
+                # Keep vertical-member callouts aligned with their member so
+                # they do not compete with the diagonal labels at mid-depth.
+                label_y += 5.0
+            else:
+                offset = 14.0 if member_index % 2 == 0 else -18.0
+                label_x -= dy / length_screen * offset
+                label_y += dx / length_screen * offset
+            label_text = (
+                f"{name} / {section_mark} / U={utilisation:.2f}"
+            )
+            label_transform = (
+                f' transform="rotate(-90 {label_x:.2f} {label_y:.2f})"'
+                if role in {"vertical", "support_vertical"}
+                else ""
+            )
+            detail.extend([
+                f'<rect{label_transform} x="{label_x - 94:.2f}" y="{label_y - 17:.2f}" '
+                f'width="188" height="22" rx="4" fill="#FFFFFF" '
+                f'opacity="0.90"/>',
+                f'<text{label_transform} class="label" x="{label_x:.2f}" y="{label_y:.2f}" '
+                f'text-anchor="middle" font-size="16" font-weight="700" '
+                f'fill="#102C2B">{escape(label_text)}</text>',
+            ])
+        detail.extend([
+            '<text x="50" y="530" font-size="14" fill="#607472">Label format: member / section mark / governing utilisation. Geometry at one physical scale within this detail strip.</text>',
+            "</svg>",
+        ])
+        detail_svgs.append("".join(detail))
+
+    section_rows = "".join(
+        "<tr>"
+        f"<td>{section_marks[designation]}</td>"
+        f"<td>{escape(designation)}</td>"
+        f"<td>{escape(', '.join(sorted(name for name, item in schedule.items() if str(item.get('section', {}).get('designation', '')) == designation)))}</td>"
+        "</tr>"
+        for designation in designations
+    )
+    member_rows = "".join(
+        "<tr>"
+        f"<td>{escape(name)}</td>"
+        f"<td>{escape(str(item.get('role', '')).replace('_', ' '))}</td>"
+        f"<td>{section_marks.get(str(item.get('section', {}).get('designation', '')), '-')}</td>"
+        f"<td>{escape(str(item.get('section', {}).get('designation', '')))}</td>"
+        f"<td>{escape(str(item.get('i_node', '')))} - {escape(str(item.get('j_node', '')))}</td>"
+        f"<td>{_number(item.get('maximum_tension_kn', 0), 1)}</td>"
+        f"<td>{_number(item.get('maximum_compression_kn', 0), 1)}</td>"
+        f"<td>{_number(item.get('utilisation', 0), 3)}</td>"
+        "</tr>"
+        for name, item in sorted(schedule.items())
+    )
+    html = f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Truss member markup</title>
+<style>
+body{{font:14px Arial,sans-serif;color:#17333a;margin:24px}}
+h1,h2{{color:#183b56}} svg{{width:100%;height:auto;border:1px solid #c9d3d9}}
+table{{width:100%;border-collapse:collapse;margin:12px 0 28px}}
+th{{background:#183b56;color:#fff;text-align:left;padding:7px}}
+td{{border-bottom:1px solid #c9d3d9;padding:6px;vertical-align:top}}
+tr:nth-child(even){{background:#f7fafb}}
+.warning{{background:#fff4d9;border-left:5px solid #b87900;padding:12px}}
+@media print{{body{{margin:8mm}} .page-break{{page-break-before:always}}}}
+</style></head><body>
+<div class="warning"><strong>Review markup.</strong> This drawing identifies calculated truss members, selected sections and governing utilisations. It is not a fabrication drawing and contains no connection detailing.</div>
+{"".join(svg)}
+<h2>Enlarged labelled member strips</h2>
+{"".join(detail_svgs)}
+<h2>Section schedule</h2>
+<table><thead><tr><th>Mark</th><th>Section</th><th>Members</th></tr></thead><tbody>{section_rows}</tbody></table>
+<h2 class="page-break">Member-by-member review schedule</h2>
+<table><thead><tr><th>Member</th><th>Role</th><th>Mark</th><th>Section</th><th>Nodes</th><th>Max T* (kN)</th><th>Max C* (kN)</th><th>Util.</th></tr></thead><tbody>{member_rows}</tbody></table>
+</body></html>"""
+    path.write_text(html, encoding="utf-8")
+    return path
 
 
 def write_truss_html(result: Mapping[str, Any], path: str | Path) -> Path:
@@ -128,6 +363,8 @@ def write_truss_html(result: Mapping[str, Any], path: str | Path) -> Path:
         f"<li>{escape(str(item))}</li>" for item in result.get("warnings", [])
     )
     basis = result.get("design_basis", {})
+    section_order = basis.get("member_section_order", {})
+    ordered_candidates = section_order.get("candidate_designations", [])
     html = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Truss Design Calculation - Draft</title>
 <style>
@@ -146,6 +383,7 @@ small{{color:#667681}} @media print{{body{{margin:10mm}} .no-print{{display:none
 <div>Designer</div><div>{escape(str(project.get('designer', '')))}</div>
 <div>Engine</div><div>{escape(str(result.get('engine', '')))}</div>
 <div>Topology / joints</div><div>{escape(str(basis.get('topology', '')))} / {escape(str(basis.get('joint_model', '')))}</div>
+<div>Truss member section order</div><div>{escape(str(section_order.get('selected', '')))}; {len(ordered_candidates)} candidates searched in the recorded order</div>
 <div>Standards</div><div>{escape(str(basis.get('load_standard', '')))}; {escape(str(basis.get('steel_standard', '')))}</div>
 <div>Top-chord restraint</div><div>Every {top_restraint.get('brace_every_n_purlins', '')} purlin(s), full building length; maximum spacing {_number(top_restraint.get('maximum_spacing_mm', 0) / 1000, 2)} m</div>
 <div>Bottom-chord restraint</div><div>Every {bottom_restraint.get('brace_every_n_purlins', '')} purlin(s), full building length; maximum spacing {_number(bottom_restraint.get('maximum_spacing_mm', 0) / 1000, 2)} m</div>
@@ -176,8 +414,9 @@ Minimum base angle: 50x50x5. For each member: &lambda; = KL / r<sub>min</sub>; &
 The reported utilisation is max(T*/&phi;T<sub>r</sub>, C*/&phi;C<sub>r</sub>, &lambda;/&lambda;<sub>limit</sub>), with &phi;={_number(basis.get('resistance_model', {}).get('phi', 0.9), 2)} and n={_number(basis.get('resistance_model', {}).get('buckling_exponent', 1.34), 2)}.
 The calculation uses f<sub>y</sub>={_number(basis.get('fy_mpa', 0), 0)} MPa, E={_number(basis.get('resistance_model', {}).get('elastic_modulus_mpa', 0), 0)} MPa, compression slenderness limit {_number(basis.get('compression_slenderness_limit', 0), 0)} and tension-only slenderness limit {_number(basis.get('tension_slenderness_limit', 0), 0)}.
 </div>
+<details><summary><strong>Exact truss section search order</strong></summary><p>{escape(' -> '.join(str(item) for item in ordered_candidates))}</p></details>
 <h2>Rank 1 truss member calculations</h2>
-<table class="calc"><thead><tr><th>Member</th><th>Fabrication group</th><th>Section</th><th>L</th><th>KL</th><th>rmin</th><th>&lambda; / limit</th><th>T* / &phi;Tr (kN)</th><th>C* / &phi;Cr (kN)</th><th>U<sub>T</sub> / U<sub>C</sub> / U<sub>&lambda;</sub></th><th>Governing</th></tr></thead><tbody>{member_rows}</tbody></table>
+<table class="calc"><thead><tr><th>Member</th><th>Role</th><th>Nodes</th><th>Fabrication group</th><th>Section</th><th>L</th><th>KL</th><th>rmin</th><th>&lambda; / limit</th><th>T* / &phi;Tr (kN)</th><th>C* / &phi;Cr (kN)</th><th>U<sub>T</sub> / U<sub>C</sub> / U<sub>&lambda;</sub></th><th>Governing</th><th>Status</th></tr></thead><tbody>{member_rows}</tbody></table>
 <h2>Eave-column design</h2>
 <table><tbody>
 <tr><th>Selected section</th><td>{escape(str(eave_column.get('section', '')))}</td></tr>
@@ -187,7 +426,7 @@ The calculation uses f<sub>y</sub>={_number(basis.get('fy_mpa', 0), 0)} MPa, E={
 </tbody></table>
 <h2>Longitudinal girder</h2>
 <table><tbody>{girder_rows}</tbody></table>
-{f'<h2>Girder member calculations</h2><table class="calc"><thead><tr><th>Member</th><th>Fabrication group</th><th>Section</th><th>L</th><th>KL</th><th>rmin</th><th>&lambda; / limit</th><th>T* / &phi;Tr (kN)</th><th>C* / &phi;Cr (kN)</th><th>U<sub>T</sub> / U<sub>C</sub> / U<sub>&lambda;</sub></th><th>Governing</th></tr></thead><tbody>{girder_member_rows}</tbody></table>' if girder_member_rows else ''}
+{f'<h2>Girder member calculations</h2><table class="calc"><thead><tr><th>Member</th><th>Role</th><th>Nodes</th><th>Fabrication group</th><th>Section</th><th>L</th><th>KL</th><th>rmin</th><th>&lambda; / limit</th><th>T* / &phi;Tr (kN)</th><th>C* / &phi;Cr (kN)</th><th>U<sub>T</sub> / U<sub>C</sub> / U<sub>&lambda;</sub></th><th>Governing</th><th>Status</th></tr></thead><tbody>{girder_member_rows}</tbody></table>' if girder_member_rows else ''}
 <small>Positive truss-member action is tension. Member resistance and serviceability are calculated above. Connections, restraint-member capacity and internal-column member design are separate design items.</small>
 </body></html>"""
     path.write_text(html, encoding="utf-8")

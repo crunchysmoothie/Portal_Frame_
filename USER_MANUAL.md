@@ -37,10 +37,20 @@ still analysed and reported; only its vertical deflection is removed as an
 automatic section-selection rejection criterion. Horizontal drift, all other
 SLS limits and all ULS strength checks remain active.
 
+Portal-frame vertical serviceability acceptance uses the incremental
+variable-action displacement from a matching permanent-action baseline. The
+baseline retains the same `D`, `D_MIN` and permanent crawl-load factors as each
+SLS combination. Total and permanent deflections remain visible for audit.
+Automatic sizing also checks the total deformed roof and rejects any generated
+rafter segment that loses or reverses its original drainage fall, because that
+condition can create a ponding low point.
+
 The **Additional permanent roof actions** inputs apply to portal frames and
 trusses. Services, ceiling, solar, fire-services and HVAC characteristic area
 loads are all added to `D_MAX`. `D_MIN` includes ceiling, fire-services and
-HVAC, while services and solar are excluded. Portal-frame area loads are
+HVAC, while services and solar are excluded. When these inputs are all zero,
+both `D_MAX` and `D_MIN` are zero; calculated structural member self-weight
+remains in load case `D`. Portal-frame area loads are
 multiplied by the frame spacing to obtain downward rafter line loads.
 
 Use **Save inputs** to keep the current project form as a
@@ -67,13 +77,17 @@ the gable width, for both odd and even counts.
 
 Truss mode provides a generic preliminary design path:
 
-- mono- or duo-pitched Warren-with-verticals, Pratt or Howe trusses;
+- mono- or duo-pitched trusses with three Warren layouts (**no verticals**,
+  **verticals at intermediate purlins**, or **all verticals**), plus Pratt and
+  Howe layouts;
 - one comma-separated list of transverse span lengths; the entry count becomes
   the span count and their sum becomes the building width;
 - main columns at the outer edges and either centre columns or longitudinal
   girders at internal span boundaries;
 - user-entered truss depth limits and increments, with separate practical-cost
   and individually optimised-web mass comparisons;
+- selectable equal-angle member search order: lightest passing, single angles
+  first, or back-to-back angles first; the exact searched order is recorded;
 - purlins at every truss vertical, so the purlin spacing also controls the
   maximum panel width;
 - top- and bottom-chord restraint at every first, second, third, or other
@@ -97,7 +111,8 @@ Truss mode provides a generic preliminary design path:
   reinforcement and erection/bracing basis are confirmed;
 - longitudinal lattice-girder sizing where selected, using the entered number of
   building bays and explicit girder-depth search limits;
-- ranked solutions, member schedules, design checks and complete support reactions.
+- ranked solutions, member-by-member utilisation schedules, a member/section
+  markup drawing, design checks and complete support reactions.
 
 The truss output is a calculation draft. Member forces, axial resistance,
 slenderness and vertical deflection are calculated and shown in the report.
@@ -105,11 +120,41 @@ The warning means that gussets, bolts, welds, bearings, restraint-member
 capacity and an independent project check remain outstanding. SANS
 editions must also be confirmed. Back-to-back angles are
 treated as symmetric heel-to-heel pairs without any additional gusset-gap benefit.
-Connections, net-section rupture, gussets, bolts, welds, bearings, splices,
+Detailed truss connections, net-section rupture, gussets, bolts, welds, bearings, splices,
 bracing-member design, concrete tilt-up capacity/detailing, crawl beams and
 hoist actions are excluded from this iteration. If centre-column design is
 disabled, internal columns remain idealised supports and their mass is excluded;
 the main eave-column section is used only as a preliminary stiffness proxy.
+
+## Post-analysis connections and automatic portal foundations
+
+After a portal-frame analysis, enter only the soil unit weight in kN/m3 and the
+permissible bearing pressure in kPa. The automatic common-pad search calculates
+the footing length, width and height in practical increments. It checks service
+bearing/uplift, reinforced-concrete flexure and shear, and requires ULS sliding
+and overturning safety factors of at least 1.5.
+
+The result repeats the fixed preliminary assumptions used to avoid additional
+user inputs: SANS 10100-1, 30 MPa concrete, 500 MPa reinforcement, T16@150
+bottom mesh, 75 mm cover, a 400 x 400 mm loaded area, 0.50 m soil cover and a
+base-friction coefficient of 0.35. These assumptions, permissible bearing and
+settlement still require project-specific engineering confirmation.
+
+Portal analysis automatically enables a separate **Connections** workflow once
+the frame sections and actions are final. Base-plate bearing, plate bending,
+bolt distances and steel interaction are checked. Haunch end plates include
+T-stub prying/yield-line behaviour, bolt interaction, elastic weld-group design,
+supporting flange/web local checks, and stiffener yielding, buckling and weld
+checks. Supporting-member screens that exceed unity automatically trigger
+calculated transverse stiffeners.
+
+Use **View calculation report** for the equation, numerical substitution,
+demand, resistance and utilisation of every check. Use **View connection
+markup** for plate, bolt-distance and stiffener geometry. Failed checks remain
+visible. Concrete anchor breakout, pull-out and embedment remain
+**INPUT_REQUIRED** until the anchor standard, anchor type, embedment and
+pedestal geometry are supplied; grout, shear keys and fabrication tolerances
+also require project detailing.
 
 ## Crawl beams
 
@@ -120,7 +165,9 @@ included in the generated analysis input.
 ## Results
 
 - ULS combinations show member utilisation and internal-force diagrams.
-- SLS combinations show horizontal and vertical deflection diagrams.
+- SLS combinations show horizontal and vertical deflection diagrams. Vertical
+  acceptance is the variable-action increment from the permanent baseline;
+  total deflection and roof-drainage status remain reported.
 - Deflections include the corresponding span ratio, for example
   `Vertical 116.19 mm (Span/138)`.
 - The report is printable HTML; use the browser print dialog to save a PDF.

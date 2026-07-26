@@ -605,7 +605,12 @@ def add_live_loads(json_filename):
         json.dump(data, json_file, indent=2)
 
 def add_dead_loads(json_filename):
-    """Append base and project-specific permanent roof loads to rafters."""
+    """Append only user-entered permanent roof loads to rafters.
+
+    Structural member self-weight is calculated separately in load case D.
+    D_MAX and D_MIN therefore remain zero when no permanent roof action is
+    entered by the user.
+    """
     with open(json_filename, 'r') as file:
         data = json.load(file)
 
@@ -620,10 +625,10 @@ def add_dead_loads(json_filename):
     )
     spacing_m = float(frame["rafter_spacing"]) / 1000
     dead_load_max = round(
-        spacing_m * -(0.35 + additional_permanent_max_kpa) / 1000, 5
+        spacing_m * -additional_permanent_max_kpa / 1000, 5
     )
     dead_load_min = round(
-        spacing_m * -(0.25 + additional_permanent_min_kpa) / 1000, 5
+        spacing_m * -additional_permanent_min_kpa / 1000, 5
     )
 
     for member in data["members"]:

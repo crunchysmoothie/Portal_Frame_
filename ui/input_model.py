@@ -10,6 +10,11 @@ from typing import Any, Mapping
 import member_database as portal_members
 from foundation_design import DEFAULT_FOUNDATION_VALUES
 from roof_layout import calculate_roof_bracing_layout
+from truss_model import (
+    WARREN_ALL_VERTICALS,
+    WARREN_INTERMEDIATE_VERTICALS,
+    WARREN_NO_VERTICALS,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -30,11 +35,22 @@ HOIST_CLASSES = ("C1", "C2", "C3", "C4")
 PORTAL_SECTION_FAMILIES = ("I-Sections", "H-Sections")
 AUTOMATIC_SECTION = "Automatic - lightest passing"
 AUTOMATIC_GABLE_SECTION = "Automatic - use section order"
-TRUSS_TYPES = ("Warren with verticals", "Pratt", "Howe")
+TRUSS_TYPES = (
+    WARREN_NO_VERTICALS,
+    WARREN_INTERMEDIATE_VERTICALS,
+    WARREN_ALL_VERTICALS,
+    "Pratt",
+    "Howe",
+)
 TRUSS_CHORD_FORMS = ("Parallel chords", "Horizontal bottom chord")
 TRUSS_INTERNAL_SUPPORTS = ("Centre columns", "Longitudinal girders")
 TRUSS_CENTRE_COLUMN_MATERIALS = ("Steel", "Concrete tilt-up")
 TRUSS_STEEL_SECTION_ORDERS = ("Automatic - lightest passing", "Preferred sections first")
+TRUSS_MEMBER_SECTION_ORDERS = (
+    "Automatic - lightest passing",
+    "Single angles first",
+    "Back-to-back angles first",
+)
 GABLE_SECTION_ORDERS = TRUSS_STEEL_SECTION_ORDERS
 
 
@@ -149,7 +165,8 @@ DEFAULT_VALUES: dict[str, Any] = {
     "truss_spacing_m": "6",
     "truss_eaves_height_m": "8",
     "truss_roof_pitch_deg": "5",
-    "truss_type": "Warren with verticals",
+    "truss_type": WARREN_ALL_VERTICALS,
+    "truss_member_section_order": "Automatic - lightest passing",
     "truss_chord_form": "Parallel chords",
     "truss_internal_support": "Centre columns",
     "truss_design_centre_columns": False,
@@ -301,6 +318,9 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
         "truss_roof_pitch_deg", minimum=0.1, maximum=30.0
     )
     truss_type = choice("truss_type", TRUSS_TYPES)
+    truss_member_section_order = choice(
+        "truss_member_section_order", TRUSS_MEMBER_SECTION_ORDERS
+    )
     truss_chord_form = choice("truss_chord_form", TRUSS_CHORD_FORMS)
     truss_internal_support = choice(
         "truss_internal_support", TRUSS_INTERNAL_SUPPORTS
@@ -781,6 +801,7 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
             "roof_pitch_deg": truss_roof_pitch_deg,
             "roof_rise_mm": roof_rise_m * 1000.0,
             "chord_form": truss_chord_form,
+            "member_section_order": truss_member_section_order,
             "internal_support": truss_internal_support,
             "design_centre_columns": centre_column_design,
             "centre_column_material": centre_column_material,

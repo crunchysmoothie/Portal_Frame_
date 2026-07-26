@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 
 import member_database as mdb
 from foundation_design import (
@@ -11,6 +12,10 @@ from haunch_design import composite_haunch_properties
 from portal_frame_analysis import (
     _vertical_deflection_limit_applies,
     build_model,
+)
+from serviceability_deflection import (
+    permanent_baseline_name,
+    serviceability_deflection_rows,
 )
 from design_calculations import governing_serviceability_deflections
 from ui.input_model import (
@@ -191,6 +196,66 @@ class HaunchDesignTests(unittest.TestCase):
             "1.1 DL + 0.6 W0_0.3M2",
         )
         self.assertEqual(ignored, [deflections[0]])
+
+
+class PermanentBaselineDeflectionTests(unittest.TestCase):
+    @staticmethod
+    def model(*, reversed_fall=False):
+        combination = {
+            "name": "1.1 DL + 1.0 LL",
+            "factors": {"D": 1.1, "D_MAX": 1.1, "L": 1.0},
+        }
+        baseline = permanent_baseline_name(combination)
+        n1_total = 0.0 if reversed_fall else -10.0
+        n2_total = -120.0 if reversed_fall else -20.0
+        frame = SimpleNamespace(nodes={
+            "N1": SimpleNamespace(
+                DX={combination["name"]: 0.0, baseline: 0.0},
+                DY={combination["name"]: n1_total, baseline: -8.0},
+            ),
+            "N2": SimpleNamespace(
+                DX={combination["name"]: 0.0, baseline: 0.0},
+                DY={combination["name"]: n2_total, baseline: -12.0},
+            ),
+        })
+        data = SimpleNamespace(
+            serviceability_load_combinations=[combination],
+            nodes={
+                "N1": SimpleNamespace(y=0.0),
+                "N2": SimpleNamespace(y=100.0),
+            },
+            members=[
+                SimpleNamespace(
+                    name="R1",
+                    type="rafter",
+                    i_node="N1",
+                    j_node="N2",
+                )
+            ],
+        )
+        return frame, data
+
+    def test_variable_deflection_is_measured_from_permanent_baseline(self):
+        frame, data = self.model()
+        row = serviceability_deflection_rows(frame, data)[0]
+        self.assertEqual(row["permanent_max_dy"], 12.0)
+        self.assertEqual(row["total_max_dy"], 20.0)
+        self.assertEqual(row["max_dy"], 8.0)
+        self.assertEqual(row["variable_dy_at_variable_node"], -8.0)
+        self.assertEqual(
+            row["total_dy_at_variable_node"]
+            - row["permanent_dy_at_variable_node"],
+            row["variable_dy_at_variable_node"],
+        )
+        self.assertEqual(row["roof_drainage"]["status"], "PASS")
+
+    def test_reversed_roof_fall_is_a_ponding_failure(self):
+        frame, data = self.model(reversed_fall=True)
+        row = serviceability_deflection_rows(frame, data)[0]
+        self.assertEqual(row["roof_drainage"]["status"], "FAIL")
+        self.assertEqual(
+            row["roof_drainage"]["reversed_segments"][0]["member"], "R1"
+        )
 
 
 class FoundationDesignTests(unittest.TestCase):

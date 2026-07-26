@@ -19,7 +19,7 @@ FOUNDATION_STANDARDS = (
 FAILED_NUMERIC = 1e12
 
 DEFAULT_FOUNDATION_VALUES: dict[str, Any] = {
-    "foundation_standard": FOUNDATION_STANDARDS[0],
+    "foundation_standard": "SANS 10100-1",
     "foundation_length_m": "2.4",
     "foundation_width_m": "2.0",
     "foundation_thickness_mm": "500",
@@ -34,6 +34,20 @@ DEFAULT_FOUNDATION_VALUES: dict[str, Any] = {
     "foundation_base_depth_m": "0.8",
     "foundation_soil_unit_weight_kn_m3": "18",
     "foundation_friction_coefficient": "0.45",
+}
+
+AUTOMATIC_FOUNDATION_ASSUMPTIONS: dict[str, float | str] = {
+    "foundation_standard": "SANS 10100-1",
+    "foundation_loaded_length_mm": 400.0,
+    "foundation_loaded_width_mm": 400.0,
+    "foundation_concrete_strength_mpa": 30.0,
+    "foundation_rebar_strength_mpa": 500.0,
+    "foundation_bar_diameter_mm": 16.0,
+    "foundation_bar_spacing_mm": 150.0,
+    "foundation_cover_mm": 75.0,
+    "soil_cover_above_footing_m": 0.5,
+    "foundation_friction_coefficient": 0.35,
+    "minimum_stability_safety_factor": 1.5,
 }
 
 
@@ -286,7 +300,7 @@ def _reaction_sets(snapshot: Mapping[str, Any]) -> tuple[list[dict], list[dict]]
     )
 
 
-def design_pad_foundations(
+def _check_pad_foundations(
     snapshot: Mapping[str, Any], raw_inputs: Mapping[str, Any]
 ) -> dict[str, Any]:
     """Design identical isolated pad footings at every portal support."""
@@ -384,6 +398,27 @@ def design_pad_foundations(
                 float(reaction["mz"]),
                 length,
                 width,
+            )
+            horizontal_uls = abs(float(reaction["fx"]))
+            overturning_moment = (
+                abs(float(reaction["mz"]))
+                + horizontal_uls * thickness_m
+            )
+            sliding_resistance = (
+                float(values["friction_coefficient"])
+                * max(foundation_vertical, 0.0)
+            )
+            stabilising_moment = (
+                max(foundation_vertical, 0.0) * length / 2.0
+            )
+            stability_factor = 1.5
+            sliding_safety_factor = (
+                sliding_resistance / horizontal_uls
+                if horizontal_uls > 1e-9 else math.inf
+            )
+            overturning_safety_factor = (
+                stabilising_moment / overturning_moment
+                if overturning_moment > 1e-9 else math.inf
             )
             contact_equilibrium = (
                 pressures["contact"]
@@ -488,6 +523,18 @@ def design_pad_foundations(
                         "PASS" if contact_equilibrium else "FAIL"
                     ),
                 },
+                _check(
+                    "ULS sliding stability (SF >= 1.5)",
+                    stability_factor * horizontal_uls,
+                    sliding_resistance,
+                    "kN",
+                ),
+                _check(
+                    "ULS overturning stability (SF >= 1.5)",
+                    stability_factor * overturning_moment,
+                    stabilising_moment,
+                    "kNm",
+                ),
                 _check("Flexure - frame direction", required_x, provided_steel, "mm2/m"),
                 _check("Flexure - transverse direction", required_y, provided_steel, "mm2/m"),
                 _check("One-way shear - frame direction", shear_stress_x, concrete_shear, "MPa"),
@@ -501,6 +548,9 @@ def design_pad_foundations(
                 "uls_stabilising_weight_kN": favourable_uls_weight,
                 "uls_net_vertical_kN": foundation_vertical,
                 "base_moment_kNm": float(reaction["mz"]),
+                "horizontal_reaction_kN": float(reaction["fx"]),
+                "sliding_safety_factor": sliding_safety_factor,
+                "overturning_safety_factor": overturning_safety_factor,
                 "contact": pressures["contact"],
                 "q_min_kpa": q_min,
                 "q_max_kpa": q_max,
@@ -517,6 +567,14 @@ def design_pad_foundations(
             })
         governing_structural = max(
             structural_rows, key=lambda item: item["governing_utilisation"]
+        )
+        governing_sliding_uls = min(
+            structural_rows,
+            key=lambda item: item["sliding_safety_factor"],
+        )
+        governing_overturning_uls = min(
+            structural_rows,
+            key=lambda item: item["overturning_safety_factor"],
         )
 
         bearing_status = (
@@ -543,7 +601,6 @@ def design_pad_foundations(
         )
         statuses = (
             bearing_status,
-            sliding_status,
             governing_uplift["uplift_status"],
             structural_status,
         )
@@ -584,6 +641,35 @@ def design_pad_foundations(
                     if key not in {"combination"}
                 },
             },
+            "uls_stability": {
+                "status": (
+                    "PASS"
+                    if (
+                        governing_sliding_uls["sliding_safety_factor"]
+                        >= 1.5
+                        and governing_overturning_uls[
+                            "overturning_safety_factor"
+                        ]
+                        >= 1.5
+                    )
+                    else "FAIL"
+                ),
+                "required_safety_factor": 1.5,
+                "sliding": {
+                    "combination": governing_sliding_uls["combination"],
+                    "safety_factor": governing_sliding_uls[
+                        "sliding_safety_factor"
+                    ],
+                },
+                "overturning": {
+                    "combination": governing_overturning_uls[
+                        "combination"
+                    ],
+                    "safety_factor": governing_overturning_uls[
+                        "overturning_safety_factor"
+                    ],
+                },
+            },
         })
 
     overall = "PASS" if all(
@@ -620,6 +706,7 @@ def design_pad_foundations(
             "Only in-plane portal reaction Fx, Fy and Mz are applied; out-of-plane actions require a separate model.",
             "Service bearing uses footing self-weight and soil cover above the pad.",
             "Passive soil resistance is omitted from sliding resistance; base friction only is included.",
+            "ULS sliding and overturning each require a minimum safety factor of 1.5.",
             "ULS footing bending and shear exclude footing self-weight, following the pad-footing design procedure in the supplied RC manual.",
             "A single bottom reinforcement mesh is used in both directions at the entered bar diameter and spacing.",
         ],
@@ -629,3 +716,170 @@ def design_pad_foundations(
             "Overall building overturning and interaction between adjacent foundations are not checked by an isolated-pad calculation.",
         ],
     }
+
+
+def _automatic_user_inputs(
+    raw_inputs: Mapping[str, Any],
+) -> tuple[float, float]:
+    errors: dict[str, str] = {}
+
+    def positive(key: str) -> float:
+        try:
+            value = float(raw_inputs.get(key, ""))
+        except (TypeError, ValueError):
+            errors[key] = "Enter a number."
+            return 0.0
+        if not math.isfinite(value) or value <= 0:
+            errors[key] = "Enter a finite value greater than zero."
+        return value
+
+    soil_weight = positive("foundation_soil_unit_weight_kn_m3")
+    bearing = positive("foundation_permissible_bearing_kpa")
+    if errors:
+        raise FoundationInputError(errors)
+    return soil_weight, bearing
+
+
+def _round_up(value: float, increment: float) -> float:
+    return math.ceil((value - 1e-12) / increment) * increment
+
+
+def design_pad_foundations(
+    snapshot: Mapping[str, Any], raw_inputs: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Automatically size one common isolated pad for all portal supports.
+
+    The user supplies only soil unit weight and permissible bearing pressure.
+    Plan dimensions and thickness are searched in practical increments using
+    fixed, reported concrete, reinforcement, cover, embedment and friction
+    assumptions.
+    """
+
+    # Preserve the existing explicit-input calculation contract for saved API
+    # clients and regression comparisons. The product UI intentionally sends
+    # only the two soil inputs and therefore always uses automatic sizing.
+    if "foundation_length_m" in raw_inputs:
+        return _check_pad_foundations(snapshot, raw_inputs)
+
+    soil_weight, bearing = _automatic_user_inputs(raw_inputs)
+    _, sls_reactions = _reaction_sets(snapshot)
+    downward = max(
+        (
+            max(float(item["fy"]), 0.0)
+            for item in sls_reactions
+        ),
+        default=0.0,
+    )
+    preliminary_area = max(downward / bearing, 0.64)
+    dimensions: set[tuple[float, float, float]] = set()
+    for length_tenth in range(8, 81):
+        length = length_tenth / 10.0
+        starting_width = max(
+            0.8, _round_up(preliminary_area / length, 0.1)
+        )
+        for extra_tenth in range(0, 16):
+            width = starting_width + extra_tenth / 10.0
+            if width > 8.0 + 1e-9:
+                continue
+            for thickness_mm in range(300, 2001, 50):
+                dimensions.add((length, width, float(thickness_mm)))
+    ordered_dimensions = sorted(
+        dimensions,
+        key=lambda item: (
+            item[0] * item[1] * item[2],
+            item[0] * item[1],
+            item[2],
+            item[0],
+            item[1],
+        ),
+    )
+
+    assumptions = AUTOMATIC_FOUNDATION_ASSUMPTIONS
+    attempted = 0
+    selected: dict[str, Any] | None = None
+    for length, width, thickness_mm in ordered_dimensions:
+        attempted += 1
+        internal_inputs = {
+            "foundation_standard": assumptions["foundation_standard"],
+            "foundation_length_m": length,
+            "foundation_width_m": width,
+            "foundation_thickness_mm": thickness_mm,
+            "foundation_loaded_length_mm": assumptions[
+                "foundation_loaded_length_mm"
+            ],
+            "foundation_loaded_width_mm": assumptions[
+                "foundation_loaded_width_mm"
+            ],
+            "foundation_concrete_strength_mpa": assumptions[
+                "foundation_concrete_strength_mpa"
+            ],
+            "foundation_rebar_strength_mpa": assumptions[
+                "foundation_rebar_strength_mpa"
+            ],
+            "foundation_bar_diameter_mm": assumptions[
+                "foundation_bar_diameter_mm"
+            ],
+            "foundation_bar_spacing_mm": assumptions[
+                "foundation_bar_spacing_mm"
+            ],
+            "foundation_cover_mm": assumptions["foundation_cover_mm"],
+            "foundation_permissible_bearing_kpa": bearing,
+            "foundation_base_depth_m": (
+                thickness_mm / 1000.0
+                + float(assumptions["soil_cover_above_footing_m"])
+            ),
+            "foundation_soil_unit_weight_kn_m3": soil_weight,
+            "foundation_friction_coefficient": assumptions[
+                "foundation_friction_coefficient"
+            ],
+        }
+        result = _check_pad_foundations(snapshot, internal_inputs)
+        if result["status"] == "PASS":
+            selected = result
+            break
+
+    if selected is None:
+        raise ValueError(
+            "No automatic pad foundation passed within the 0.8-8.0 m plan "
+            "and 300-2000 mm thickness search limits. Review reactions, soil "
+            "parameters or the disclosed automatic-design assumptions."
+        )
+
+    selected["schema_version"] = 2
+    selected["mode"] = "automatic_common_pad"
+    selected["user_inputs"] = {
+        "soil_unit_weight_kn_m3": soil_weight,
+        "permissible_bearing_kpa": bearing,
+    }
+    selected["automatic_design"] = {
+        "length_m": float(selected["inputs"]["length_m"]),
+        "width_m": float(selected["inputs"]["width_m"]),
+        "height_mm": float(selected["inputs"]["thickness_mm"]),
+        "search_increment_plan_m": 0.1,
+        "search_increment_height_mm": 50.0,
+        "candidates_checked": attempted,
+        "objective": (
+            "Minimum concrete volume common pad passing all support, SLS "
+            "bearing/uplift, ULS stability and reinforced-concrete checks."
+        ),
+    }
+    selected["assumptions"] = [
+        *selected.get("assumptions", []),
+        (
+            "Only soil unit weight and permissible bearing pressure are "
+            "project inputs; all other values below are automatic-design "
+            "assumptions."
+        ),
+        (
+            f"Automatic basis: {assumptions['foundation_standard']}, "
+            f"{assumptions['foundation_concrete_strength_mpa']:.0f} MPa "
+            f"concrete, {assumptions['foundation_rebar_strength_mpa']:.0f} MPa "
+            f"reinforcement, T{assumptions['foundation_bar_diameter_mm']:.0f}"
+            f"@{assumptions['foundation_bar_spacing_mm']:.0f}, "
+            f"{assumptions['foundation_cover_mm']:.0f} mm cover, "
+            f"{assumptions['soil_cover_above_footing_m']:.2f} m soil cover "
+            f"and base friction coefficient "
+            f"{assumptions['foundation_friction_coefficient']:.2f}."
+        ),
+    ]
+    return selected

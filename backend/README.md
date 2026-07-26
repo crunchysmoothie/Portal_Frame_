@@ -51,12 +51,27 @@ SLS combinations only and utilisation views use ULS combinations only. The API
 performs these calculations; clients should render the stored values rather than
 reproduce engineering formulae.
 
-Truss jobs return `preliminary_generic_truss_v0.4`, mass-ranked solutions,
+Truss jobs return `preliminary_generic_truss_v0.8`, mass-ranked solutions,
 transverse and longitudinal building geometry, automatic support layouts,
 eave-column checks, optional longitudinal-girder design, calculated top- and
 bottom-chord restraint nodes, member schedules, ULS reactions, governing checks
-and printable HTML/JSON artifacts. Chords use a common section within each
-fabricated span, web members are independently selected, and the minimum base
-angle is 50x50x5. Restraint is selected as every Nth purlin and
+and printable HTML/JSON plus member-markup HTML artifacts. The supported Warren
+variants are no verticals, intermediate-purlin verticals and all verticals.
+Chords use a common section within each fabricated span, web members use
+practical groups, the user-selected equal-angle search order is recorded, and
+the minimum base angle is 50x50x5. Restraint is selected as every Nth purlin and
 is assumed across the whole building. Results remain preliminary until checked
 against independent calculations and the applicable SANS editions are confirmed.
+
+Portal jobs also create connection-design JSON, a detailed HTML calculation
+report and HTML/SVG markup. The post-analysis module checks Mahachi-based
+base-plate bearing/bending, bolt geometry and steel interaction, T-stub prying,
+end plates, elastic weld groups, supporting flange/web effects, and stiffener
+yielding, buckling and welds. Failed checks remain reported and supporting
+member overstress triggers calculated transverse stiffeners. Concrete anchor
+breakout, pull-out and embedment remain `INPUT_REQUIRED` until the project
+anchor standard and geometry are provided. Portal automatic sizing measures vertical variable-action
+deflection from a matching permanent-action baseline and independently rejects
+total-load roof-fall reversal as a ponding risk. The post-analysis foundation endpoint accepts soil unit weight and
+permissible bearing pressure and returns an automatically searched common pad
+length, width and height with ULS sliding and overturning safety factors.

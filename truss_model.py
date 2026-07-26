@@ -14,6 +14,25 @@ from typing import Mapping
 import numpy as np
 
 
+WARREN_NO_VERTICALS = "Warren - no verticals"
+WARREN_INTERMEDIATE_VERTICALS = "Warren - verticals at intermediate purlins"
+WARREN_ALL_VERTICALS = "Warren - all verticals"
+WARREN_TOPOLOGIES = (
+    WARREN_NO_VERTICALS,
+    WARREN_INTERMEDIATE_VERTICALS,
+    WARREN_ALL_VERTICALS,
+)
+
+
+def normalise_truss_topology(topology: str) -> str:
+    """Return the current topology name while accepting old saved projects."""
+
+    value = str(topology).strip()
+    if value == "Warren with verticals":
+        return WARREN_ALL_VERTICALS
+    return value
+
+
 @dataclass(frozen=True)
 class TrussNode:
     name: str
@@ -207,7 +226,7 @@ def generate_parallel_chord_warren_truss(
         roof_rise_mm,
         depth_mm,
         maximum_panel_width_mm,
-        topology="Warren with verticals",
+        topology=WARREN_ALL_VERTICALS,
         chord_form="Parallel chords",
     )
 
@@ -219,7 +238,7 @@ def generate_truss_geometry(
     depth_mm: float,
     maximum_panel_width_mm: float = 1700.0,
     *,
-    topology: str = "Warren with verticals",
+    topology: str = WARREN_ALL_VERTICALS,
     chord_form: str = "Parallel chords",
 ) -> PrattTrussGeometry:
     """Generate a supported mono/duo-pitched truss from engineering inputs."""
@@ -229,7 +248,8 @@ def generate_truss_geometry(
         raise ValueError("Bay spans, roof rise, truss depth and purlin spacing must be positive.")
     if roof_form not in {"Duo Pitched", "Mono Pitched"}:
         raise ValueError("Trusses support Duo Pitched or Mono Pitched roofs.")
-    if topology not in {"Warren with verticals", "Pratt", "Howe"}:
+    topology = normalise_truss_topology(topology)
+    if topology not in {*WARREN_TOPOLOGIES, "Pratt", "Howe"}:
         raise ValueError("Unsupported truss topology.")
     if chord_form not in {"Parallel chords", "Horizontal bottom chord"}:
         raise ValueError("Unsupported chord form.")
@@ -241,8 +261,13 @@ def generate_truss_geometry(
     for span in bays:
         bay_start = x_positions[-1]
         bay_end = bay_start + span
+        selection_width = (
+            maximum_panel_width_mm / 2.0
+            if topology == WARREN_NO_VERTICALS
+            else maximum_panel_width_mm
+        )
         target_count = select_even_panel_count(
-            span, depth_mm, maximum_panel_width_mm
+            span, depth_mm, selection_width
         )
         if (
             roof_form == "Duo Pitched"
@@ -256,6 +281,11 @@ def generate_truss_geometry(
                 if left_length / left_count >= right_length / right_count:
                     left_count += 1
                 else:
+                    right_count += 1
+            if topology == WARREN_NO_VERTICALS:
+                if left_count % 2:
+                    left_count += 1
+                if right_count % 2:
                     right_count += 1
             if (left_count + right_count) % 2:
                 if left_length / left_count >= right_length / right_count:
@@ -290,66 +320,88 @@ def generate_truss_geometry(
             x_mm / half if x_mm <= half else (total_span - x_mm) / half
         )
 
-    bottom_nodes = [
-        TrussNode(
-            f"B{index}", x_mm,
-            roof_profile(x_mm) if chord_form == "Parallel chords" else 0.0,
-            "bottom_chord",
-        )
-        for index, x_mm in enumerate(x_positions)
-    ]
     support_index_set = set(support_indices)
-    top_nodes = [
-        TrussNode(
-            f"T{index}",
-            x_mm,
-            roof_profile(x_mm) + depth_mm,
-            "bearing" if index in support_index_set else "top_chord",
-        )
-        for index, x_mm in enumerate(x_positions)
-    ]
-    members: list[TrussMember] = []
     panel_count = len(x_positions) - 1
-    for index in range(panel_count):
-        members.append(TrussMember(
-            f"BC{index + 1}", f"B{index}", f"B{index + 1}", "bottom_chord"
-        ))
-        members.append(TrussMember(
-            f"TC{index + 1}", f"T{index}", f"T{index + 1}", "top_chord"
-        ))
-    for index in range(panel_count + 1):
-        members.append(TrussMember(
-            f"V{index + 1}",
-            f"B{index}",
-            f"T{index}",
-            "support_vertical" if index in support_index_set else "vertical",
-        ))
+    if topology in {
+        WARREN_NO_VERTICALS,
+        WARREN_INTERMEDIATE_VERTICALS,
+    }:
+        (
+            top_nodes,
+            bottom_nodes,
+            members,
+            top_node_names,
+        ) = _generate_classic_warren_members(
+            x_positions=x_positions,
+            support_indices=support_indices,
+            panel_counts=panel_counts_tuple,
+            roof_profile=roof_profile,
+            depth_mm=depth_mm,
+            chord_form=chord_form,
+            intermediate_verticals=(
+                topology == WARREN_INTERMEDIATE_VERTICALS
+            ),
+        )
+    else:
+        bottom_nodes = [
+            TrussNode(
+                f"B{index}", x_mm,
+                roof_profile(x_mm) if chord_form == "Parallel chords" else 0.0,
+                "bottom_chord",
+            )
+            for index, x_mm in enumerate(x_positions)
+        ]
+        top_nodes = [
+            TrussNode(
+                f"T{index}",
+                x_mm,
+                roof_profile(x_mm) + depth_mm,
+                "bearing" if index in support_index_set else "top_chord",
+            )
+            for index, x_mm in enumerate(x_positions)
+        ]
+        members = []
+        for index in range(panel_count):
+            members.append(TrussMember(
+                f"BC{index + 1}", f"B{index}", f"B{index + 1}", "bottom_chord"
+            ))
+            members.append(TrussMember(
+                f"TC{index + 1}", f"T{index}", f"T{index + 1}", "top_chord"
+            ))
+        for index in range(panel_count + 1):
+            members.append(TrussMember(
+                f"V{index + 1}",
+                f"B{index}",
+                f"T{index}",
+                "support_vertical" if index in support_index_set else "vertical",
+            ))
 
-    global_index = 0
-    diagonal_index = 1
-    for bay_panel_count in panel_counts_tuple:
-        for local_index in range(bay_panel_count):
-            if topology == "Warren with verticals" and local_index % 2 == 0:
-                i_node = f"T{global_index + local_index}"
-                j_node = f"B{global_index + local_index + 1}"
-            elif topology == "Warren with verticals":
-                i_node = f"B{global_index + local_index}"
-                j_node = f"T{global_index + local_index + 1}"
-            else:
-                toward_centre = local_index < bay_panel_count / 2
-                if topology == "Howe":
-                    toward_centre = not toward_centre
-                if toward_centre:
+        global_index = 0
+        diagonal_index = 1
+        for bay_panel_count in panel_counts_tuple:
+            for local_index in range(bay_panel_count):
+                if topology == WARREN_ALL_VERTICALS and local_index % 2 == 0:
                     i_node = f"T{global_index + local_index}"
                     j_node = f"B{global_index + local_index + 1}"
-                else:
+                elif topology == WARREN_ALL_VERTICALS:
                     i_node = f"B{global_index + local_index}"
                     j_node = f"T{global_index + local_index + 1}"
-            members.append(TrussMember(
-                f"D{diagonal_index}", i_node, j_node, "diagonal"
-            ))
-            diagonal_index += 1
-        global_index += bay_panel_count
+                else:
+                    toward_centre = local_index < bay_panel_count / 2
+                    if topology == "Howe":
+                        toward_centre = not toward_centre
+                    if toward_centre:
+                        i_node = f"T{global_index + local_index}"
+                        j_node = f"B{global_index + local_index + 1}"
+                    else:
+                        i_node = f"B{global_index + local_index}"
+                        j_node = f"T{global_index + local_index + 1}"
+                members.append(TrussMember(
+                    f"D{diagonal_index}", i_node, j_node, "diagonal"
+                ))
+                diagonal_index += 1
+            global_index += bay_panel_count
+        top_node_names = tuple(f"T{index}" for index in range(panel_count + 1))
 
     support_nodes = tuple(f"T{index}" for index in support_indices)
     return PrattTrussGeometry(
@@ -369,10 +421,113 @@ def generate_truss_geometry(
         ),
         nodes=tuple([*bottom_nodes, *top_nodes]),
         members=tuple(members),
-        top_node_names=tuple(f"T{index}" for index in range(panel_count + 1)),
+        top_node_names=tuple(top_node_names),
         left_support=support_nodes[0],
         right_support=support_nodes[-1],
         support_nodes=support_nodes,
+    )
+
+
+def _generate_classic_warren_members(
+    *,
+    x_positions: list[float],
+    support_indices: list[int],
+    panel_counts: tuple[int, ...],
+    roof_profile,
+    depth_mm: float,
+    chord_form: str,
+    intermediate_verticals: bool,
+) -> tuple[
+    list[TrussNode],
+    list[TrussNode],
+    list[TrussMember],
+    tuple[str, ...],
+]:
+    """Generate stable, triangular Warren panels with optional load verticals.
+
+    Diagonal intersection points occur at alternate top and bottom nodes.  The
+    intermediate-vertical version adds a top-chord purlin point halfway
+    between diagonal intersections and connects it to the bottom node below.
+    """
+
+    top_indices: set[int] = set(support_indices)
+    bottom_indices: set[int] = set()
+    members: list[TrussMember] = []
+    tc_index = bc_index = vertical_index = diagonal_index = 1
+    start = 0
+    for count in panel_counts:
+        if count % 2:
+            raise ValueError("Classic Warren layouts require an even panel count.")
+        even_indices = list(range(start, start + count + 1, 2))
+        odd_indices = list(range(start + 1, start + count, 2))
+        top_indices.update(even_indices)
+        bottom_indices.update(odd_indices)
+
+        if intermediate_verticals:
+            top_indices.update(odd_indices)
+            for left, right in zip(range(start, start + count), range(start + 1, start + count + 1)):
+                members.append(TrussMember(
+                    f"TC{tc_index}", f"T{left}", f"T{right}", "top_chord"
+                ))
+                tc_index += 1
+        else:
+            for left, right in zip(even_indices, even_indices[1:]):
+                members.append(TrussMember(
+                    f"TC{tc_index}", f"T{left}", f"T{right}", "top_chord"
+                ))
+                tc_index += 1
+
+        for left, right in zip(odd_indices, odd_indices[1:]):
+            members.append(TrussMember(
+                f"BC{bc_index}", f"B{left}", f"B{right}", "bottom_chord"
+            ))
+            bc_index += 1
+
+        for index in odd_indices:
+            members.extend([
+                TrussMember(
+                    f"D{diagonal_index}", f"T{index - 1}", f"B{index}", "diagonal"
+                ),
+                TrussMember(
+                    f"D{diagonal_index + 1}", f"B{index}", f"T{index + 1}", "diagonal"
+                ),
+            ])
+            diagonal_index += 2
+            if intermediate_verticals:
+                members.append(TrussMember(
+                    f"V{vertical_index}", f"B{index}", f"T{index}", "vertical"
+                ))
+                vertical_index += 1
+        start += count
+
+    support_set = set(support_indices)
+    top_nodes = [
+        TrussNode(
+            f"T{index}",
+            x_positions[index],
+            roof_profile(x_positions[index]) + depth_mm,
+            "bearing" if index in support_set else "top_chord",
+        )
+        for index in sorted(top_indices)
+    ]
+    bottom_nodes = [
+        TrussNode(
+            f"B{index}",
+            x_positions[index],
+            (
+                roof_profile(x_positions[index])
+                if chord_form == "Parallel chords"
+                else 0.0
+            ),
+            "bottom_chord",
+        )
+        for index in sorted(bottom_indices)
+    ]
+    return (
+        top_nodes,
+        bottom_nodes,
+        members,
+        tuple(f"T{index}" for index in sorted(top_indices)),
     )
 
 
@@ -381,13 +536,16 @@ def generate_flat_lattice_girder(
     depth_mm: float,
     panel_count: int,
     *,
-    topology: str = "Warren with verticals",
+    topology: str = WARREN_ALL_VERTICALS,
 ) -> PrattTrussGeometry:
     """Generate one simply-supported flat-chord longitudinal lattice girder."""
 
     if min(span_mm, depth_mm) <= 0 or panel_count < 2:
         raise ValueError("Girder span, depth and panel count must be positive.")
-    if topology not in {"Warren with verticals", "Pratt", "Howe"}:
+    topology = normalise_truss_topology(topology)
+    if topology in {WARREN_NO_VERTICALS, WARREN_INTERMEDIATE_VERTICALS}:
+        topology = WARREN_ALL_VERTICALS
+    if topology not in {WARREN_ALL_VERTICALS, "Pratt", "Howe"}:
         raise ValueError("Unsupported girder topology.")
     panel_width = float(span_mm) / int(panel_count)
     bottom_nodes = [
@@ -407,7 +565,7 @@ def generate_flat_lattice_girder(
     for index in range(panel_count + 1):
         members.append(TrussMember(f"V{index + 1}", f"B{index}", f"T{index}", "vertical"))
     for index in range(panel_count):
-        if topology == "Warren with verticals":
+        if topology == WARREN_ALL_VERTICALS:
             left_top = index % 2 == 0
         else:
             left_top = index < panel_count / 2
@@ -454,38 +612,75 @@ def calculate_chord_restraint_layout(
     """Calculate full-building chord restraint at every Nth purlin line."""
 
     nodes = {node.name: node for node in geometry.nodes}
-    def chord_layout(
-        node_names: list[str], member_prefix: str, requested_interval: int | float
-    ) -> dict:
+    def chord_layout(role: str, requested_interval: int | float) -> dict:
         interval_value = float(requested_interval)
         if not interval_value.is_integer() or interval_value < 1:
             raise ValueError("Chord restraint intervals must be whole purlin counts.")
         interval = int(interval_value)
-        indices = list(range(0, geometry.panel_count + 1, interval))
-        if indices[-1] != geometry.panel_count:
-            indices.append(geometry.panel_count)
-        pairs = list(zip(indices, indices[1:]))
+        chord_members = [
+            member for member in geometry.members if member.role == role
+        ]
+        if not chord_members:
+            return {
+                "brace_every_n_purlins": interval,
+                "coverage": "Entire building length",
+                "restraint_nodes": [],
+                "intervals": [],
+                "maximum_spacing_mm": 0.0,
+                "member_effective_lengths_mm": {},
+            }
+
+        adjacency: dict[str, set[str]] = {}
+        member_by_pair: dict[frozenset[str], TrussMember] = {}
+        for member in chord_members:
+            adjacency.setdefault(member.i_node, set()).add(member.j_node)
+            adjacency.setdefault(member.j_node, set()).add(member.i_node)
+            member_by_pair[frozenset((member.i_node, member.j_node))] = member
+
+        components: list[list[str]] = []
+        remaining = set(adjacency)
+        while remaining:
+            stack = [remaining.pop()]
+            component: set[str] = set()
+            while stack:
+                name = stack.pop()
+                if name in component:
+                    continue
+                component.add(name)
+                for adjacent in adjacency.get(name, ()):
+                    if adjacent not in component:
+                        remaining.discard(adjacent)
+                        stack.append(adjacent)
+            components.append(sorted(
+                component, key=lambda name: (nodes[name].x_mm, nodes[name].y_mm)
+            ))
+
         intervals = []
         effective_lengths: dict[str, float] = {}
-        for start_index, end_index in pairs:
-            start = nodes[node_names[start_index]]
-            end = nodes[node_names[end_index]]
-            interval_length = math.hypot(
-                end.x_mm - start.x_mm, end.y_mm - start.y_mm
-            )
-            intervals.append({
-                "start_node": start.name,
-                "end_node": end.name,
-                "panel_spaces": end_index - start_index,
-                "length_mm": interval_length,
-            })
-            for member_index in range(start_index, end_index):
-                effective_lengths[f"{member_prefix}{member_index + 1}"] = interval_length
-        restraint_names = list(dict.fromkeys(
-            name
-            for start_index, end_index in pairs
-            for name in (node_names[start_index], node_names[end_index])
-        ))
+        restraint_names: list[str] = []
+        for node_names in components:
+            indices = list(range(0, len(node_names), interval))
+            if indices[-1] != len(node_names) - 1:
+                indices.append(len(node_names) - 1)
+            for start_index, end_index in zip(indices, indices[1:]):
+                selected_names = node_names[start_index:end_index + 1]
+                path_members = [
+                    member_by_pair[frozenset((left, right))]
+                    for left, right in zip(selected_names, selected_names[1:])
+                ]
+                interval_length = sum(
+                    member_length_mm(geometry, member)
+                    for member in path_members
+                )
+                intervals.append({
+                    "start_node": selected_names[0],
+                    "end_node": selected_names[-1],
+                    "panel_spaces": len(path_members),
+                    "length_mm": interval_length,
+                })
+                for member in path_members:
+                    effective_lengths[member.name] = interval_length
+                restraint_names.extend((selected_names[0], selected_names[-1]))
         return {
             "brace_every_n_purlins": interval,
             "coverage": "Entire building length",
@@ -495,11 +690,11 @@ def calculate_chord_restraint_layout(
                     "x_mm": nodes[name].x_mm,
                     "y_mm": nodes[name].y_mm,
                 }
-                for name in restraint_names
+                for name in dict.fromkeys(restraint_names)
             ],
             "intervals": intervals,
             "maximum_spacing_mm": max(
-                interval["length_mm"] for interval in intervals
+                (item["length_mm"] for item in intervals), default=0.0
             ),
             "member_effective_lengths_mm": effective_lengths,
         }
@@ -509,13 +704,9 @@ def calculate_chord_restraint_layout(
             "Chord restraint is assumed to continue over the entire building "
             "length at every selected Nth purlin line."
         ),
-        "top_chord": chord_layout(
-            list(geometry.top_node_names), "TC", top_every_n_purlins
-        ),
+        "top_chord": chord_layout("top_chord", top_every_n_purlins),
         "bottom_chord": chord_layout(
-            [f"B{index}" for index in range(geometry.panel_count + 1)],
-            "BC",
-            bottom_every_n_purlins,
+            "bottom_chord", bottom_every_n_purlins
         ),
     }
 

@@ -65,8 +65,8 @@ class AdditionalPermanentRoofLoadTests(unittest.TestCase):
             if item["member"] == "R1"
         }
         self.assertEqual(set(loads), {"D_MAX", "D_MIN"})
-        self.assertAlmostEqual(loads["D_MAX"]["w1"], -0.0036)
-        self.assertAlmostEqual(loads["D_MIN"]["w1"], -0.00216)
+        self.assertAlmostEqual(loads["D_MAX"]["w1"], -0.0015)
+        self.assertAlmostEqual(loads["D_MIN"]["w1"], -0.00066)
         self.assertFalse(any(item["member"] == "C1" for item in stored["member_loads"]))
 
     def test_truss_conversion_does_not_double_count_shared_loads(self):
@@ -98,8 +98,33 @@ class AdditionalPermanentRoofLoadTests(unittest.TestCase):
             components[1] for components in loading["cases"]["D_MIN"].values()
         )
         # The shared portal source contains four 10.038 m rafter segments.
-        self.assertAlmostEqual(total_dmax, -0.0036 * 40_152, places=6)
-        self.assertAlmostEqual(total_dmin, -0.00216 * 40_152, places=6)
+        self.assertAlmostEqual(total_dmax, -0.0015 * 40_152, places=6)
+        self.assertAlmostEqual(total_dmin, -0.00066 * 40_152, places=6)
+
+    def test_zero_inputs_leave_dmax_and_dmin_at_zero(self):
+        raw = dict(DEFAULT_VALUES)
+        payload = build_analysis_payload(raw)
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "portal.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "frame_data": [payload["building_data"]],
+                        "members": [{"name": "R1", "type": "rafter"}],
+                        "member_loads": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            user_input.add_dead_loads(path)
+            stored = json.loads(path.read_text(encoding="utf-8"))
+
+        loads = {
+            item["case"]: item["w1"]
+            for item in stored["member_loads"]
+            if item["member"] == "R1"
+        }
+        self.assertEqual(loads, {"D_MAX": 0.0, "D_MIN": 0.0})
 
 
 if __name__ == "__main__":

@@ -13,14 +13,22 @@ from truss_design import (
     bounded_depth_candidates_mm,
     design_truss,
     load_angle_candidates,
+    ordered_angle_candidates,
 )
 from truss_loading import _consistent_segment_loads
 from truss_model import (
+    WARREN_ALL_VERTICALS,
+    WARREN_INTERMEDIATE_VERTICALS,
+    WARREN_NO_VERTICALS,
     analyse_truss,
     calculate_chord_restraint_layout,
     generate_truss_geometry,
 )
-from truss_report import write_truss_html, write_truss_json
+from truss_report import (
+    write_truss_html,
+    write_truss_json,
+    write_truss_markup_html,
+)
 from ui.analysis_render import combination_names, load_case_svg
 from ui.input_model import DEFAULT_VALUES, InputValidationError, build_analysis_payload
 from ui.preview_render import (
@@ -107,6 +115,57 @@ class TrussGeometryTests(unittest.TestCase):
             [2_000, 2_200, 2_400, 2_500],
         )
 
+    def test_three_warren_layouts_are_stable_and_structurally_distinct(self):
+        geometries = {
+            topology: generate_truss_geometry(
+                (16_000,),
+                "Duo Pitched",
+                1_200,
+                1_600,
+                1_600,
+                topology=topology,
+                chord_form="Parallel chords",
+            )
+            for topology in (
+                WARREN_NO_VERTICALS,
+                WARREN_INTERMEDIATE_VERTICALS,
+                WARREN_ALL_VERTICALS,
+            )
+        }
+        ordinary_vertical_counts = {
+            topology: sum(
+                member.role == "vertical"
+                for member in geometry.members
+            )
+            for topology, geometry in geometries.items()
+        }
+        self.assertEqual(ordinary_vertical_counts[WARREN_NO_VERTICALS], 0)
+        self.assertGreater(
+            ordinary_vertical_counts[WARREN_INTERMEDIATE_VERTICALS], 0
+        )
+        self.assertGreater(
+            ordinary_vertical_counts[WARREN_ALL_VERTICALS],
+            ordinary_vertical_counts[WARREN_INTERMEDIATE_VERTICALS],
+        )
+        for geometry in geometries.values():
+            with self.subTest(topology=geometry.topology):
+                areas = {
+                    member.name: 1_000.0 for member in geometry.members
+                }
+                loads = {
+                    node: (0.0, -10.0)
+                    for node in geometry.top_node_names
+                }
+                result = analyse_truss(geometry, areas, loads)
+                self.assertAlmostEqual(
+                    sum(
+                        item["fy"]
+                        for item in result["reactions_kn"].values()
+                    ),
+                    10.0 * len(loads),
+                    places=5,
+                )
+
 
 class TrussWorkflowTests(unittest.TestCase):
     @staticmethod
@@ -129,6 +188,17 @@ class TrussWorkflowTests(unittest.TestCase):
             self.assertGreaterEqual(leg_1, 50)
             self.assertGreaterEqual(leg_2, 50)
             self.assertGreaterEqual(thickness, 5)
+
+    def test_user_selected_truss_section_order_changes_candidate_search(self):
+        candidates = load_angle_candidates()
+        singles = ordered_angle_candidates(candidates, "Single angles first")
+        pairs = ordered_angle_candidates(
+            candidates, "Back-to-back angles first"
+        )
+        self.assertEqual(singles[0].configuration, "Single equal angle")
+        self.assertEqual(
+            pairs[0].configuration, "Back-to-back equal angles"
+        )
 
     def test_single_span_payload_preview_and_visual_references(self):
         payload = self.payload()
@@ -266,7 +336,7 @@ class TrussWorkflowTests(unittest.TestCase):
         self.assertEqual(girder_layout["span_count"], 2)
         result = design_truss(payload)
         solution = result["ranked_solutions"][0]
-        self.assertEqual(result["engine"], "preliminary_generic_truss_v0.7")
+        self.assertEqual(result["engine"], "preliminary_generic_truss_v0.8")
         self.assertEqual(solution["girder_design"]["status"], "PASS")
         self.assertEqual(solution["girder_design"]["geometry"]["span_mm"], 12_000)
         self.assertAlmostEqual(
@@ -371,6 +441,9 @@ class TrussWorkflowTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             html = write_truss_html(result, Path(directory) / "truss.html")
             data = write_truss_json(result, Path(directory) / "truss.json")
+            markup = write_truss_markup_html(
+                result, Path(directory) / "truss-markup.html"
+            )
             report = html.read_text(encoding="utf-8")
             self.assertIn("Truss Design Calculation - Draft", report)
             self.assertIn("Every 1 purlin", report)
@@ -383,6 +456,11 @@ class TrussWorkflowTests(unittest.TestCase):
             self.assertIn("8% platework allowance", report)
             self.assertIn("below 75%", report)
             self.assertIn("slenderness", report)
+            self.assertIn("Exact truss section search order", report)
+            markup_text = markup.read_text(encoding="utf-8")
+            self.assertIn("member markup", markup_text)
+            self.assertIn("Member-by-member review schedule", markup_text)
+            self.assertIn("U=", markup_text)
             self.assertIn("ranked_solutions", data.read_text(encoding="utf-8"))
 
     def test_passing_depths_expose_practical_and_lightest_rankings(self):

@@ -11,6 +11,11 @@ from threading import Lock
 from typing import Any, Mapping
 from uuid import uuid4
 
+from connection_design import (
+    design_portal_connections,
+    write_connection_markup_html,
+)
+from connection_report import write_connection_report_html
 from design_calculations import (
     ReportScope,
     load_calculation_sheet_data,
@@ -23,7 +28,11 @@ from analysis_snapshot import load_analysis_snapshot
 from preview_geometry import build_preview_geometry
 from run_full_analysis import run_analysis
 from truss_design import design_truss, preview_truss
-from truss_report import write_truss_html, write_truss_json
+from truss_report import (
+    write_truss_html,
+    write_truss_json,
+    write_truss_markup_html,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -94,7 +103,11 @@ def _normalise_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     return json.loads(json.dumps(payload))
 
 
-def _design_summary(calculation_data, analysis_id: str) -> dict[str, Any]:
+def _design_summary(
+    calculation_data,
+    analysis_id: str,
+    connection_design: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     frame = dict(calculation_data.frame_summary)
     project = dict(calculation_data.project)
     bracing = dict(calculation_data.bracing_design)
@@ -192,6 +205,30 @@ def _design_summary(calculation_data, analysis_id: str) -> dict[str, Any]:
             "vertical_combination": frame.get(
                 "vertical_deflection_combination", ""
             ),
+            "vertical_deflection_basis": frame.get(
+                "vertical_deflection_basis", ""
+            ),
+            "permanent_baseline_deflection_mm": frame.get(
+                "permanent_baseline_deflection_mm", 0
+            ),
+            "total_vertical_deflection_mm": frame.get(
+                "total_vertical_deflection_mm", 0
+            ),
+            "signed_permanent_baseline_deflection_mm": frame.get(
+                "signed_permanent_baseline_deflection_mm", 0
+            ),
+            "signed_total_vertical_deflection_mm": frame.get(
+                "signed_total_vertical_deflection_mm", 0
+            ),
+            "signed_variable_vertical_deflection_mm": frame.get(
+                "signed_variable_vertical_deflection_mm", 0
+            ),
+            "roof_drainage_status": frame.get(
+                "roof_drainage_status", "PASS"
+            ),
+            "roof_drainage_failures": frame.get(
+                "roof_drainage_failures", []
+            ),
             "ignored_vertical_deflections": frame.get(
                 "ignored_vertical_deflections", []
             ),
@@ -201,6 +238,7 @@ def _design_summary(calculation_data, analysis_id: str) -> dict[str, Any]:
         "bracing_members": brace_members,
         "load_case_visualisation": dict(calculation_data.visualisation),
         "warnings": list(calculation_data.warnings),
+        "connection_design": dict(connection_design or {}),
     }
 
 
@@ -224,6 +262,9 @@ def _run_job(analysis_id: str, payload: dict[str, Any]) -> None:
             report_json = write_truss_json(
                 result, report_dir / "preliminary_truss_design_report.json"
             )
+            markup_html = write_truss_markup_html(
+                result, markup_dir / "truss_member_markup.html"
+            )
             job.update(
                 {
                     "status": "complete",
@@ -233,6 +274,7 @@ def _run_job(analysis_id: str, payload: dict[str, Any]) -> None:
                     "artifact_paths": {
                         "truss-report-html": str(report_html),
                         "truss-report-json": str(report_json),
+                        "truss-markup-html": str(markup_html),
                     },
                 }
             )
@@ -264,11 +306,30 @@ def _run_job(analysis_id: str, payload: dict[str, Any]) -> None:
         markup_html, markup_pdf = write_markup(
             report_source, markup_dir, create_pdf=True
         )
+        connection_result = design_portal_connections(
+            load_analysis_snapshot(written_snapshot)
+        )
+        connection_path = directory / "connections" / "connection_design.json"
+        connection_path.parent.mkdir(parents=True, exist_ok=True)
+        connection_path.write_text(
+            json.dumps(connection_result, indent=2), encoding="utf-8"
+        )
+        connection_report = write_connection_report_html(
+            connection_result,
+            report_dir / "portal_connection_calculations.html",
+        )
+        connection_markup = write_connection_markup_html(
+            connection_result,
+            markup_dir / "portal_connection_markup.html",
+        )
 
         artifact_paths = {
             "design-report-html": str(report_html),
             "design-report-json": str(report_json),
             "markup-html": str(markup_html),
+            "connection-design-json": str(connection_path),
+            "connection-report-html": str(connection_report),
+            "connection-markup-html": str(connection_markup),
         }
         if markup_pdf is not None:
             artifact_paths["markup-pdf"] = str(markup_pdf)
@@ -277,9 +338,16 @@ def _run_job(analysis_id: str, payload: dict[str, Any]) -> None:
             {
                 "status": "complete",
                 "completed": _now(),
-                "message": "Analysis, HTML design report and markup are complete.",
+                "message": (
+                    "Frame analysis, member design and post-analysis connection "
+                    "calculations are complete."
+                ),
                 "snapshot_path": str(written_snapshot),
-                "design_summary": _design_summary(calculation_data, analysis_id),
+                "design_summary": _design_summary(
+                    calculation_data,
+                    analysis_id,
+                    connection_result,
+                ),
                 "artifact_paths": artifact_paths,
             }
         )

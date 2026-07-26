@@ -20,6 +20,10 @@ from haunch_design import (
     composite_haunch_properties,
     haunch_extra_mass_kg,
 )
+from serviceability_deflection import (
+    add_permanent_baseline_combinations,
+    serviceability_deflection_rows,
+)
 
 # Weight-ordered batches retain the lightest-pair guarantee while limiting the
 # number of PyNite worker processes.
@@ -317,6 +321,9 @@ def analyze_combination(args):
     # add serviceability and ultimate combos
     for SLS_combo in data.serviceability_load_combinations:
         frame.add_load_combo(SLS_combo['name'], SLS_combo['factors'])
+    add_permanent_baseline_combinations(
+        frame, data.serviceability_load_combinations
+    )
 
     for ULS_combo in data.load_combinations:
         frame.add_load_combo(ULS_combo['name'], ULS_combo['factors'])
@@ -333,31 +340,45 @@ def analyze_combination(args):
         raise
 
     # --- deflection checks --------------------------------------------------
-    worst_v = worst_h = 0.0
-    worst_checked_v = 0.0
-    worst_v_combo = worst_h_combo = ""
-    for combo in data.serviceability_load_combinations:
-        cn = combo['name']
-        for nd in frame.nodes.values():
-            dx = abs(nd.DX[cn])
-            dy = abs(nd.DY[cn])
-            # PyNite can complete a singular analysis with NaN results. Since
-            # comparisons with NaN are false, those models previously appeared
-            # to have zero deflection and were incorrectly accepted.
-            if not math.isfinite(float(dx)) or not math.isfinite(float(dy)):
-                return None
-            if dy > worst_v:
-                worst_v, worst_v_combo = dy, cn
-            if (
-                _vertical_deflection_limit_applies(data.frame_data[0], cn)
-                and dy > worst_checked_v
-            ):
-                worst_checked_v = dy
-            if dx > worst_h:
-                worst_h, worst_h_combo = dx, cn
+    try:
+        deflection_rows = serviceability_deflection_rows(frame, data)
+    except ValueError:
+        # PyNite can complete a singular analysis with NaN results. Do not let
+        # those trials appear to have zero serviceability demand.
+        return None
+    worst_v_row = max(
+        deflection_rows,
+        key=lambda item: float(item["max_dy"]),
+        default={"max_dy": 0.0, "load_combination": ""},
+    )
+    worst_h_row = max(
+        deflection_rows,
+        key=lambda item: float(item["max_dx"]),
+        default={"max_dx": 0.0, "load_combination": ""},
+    )
+    checked_vertical = [
+        item
+        for item in deflection_rows
+        if _vertical_deflection_limit_applies(
+            data.frame_data[0], str(item["load_combination"])
+        )
+    ]
+    worst_checked_v = max(
+        (float(item["max_dy"]) for item in checked_vertical),
+        default=0.0,
+    )
+    ponding_failures = [
+        item
+        for item in deflection_rows
+        if item["roof_drainage"]["status"] != "PASS"
+    ]
+    worst_v = float(worst_v_row["max_dy"])
+    worst_v_combo = str(worst_v_row["load_combination"])
+    worst_h = float(worst_h_row["max_dx"])
+    worst_h_combo = str(worst_h_row["load_combination"])
 
     if not allow_failed_checks:
-        if worst_checked_v > v_lim or worst_h > h_lim:
+        if worst_checked_v > v_lim or worst_h > h_lim or ponding_failures:
             return None   # automatic sizing rejects serviceability failures
 
         if not member_design_checks(frame, r_type, r_mem, c_type, c_mem, data, member_db):
@@ -472,6 +493,9 @@ def directional_search(primary, r_list, c_list, r_section_type, c_section_type,
 
     for combo in data.serviceability_load_combinations:
         best_frame.add_load_combo(combo['name'], combo['factors'])
+    add_permanent_baseline_combinations(
+        best_frame, data.serviceability_load_combinations
+    )
 
     for combo in data.load_combinations:  # e.g. '1.1 DL + 1.0 LL'
         best_frame.add_load_combo(combo['name'], combo['factors'])
@@ -584,33 +608,23 @@ def sls_check(
     print(f"   Search time: {time.time() - start:.3f} s")
 
     # --- Output the worst deflections for each SLS load case ---------------------
-    table_data = []
-    for combo in data.serviceability_load_combinations:
-        cn = combo['name']
-        worst_dx = 0.0
-        worst_dx_node = ''
-        worst_dy = 0.0
-        worst_dy_node = ''
-        for nd in best['frame'].nodes.values():
-            dx = abs(nd.DX[cn])
-            dy = abs(nd.DY[cn])
-            if dx > worst_dx:
-                worst_dx = dx
-                worst_dx_node = nd.name
-            if dy > worst_dy:
-                worst_dy = dy
-                worst_dy_node = nd.name
-        table_data.append([
-            cn,
-            round(worst_dx, 2),
-            worst_dx_node,
-            round(worst_dy, 2),
-            worst_dy_node
-        ])
+    table_data = [
+        [
+            row["load_combination"],
+            round(float(row["max_dx"]), 2),
+            row["dx_node"],
+            round(float(row["max_dy"]), 2),
+            row["dy_node"],
+            round(float(row["permanent_max_dy"]), 2),
+            row["roof_drainage"]["status"],
+        ]
+        for row in serviceability_deflection_rows(best["frame"], data)
+    ]
 
     print(tabulate(table_data,
                    headers=['Load Case', 'Deflection in X', 'Node',
-                            'Deflection in Y', 'Node'],
+                            'Variable Deflection in Y', 'Node',
+                            'Permanent baseline', 'Roof drainage'],
                    tablefmt='pretty'))
 
     # A direction can legitimately have zero displacement in every combination,

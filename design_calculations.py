@@ -21,6 +21,7 @@ from typing import Any, Iterable, Mapping, Sequence
 import member_database as mdb
 from analysis_visualisation import build_analysis_visualisation
 from analysis_snapshot import load_analysis_snapshot, validate_snapshot_input
+from serviceability_deflection import serviceability_deflection_rows
 from strength_checks import (
     element_property_details,
     member_class_details,
@@ -727,6 +728,11 @@ def build_frame_summary(data, member_db, rafter_section_type, column_section_typ
     )
     governing_fx = max(reactions, key=lambda item: abs(item.fx), default=None)
     governing_fy = max(reactions, key=lambda item: abs(item.fy), default=None)
+    roof_drainage_failures = [
+        item
+        for item in deflections
+        if item.get("roof_drainage", {}).get("status") != "PASS"
+    ]
 
     return {
         "node_count": len(data.nodes),
@@ -757,6 +763,40 @@ def build_frame_summary(data, member_db, rafter_section_type, column_section_typ
         "vertical_deflection_ratio": governing_dy.get("vertical_ratio") if governing_dy else None,
         "vertical_deflection_node": governing_dy["dy_node"] if governing_dy else "",
         "vertical_deflection_combination": governing_dy["load_combination"] if governing_dy else "",
+        "vertical_deflection_basis": (
+            governing_dy.get("vertical_deflection_basis", "")
+            if governing_dy
+            else ""
+        ),
+        "permanent_baseline_deflection_mm": (
+            abs(float(governing_dy.get("permanent_dy_at_variable_node", 0.0)))
+            if governing_dy
+            else 0.0
+        ),
+        "total_vertical_deflection_mm": (
+            abs(float(governing_dy.get("total_dy_at_variable_node", 0.0)))
+            if governing_dy
+            else 0.0
+        ),
+        "signed_permanent_baseline_deflection_mm": (
+            governing_dy.get("permanent_dy_at_variable_node", 0.0)
+            if governing_dy
+            else 0.0
+        ),
+        "signed_total_vertical_deflection_mm": (
+            governing_dy.get("total_dy_at_variable_node", 0.0)
+            if governing_dy
+            else 0.0
+        ),
+        "signed_variable_vertical_deflection_mm": (
+            governing_dy.get("variable_dy_at_variable_node", 0.0)
+            if governing_dy
+            else 0.0
+        ),
+        "roof_drainage_status": (
+            "FAIL" if roof_drainage_failures else "PASS"
+        ),
+        "roof_drainage_failures": roof_drainage_failures,
         "ignored_vertical_deflections": ignored_vertical,
         "max_abs_horizontal_reaction_kN": abs(governing_fx.fx) if governing_fx else 0.0,
         "horizontal_reaction_node": governing_fx.node if governing_fx else "",
@@ -947,12 +987,14 @@ def build_calculation_sheet_data_from_frame(
     wind_data = dict(data.wind_data[0]) if data.wind_data else {}
     internal_pressure = dict(wind_data.get("internal_pressure", {}))
     cpi_directions = internal_pressure.get("directions", {})
-    deflections = collect_deflections(
-        frame,
-        data.serviceability_load_combinations,
-        horizontal_reference_mm=frame_data.get("eaves_height", 0.0),
-        vertical_reference_mm=frame_data.get("gable_width", 0.0),
-    )
+    deflections = serviceability_deflection_rows(frame, data)
+    for item in deflections:
+        item["horizontal_ratio"] = _deflection_ratio(
+            frame_data.get("eaves_height", 0.0), item["max_dx"]
+        )
+        item["vertical_ratio"] = _deflection_ratio(
+            frame_data.get("gable_width", 0.0), item["max_dy"]
+        )
     frame_summary = build_frame_summary(
         data, member_db, rafter_section_type, column_section_type,
         rafter_section, column_section, all_members, reactions, deflections,
@@ -1044,6 +1086,9 @@ def build_calculation_sheet_data_from_frame(
         "Two-dimensional transverse portal-frame analysis.",
         "Member self-weight is applied in load case D.",
         "Roof permanent actions are represented by D_MIN and D_MAX.",
+        "Vertical serviceability acceptance uses the algebraic incremental displacement from variable actions after subtracting the matching permanent-action baseline at each node.",
+        "The permanent baseline uses the same D, D_MIN and D_CRAWL factors as each serviceability combination; total deflection remains reported.",
+        "Every total-load serviceability roof profile is checked so each generated rafter segment retains its original drainage direction. A reversed or zero fall is rejected as a ponding risk.",
         "Project-specific services, ceiling, solar, fire-services and HVAC area loads are added to D_MAX; D_MIN excludes services and solar.",
         "Utilisation ratios are calculated using the existing strength_checks.py design model.",
         "SANS 10162-1:2011, including Amendment No. 1, is used for the reported steel resistance equations.",
@@ -1704,8 +1749,11 @@ def write_html_report(data, output_path):
          f"[{escape(summary['overall_status'])}]"),
         ("Maximum horizontal deflection", f"{_deflection_display(summary['max_horizontal_deflection_mm'], summary.get('horizontal_deflection_ratio'), 'Eaves')} at "
          f"{escape(summary['horizontal_deflection_node'])} - {escape(summary['horizontal_deflection_combination'])}"),
-        ("Maximum vertical deflection", f"{_deflection_display(summary['max_vertical_deflection_mm'], summary.get('vertical_deflection_ratio'), 'Span')} at "
-         f"{escape(summary['vertical_deflection_node'])} - {escape(summary['vertical_deflection_combination'])}"),
+        ("Maximum variable-action vertical deflection", f"{_deflection_display(summary['max_vertical_deflection_mm'], summary.get('vertical_deflection_ratio'), 'Span')} at "
+         f"{escape(summary['vertical_deflection_node'])} - {escape(summary['vertical_deflection_combination'])}; "
+         f"matching permanent baseline {_fmt(summary.get('permanent_baseline_deflection_mm', 0))} mm; "
+         f"total {_fmt(summary.get('total_vertical_deflection_mm', 0))} mm"),
+        ("Roof drainage / ponding safeguard", escape(str(summary.get("roof_drainage_status", "PASS")))),
         ("Maximum absolute horizontal reaction", f"{_fmt(summary['max_abs_horizontal_reaction_kN'])} kN at "
          f"{escape(summary['horizontal_reaction_node'])} - {escape(summary['horizontal_reaction_combination'])}"),
         ("Maximum absolute vertical reaction", f"{_fmt(summary['max_abs_vertical_reaction_kN'])} kN at "
@@ -1722,6 +1770,9 @@ def write_html_report(data, output_path):
             escape(item["dx_node"]),
             _deflection_display(item["max_dy"], item.get("vertical_ratio"), "Span"),
             escape(item["dy_node"]),
+            _fmt(item.get("permanent_max_dy", 0)),
+            _fmt(item.get("total_max_dy", 0)),
+            escape(str(item.get("roof_drainage", {}).get("status", ""))),
         )
         for item in data.deflections
     ]
@@ -1880,7 +1931,7 @@ footer {{ margin-top:28px; border-top:1px solid var(--line); padding-top:8px; co
 <h2>4. Ultimate load combinations</h2>
 {_html_table(("Combination", "Factors"), combination_rows)}
 <h2>5. Serviceability results</h2>
-{_html_table(("Combination", "Max dx (mm)", "Node", "Max dy (mm)", "Node"), deflection_rows)}
+{_html_table(("Combination", "Max dx (mm)", "Node", "Variable dy (mm)", "Node", "Permanent baseline dy (mm)", "Total dy (mm)", "Roof drainage"), deflection_rows)}
 <h2>6. Support reactions</h2>
 <p class="subtitle">Forces in kN; moments in kNm. Critical scope retains combinations governing at least one component.</p>
 {_html_table(("Node", "Combination", "Fx", "Fy", "Fz", "Mx", "My", "Mz"), reaction_rows)}
@@ -2060,8 +2111,11 @@ def write_pdf_from_json(json_path, output_path):
          f"{frame_summary['governing_check']} = {_fmt(frame_summary['governing_utilisation'])} [{frame_summary['overall_status']}]"],
         ["Maximum horizontal deflection", f"{_deflection_display(frame_summary['max_horizontal_deflection_mm'], frame_summary.get('horizontal_deflection_ratio'), 'Eaves')} at "
          f"{frame_summary['horizontal_deflection_node']} - {frame_summary['horizontal_deflection_combination']}"],
-        ["Maximum vertical deflection", f"{_deflection_display(frame_summary['max_vertical_deflection_mm'], frame_summary.get('vertical_deflection_ratio'), 'Span')} at "
-         f"{frame_summary['vertical_deflection_node']} - {frame_summary['vertical_deflection_combination']}"],
+        ["Maximum variable-action vertical deflection", f"{_deflection_display(frame_summary['max_vertical_deflection_mm'], frame_summary.get('vertical_deflection_ratio'), 'Span')} at "
+         f"{frame_summary['vertical_deflection_node']} - {frame_summary['vertical_deflection_combination']}; "
+         f"permanent baseline {_fmt(frame_summary.get('permanent_baseline_deflection_mm', 0))} mm; "
+         f"total {_fmt(frame_summary.get('total_vertical_deflection_mm', 0))} mm"],
+        ["Roof drainage / ponding safeguard", str(frame_summary.get("roof_drainage_status", "PASS"))],
         ["Maximum absolute horizontal reaction", f"{_fmt(frame_summary['max_abs_horizontal_reaction_kN'])} kN at "
          f"{frame_summary['horizontal_reaction_node']} - {frame_summary['horizontal_reaction_combination']}"],
         ["Maximum absolute vertical reaction", f"{_fmt(frame_summary['max_abs_vertical_reaction_kN'])} kN at "
@@ -2081,19 +2135,23 @@ def write_pdf_from_json(json_path, output_path):
     combo_table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#174f78")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),0.3,colors.HexColor("#cbd2d9")),("FONTSIZE",(0,0),(-1,-1),7)]))
     story += [Paragraph("4. Ultimate load combinations", styles["CalcH2"]), combo_table]
 
-    deflection_rows = [["Combination", "Max dx", "Node", "Max dy", "Node"]] + [
+    deflection_rows = [[
+        "Combination", "Max dx", "Variable dy", "Permanent dy", "Total dy",
+        "Drainage",
+    ]] + [
         [
             row["load_combination"],
             _deflection_display(row["max_dx"], row.get("horizontal_ratio"), "Eaves"),
-            row["dx_node"],
             _deflection_display(row["max_dy"], row.get("vertical_ratio"), "Span"),
-            row["dy_node"],
+            _fmt(row.get("permanent_max_dy", 0)),
+            _fmt(row.get("total_max_dy", 0)),
+            str(row.get("roof_drainage", {}).get("status", "")),
         ]
         for row in source["deflections"]
     ]
     deflection_table = Table(
         deflection_rows,
-        colWidths=[92*mm, 22*mm, 16*mm, 22*mm, 16*mm],
+        colWidths=[70*mm, 22*mm, 22*mm, 20*mm, 18*mm, 18*mm],
         repeatRows=1,
     )
     deflection_table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#174f78")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),0.3,colors.HexColor("#cbd2d9")),("FONTSIZE",(0,0),(-1,-1),6.5)]))

@@ -35,6 +35,7 @@ from ui.input_model import (
     TERRAIN_CATEGORIES,
     TRUSS_CHORD_FORMS,
     TRUSS_CENTRE_COLUMN_MATERIALS,
+    TRUSS_MEMBER_SECTION_ORDERS,
     TRUSS_STEEL_SECTION_ORDERS,
     TRUSS_INTERNAL_SUPPORTS,
     TRUSS_TYPES,
@@ -624,6 +625,16 @@ def main(page: ft.Page) -> None:
     truss_chord_form = dropdown(
         "truss_chord_form", "Chord form", TRUSS_CHORD_FORMS, col=6
     )
+    truss_member_section_order = dropdown(
+        "truss_member_section_order",
+        "Truss member section order",
+        TRUSS_MEMBER_SECTION_ORDERS,
+        helper=(
+            "Controls the real equal-angle candidate search used for chords "
+            "and ordinary webs."
+        ),
+        col=12,
+    )
     truss_internal_support = dropdown(
         "truss_internal_support", "Internal support", TRUSS_INTERNAL_SUPPORTS,
         helper="Used only when more than one transverse span is entered.", col=12,
@@ -721,7 +732,7 @@ def main(page: ft.Page) -> None:
         src=truss_type_reference_svg(str(DEFAULT_VALUES["truss_type"])),
         fit=ft.BoxFit.CONTAIN,
         width=600,
-        height=225,
+        height=390,
         semantics_label="Warren, Pratt and Howe truss type reference",
     )
     truss_minimum_depth = number_field(
@@ -1077,7 +1088,8 @@ def main(page: ft.Page) -> None:
         helper="Passive soil resistance is omitted.",
     )
     foundation_control_keys = {
-        key for key in controls if key.startswith("foundation_")
+        "foundation_permissible_bearing_kpa",
+        "foundation_soil_unit_weight_kn_m3",
     }
 
     api_status_text = ft.Text(
@@ -1153,6 +1165,34 @@ def main(page: ft.Page) -> None:
         ],
     )
     current_visualisation: dict[str, Any] = {}
+    connection_status_text = ft.Text(
+        "Run a portal-frame analysis to calculate its connections.",
+        size=12,
+        weight=ft.FontWeight.W_600,
+        color=TEXT_PRIMARY,
+    )
+    connection_status_card = ft.Container(
+        bgcolor=WARNING_BG,
+        border_radius=10,
+        padding=12,
+        content=ft.Row(
+            spacing=9,
+            controls=[
+                ft.Icon(ft.Icons.INFO_OUTLINE, size=18, color="#B87900"),
+                connection_status_text,
+            ],
+        ),
+    )
+    connection_result_summary = ft.Column(
+        spacing=9,
+        controls=[
+            ft.Text(
+                "No connection calculations are available.",
+                size=12,
+                color=TEXT_MUTED,
+            )
+        ],
+    )
     foundation_status_text = ft.Text(
         "Run a portal-frame analysis before designing foundations.",
         size=12,
@@ -1199,7 +1239,15 @@ def main(page: ft.Page) -> None:
             f"Foundation design {status}. Review every support and the listed hold points."
         )
         derived = result["derived"]
+        automatic = result.get("automatic_design", {})
         rows: list[ft.Control] = [
+            analysis_summary_line(
+                "Automatic pad size",
+                f"{float(automatic.get('length_m', 0)):.2f} m long Ã— "
+                f"{float(automatic.get('width_m', 0)):.2f} m wide Ã— "
+                f"{float(automatic.get('height_mm', 0)):.0f} mm high",
+                ft.Icons.STRAIGHTEN,
+            ),
             analysis_summary_line(
                 "Design basis",
                 f"{result['standard']} | effective depth "
@@ -1216,9 +1264,9 @@ def main(page: ft.Page) -> None:
         ]
         for support in result.get("supports", []):
             bearing = support["serviceability"]["bearing"]
-            sliding = support["serviceability"]["sliding"]
             uplift = support["serviceability"]["uplift"]
             structural = support["structural"]
+            stability = support["uls_stability"]
             governing_check = max(
                 structural["checks"],
                 key=lambda item: float(item["utilisation"]),
@@ -1228,7 +1276,8 @@ def main(page: ft.Page) -> None:
                     f"Support {support['node']} - {support['status']}",
                     f"Bearing {bearing['status']} {float(bearing['q_max_kpa']):.1f} kPa "
                     f"(util {float(bearing['utilisation']):.3f}, {bearing['contact']} contact) | "
-                    f"sliding {sliding['status']} (util {float(sliding['utilisation']):.3f}) | "
+                    f"ULS sliding SF {float(stability['sliding']['safety_factor']):.2f} | "
+                    f"ULS overturning SF {float(stability['overturning']['safety_factor']):.2f} | "
                     f"uplift {uplift['status']} ({float(uplift['net_vertical_kN']):.1f} kN net)",
                     ft.Icons.FOUNDATION,
                 ),
@@ -1244,7 +1293,7 @@ def main(page: ft.Page) -> None:
             analysis_summary_line(
                 "Engineering hold points",
                 "Geotechnical bearing/settlement, anchors and base plate, pedestal/dowels, "
-                "development length, exposure detailing, global overturning and adjacent-footing interaction.",
+                "development length, exposure detailing, whole-building stability and adjacent-footing interaction.",
                 ft.Icons.REPORT_PROBLEM_OUTLINED,
             )
         )
@@ -1649,6 +1698,143 @@ def main(page: ft.Page) -> None:
         "Download markup drawings",
         icon=ft.Icons.ARCHITECTURE,
         disabled=True,
+    )
+
+    def show_connection_results(result: dict[str, Any]) -> None:
+        detailed = result.get("detailed_checks", {})
+        status = str(detailed.get("status", result.get("status", "FAIL")))
+        passed = status == "PASS"
+        connection_status_card.bgcolor = (
+            SUCCESS_BG if passed else (ERROR_BG if status == "FAIL" else WARNING_BG)
+        )
+        connection_status_card.content.controls[0].name = (
+            ft.Icons.CHECK_CIRCLE
+            if passed
+            else (
+                ft.Icons.ERROR_OUTLINE
+                if status == "FAIL"
+                else ft.Icons.WARNING_AMBER
+            )
+        )
+        connection_status_card.content.controls[0].color = (
+            "#1C8C62" if passed else ("#C43D34" if status == "FAIL" else "#B87900")
+        )
+        connection_status_text.value = (
+            f"Post-analysis connection status: {status}. "
+            "Review failed and input-required checks before fabrication."
+        )
+        rows: list[ft.Control] = []
+
+        def add_connection(label: str, item: dict[str, Any], weld_key: str) -> None:
+            checks = list(item.get("checks", []))
+            checks.extend(item.get("local_member_checks", []))
+            stiffener = item.get("stiffener_checks", {})
+            checks.extend(stiffener.get("checks", []))
+            completed = [
+                check
+                for check in checks
+                if check.get("utilisation") is not None
+            ]
+            governing = max(
+                completed,
+                key=lambda check: float(check.get("utilisation", 0.0)),
+                default=None,
+            )
+            weld = item.get(weld_key, {})
+            selected_weld = weld.get("selected_weld", weld)
+            weld_size = selected_weld.get(
+                "provided_size_mm",
+                selected_weld.get(
+                    "weld_size_mm",
+                    selected_weld.get("equivalent_fillet_size_mm", 0),
+                ),
+            )
+            rows.append(
+                analysis_summary_line(
+                    f"{label} - {item.get('status', 'FAIL')}",
+                    (
+                        f"Governing {governing.get('reference', '-')}: "
+                        f"{governing.get('name', '')} | utilisation "
+                        f"{float(governing.get('utilisation', 0)):.3f} | "
+                        f"{governing.get('status', '')}"
+                        if governing
+                        else "No completed checks."
+                    ),
+                    ft.Icons.FACT_CHECK,
+                )
+            )
+            if weld:
+                rows.append(
+                    analysis_summary_line(
+                        f"{label} - weld",
+                        f"{selected_weld.get('type', selected_weld.get('weld_type', 'Weld'))} "
+                        f"{float(weld_size or 0):.0f} mm | utilisation "
+                        f"{float(selected_weld.get('utilisation', 0)):.3f} | "
+                        f"{selected_weld.get('status', weld.get('status', ''))}",
+                        ft.Icons.HARDWARE,
+                    )
+                )
+            if stiffener:
+                rows.append(
+                    analysis_summary_line(
+                        f"{label} - stiffeners",
+                        (
+                            f"{stiffener.get('status', '')} | "
+                            f"governing utilisation "
+                            f"{float(stiffener.get('governing_utilisation', 0) or 0):.3f}"
+                        ),
+                        ft.Icons.CALL_MERGE,
+                    )
+                )
+            anchor = item.get("anchor_concrete")
+            if anchor:
+                anchor_check = next(iter(anchor.get("checks", [])), {})
+                rows.append(
+                    analysis_summary_line(
+                        f"{label} - concrete anchorage",
+                        f"{anchor.get('status', 'INPUT_REQUIRED')} | "
+                        f"{anchor_check.get('note', '')}",
+                        ft.Icons.REPORT_PROBLEM_OUTLINED,
+                    )
+                )
+
+        for support in detailed.get("base_plates", {}).get("supports", []):
+            add_connection(
+                f"Base plate {support.get('support', '')}",
+                support,
+                "column_to_base_plate_weld",
+            )
+        for location in detailed.get("haunch_connections", {}).get("locations", []):
+            add_connection(
+                str(location.get("location", "Haunch")),
+                location,
+                "end_plate_weld",
+            )
+        rows.append(
+            analysis_summary_line(
+                "Calculation boundary",
+                "Steel plates, bolts, prying, weld groups, stiffeners and local "
+                "member effects are calculated. Concrete anchor breakout, pull-out "
+                "and embedment remain INPUT_REQUIRED.",
+                ft.Icons.INFO_OUTLINE,
+            )
+        )
+        connection_result_summary.controls = rows
+    connection_markup_button = ft.OutlinedButton(
+        "View connection markup",
+        icon=ft.Icons.HARDWARE,
+        disabled=True,
+    )
+    connection_report_button = ft.OutlinedButton(
+        "View calculation report",
+        icon=ft.Icons.DESCRIPTION_OUTLINED,
+        disabled=True,
+    )
+    open_connections_button = ft.OutlinedButton(
+        "Open connection design",
+        icon=ft.Icons.HARDWARE,
+        disabled=True,
+        on_click=lambda _: go_to(6),
     )
 
     def clear_errors() -> None:
@@ -2157,9 +2343,13 @@ def main(page: ft.Page) -> None:
                 view_report_button.disabled = True
                 open_analysis_button.disabled = True
                 analysis_destination.disabled = True
+                connection_destination.disabled = True
                 foundation_destination.disabled = True
                 foundation_design_button.disabled = True
                 download_markup_button.disabled = True
+                connection_markup_button.disabled = True
+                connection_report_button.disabled = True
+                open_connections_button.disabled = True
                 load_case_dropdown.disabled = True
                 analysis_view_dropdown.disabled = True
                 analysis_component_dropdown.disabled = True
@@ -2223,12 +2413,16 @@ def main(page: ft.Page) -> None:
         view_report_button.disabled = True
         open_analysis_button.disabled = True
         download_markup_button.disabled = True
+        connection_markup_button.disabled = True
+        connection_report_button.disabled = True
+        open_connections_button.disabled = True
         load_case_dropdown.disabled = True
         previous_load_case_button.disabled = True
         next_load_case_button.disabled = True
         expand_load_case_button.disabled = True
         load_case_image.visible = False
         analysis_destination.disabled = True
+        connection_destination.disabled = True
         foundation_destination.disabled = True
         foundation_design_button.disabled = True
         page.update()
@@ -2238,6 +2432,7 @@ def main(page: ft.Page) -> None:
         summary = result["design_summary"]
         if summary.get("structural_system") == "Truss":
             current_analysis_id = None
+            connection_destination.disabled = True
             foundation_destination.disabled = True
             foundation_design_button.disabled = True
             ranked = list(summary.get("ranked_solutions", []))
@@ -2303,6 +2498,15 @@ def main(page: ft.Page) -> None:
                     f"{best['geometry']['panel_width_mm']:.0f} mm • depth "
                     f"{best['geometry']['depth_mm'] / 1000:g} m",
                     ft.Icons.ACCOUNT_TREE_OUTLINED,
+                ),
+                analysis_summary_line(
+                    "Truss section search order",
+                    str(
+                        summary.get("design_basis", {})
+                        .get("member_section_order", {})
+                        .get("selected", "")
+                    ),
+                    ft.Icons.SORT,
                 ),
                 analysis_summary_line(
                     "Rank 1 chord restraint",
@@ -2383,12 +2587,22 @@ def main(page: ft.Page) -> None:
             ]
             artifacts = result.get("artifacts", {})
             report = artifacts.get("truss-report-html")
+            truss_markup = artifacts.get("truss-markup-html")
             if report:
                 view_report_button.url = ft.Url(
                     url=f"{API_URL}{report['download_url']}", target=ft.UrlTarget.SELF
                 )
                 view_report_button.disabled = False
-            download_markup_button.disabled = True
+            if truss_markup:
+                download_markup_button.url = (
+                    f"{API_URL}{truss_markup['download_url']}"
+                )
+                download_markup_button.disabled = False
+            else:
+                download_markup_button.disabled = True
+            connection_markup_button.disabled = True
+            connection_report_button.disabled = True
+            open_connections_button.disabled = True
             all_names = combination_names(current_visualisation, "SLS")
             analysis_view_dropdown.disabled = not all_names
             open_analysis_button.disabled = not all_names
@@ -2452,6 +2666,34 @@ def main(page: ft.Page) -> None:
         current_visualisation = dict(
             summary.get("load_case_visualisation", {})
         )
+        connections = summary.get("connection_design", {})
+        base_plates = connections.get("base_plates", {})
+        base_supports = list(base_plates.get("supports", []))
+        base_plate_text = "No base-plate result."
+        if base_supports and base_supports[0].get("plate"):
+            plate = base_supports[0]["plate"]
+            bolt_layout = (
+                base_supports[0]
+                .get("holding_down_bolts", {})
+                .get("layout", {})
+            )
+            stiffeners = base_supports[0].get("stiffeners", {})
+            base_plate_text = (
+                f"{base_plates.get('status', 'HOLD_POINT')} | typical "
+                f"{float(plate['length_mm']):.0f} Ã— "
+                f"{float(plate['width_mm']):.0f} Ã— "
+                f"{float(plate['provided_thickness_mm']):.0f} mm | "
+                f"{int(bolt_layout.get('bolt_count', 0))} x "
+                f"M{float(bolt_layout.get('diameter_mm', 0)):.0f}, "
+                f"pitch/gauge {float(bolt_layout.get('pitch_mm', 0)):.0f}/"
+                f"{float(bolt_layout.get('gauge_mm', 0)):.0f} mm | "
+                + (
+                    f"{int(stiffeners.get('count', 0))} stiffeners"
+                    if stiffeners.get("required")
+                    else "stiffeners not required"
+                )
+            )
+        haunch_connection = connections.get("haunch_connections", {})
 
         analysis_result_summary.controls = [
             analysis_summary_line(
@@ -2492,7 +2734,10 @@ def main(page: ft.Page) -> None:
             analysis_summary_line(
                 "Serviceability results",
                 f"Horizontal {deflection_text(serviceability['max_horizontal_deflection_mm'], serviceability.get('horizontal_deflection_ratio'), 'Eaves')} | "
-                f"Checked vertical {deflection_text(serviceability['max_vertical_deflection_mm'], serviceability.get('vertical_deflection_ratio'), 'Span')}"
+                f"Variable vertical {deflection_text(serviceability['max_vertical_deflection_mm'], serviceability.get('vertical_deflection_ratio'), 'Span')} "
+                f"from permanent baseline {float(serviceability.get('permanent_baseline_deflection_mm', 0)):.2f} mm; "
+                f"total at that node {float(serviceability.get('total_vertical_deflection_mm', 0)):.2f} mm | "
+                f"roof drainage {serviceability.get('roof_drainage_status', 'PASS')}"
                 + (
                     " | Ignored 1.1 DL + 1.0 LL vertical "
                     f"{float(serviceability['ignored_vertical_deflections'][0]['max_dy']):.2f} mm "
@@ -2519,11 +2764,27 @@ def main(page: ft.Page) -> None:
                 brace_text,
                 ft.Icons.ACCOUNT_TREE_OUTLINED,
             ),
+            analysis_summary_line(
+                "Base-plate connection checks",
+                base_plate_text,
+                ft.Icons.FOUNDATION,
+            ),
+            analysis_summary_line(
+                "Haunch connection design",
+                (
+                    f"{haunch_connection.get('status', 'NOT_REQUIRED')} | "
+                    "bolt geometry, prying, end-plate, weld-group, stiffener "
+                    "and supporting member checks calculated"
+                ),
+                ft.Icons.CALL_MERGE,
+            ),
         ]
 
         artifacts = result.get("artifacts", {})
         report = artifacts.get("design-report-html")
         markup = artifacts.get("markup-pdf") or artifacts.get("markup-html")
+        connection_report = artifacts.get("connection-report-html")
+        connection_markup = artifacts.get("connection-markup-html")
         if report:
             view_report_button.url = ft.Url(
                 url=f"{API_URL}{report['download_url']}",
@@ -2533,11 +2794,26 @@ def main(page: ft.Page) -> None:
         if markup:
             download_markup_button.url = f"{API_URL}{markup['download_url']}"
             download_markup_button.disabled = False
+        if connection_markup:
+            connection_markup_button.url = ft.Url(
+                url=f"{API_URL}{connection_markup['download_url']}",
+                target=ft.UrlTarget.SELF,
+            )
+            connection_markup_button.disabled = False
+        if connection_report:
+            connection_report_button.url = ft.Url(
+                url=f"{API_URL}{connection_report['download_url']}",
+                target=ft.UrlTarget.SELF,
+            )
+            connection_report_button.disabled = False
+        show_connection_results(connections)
+        open_connections_button.disabled = False
 
         all_names = combination_names(current_visualisation)
         analysis_view_dropdown.disabled = not all_names
         open_analysis_button.disabled = not all_names
         analysis_destination.disabled = not all_names
+        connection_destination.disabled = False
         current_analysis_id = str(result["analysis_id"])
         foundation_destination.disabled = False
         foundation_design_button.disabled = False
@@ -2545,8 +2821,8 @@ def main(page: ft.Page) -> None:
         foundation_status_card.content.controls[0].name = ft.Icons.INFO_OUTLINE
         foundation_status_card.content.controls[0].color = "#B87900"
         foundation_status_text.value = (
-            "Portal reactions are ready. Confirm the geotechnical and footing "
-            "inputs, then run the foundation design."
+            "Portal reactions are ready. Enter soil unit weight and permissible "
+            "bearing pressure, then run the automatic foundation design."
         )
         if all_names:
             governing = str(strength.get("combination", ""))
@@ -2583,9 +2859,13 @@ def main(page: ft.Page) -> None:
         view_report_button.disabled = True
         open_analysis_button.disabled = True
         analysis_destination.disabled = True
+        connection_destination.disabled = True
         foundation_destination.disabled = True
         foundation_design_button.disabled = True
         download_markup_button.disabled = True
+        connection_markup_button.disabled = True
+        connection_report_button.disabled = True
+        open_connections_button.disabled = True
         load_case_dropdown.disabled = True
         analysis_view_dropdown.disabled = True
         analysis_component_dropdown.disabled = True
@@ -3065,6 +3345,7 @@ def main(page: ft.Page) -> None:
                 ft.Column(controls=[
                     ft.ResponsiveRow(controls=[
                         truss_type, truss_chord_form, truss_internal_support,
+                        truss_member_section_order,
                     ]),
                     truss_type_reference,
                 ]),
@@ -3299,6 +3580,7 @@ def main(page: ft.Page) -> None:
                                     view_report_button,
                                     open_analysis_button,
                                     download_markup_button,
+                                    open_connections_button,
                                 ],
                             ),
                             ft.Text(
@@ -3389,72 +3671,38 @@ def main(page: ft.Page) -> None:
             spacing=18,
             controls=[
                 section_heading(
-                    "Foundation design",
-                    "Design identical isolated pads from the completed portal-frame "
-                    "support reactions.",
+                    "Connection design",
+                    "Post-analysis steel connection calculations using the final "
+                    "frame sections and governing connection actions.",
                 ),
-                foundation_status_card,
+                connection_status_card,
                 card(
-                    "Design basis and soil",
-                    "The permissible bearing pressure is a project-specific "
-                    "geotechnical input. SANS 10161 is not used to infer a soil value.",
-                    ft.Column(
-                        spacing=10,
+                    "Calculated connection checks",
+                    "The governing utilisation remains visible for each base plate "
+                    "and haunch connection, including failed checks.",
+                    connection_result_summary,
+                ),
+                card(
+                    "Connection outputs",
+                    "Open the full equation-by-equation calculation report or the "
+                    "dimensioned plate, bolt and stiffener markup.",
+                    ft.Row(
+                        wrap=True,
                         controls=[
-                            ft.ResponsiveRow(controls=[foundation_standard]),
-                            ft.ResponsiveRow(
-                                controls=[
-                                    foundation_bearing,
-                                    foundation_base_depth,
-                                    foundation_soil_weight,
-                                    foundation_friction,
-                                ]
-                            ),
+                            connection_report_button,
+                            connection_markup_button,
                         ],
                     ),
-                ),
-                card(
-                    "Pad geometry and materials",
-                    "The loaded area represents the centred pedestal or base-transfer area.",
-                    ft.Column(
-                        spacing=10,
-                        controls=[
-                            ft.ResponsiveRow(
-                                controls=[
-                                    foundation_length,
-                                    foundation_width,
-                                    foundation_thickness,
-                                    foundation_loaded_length,
-                                    foundation_loaded_width,
-                                ]
-                            ),
-                            ft.ResponsiveRow(
-                                controls=[
-                                    foundation_concrete,
-                                    foundation_rebar,
-                                    foundation_bar_diameter,
-                                    foundation_bar_spacing,
-                                    foundation_cover,
-                                ]
-                            ),
-                        ],
-                    ),
-                ),
-                card(
-                    "Foundation results",
-                    "Service bearing, sliding and uplift are separated from ULS "
-                    "flexure, one-way shear and punching shear.",
-                    foundation_result_summary,
                 ),
                 ft.Container(
                     bgcolor=WARNING_BG,
                     border_radius=10,
                     padding=14,
                     content=ft.Text(
-                        "HOLD POINTS: geotechnical bearing and settlement, anchors/base "
-                        "plate, pedestal and dowels, development length, exposure "
-                        "detailing, global overturning and adjacent-foundation interaction "
-                        "require separate project checks.",
+                        "INPUT REQUIRED: concrete anchor breakout, pull-out and "
+                        "embedment cannot be accepted until the project anchor "
+                        "standard, anchor type, embedment and pedestal geometry are "
+                        "provided. All outputs require competent-engineer review.",
                         color="#745B2B",
                         weight=ft.FontWeight.BOLD,
                     ),
@@ -3467,6 +3715,81 @@ def main(page: ft.Page) -> None:
                             "Back to analysis",
                             icon=ft.Icons.ARROW_BACK,
                             on_click=lambda _: go_to(5),
+                        ),
+                        ft.FilledButton(
+                            "Continue to foundations",
+                            icon=ft.Icons.ARROW_FORWARD,
+                            on_click=lambda _: go_to(7),
+                        ),
+                    ],
+                ),
+            ],
+        ),
+        ft.Column(
+            spacing=18,
+            controls=[
+                section_heading(
+                    "Foundation design",
+                    "Automatically size identical isolated pads from the completed "
+                    "portal-frame support reactions.",
+                ),
+                foundation_status_card,
+                card(
+                    "Required soil inputs",
+                    "Enter only the project-specific soil unit weight and permissible "
+                    "bearing pressure. The program calculates pad length, width and height.",
+                    ft.Column(
+                        spacing=10,
+                        controls=[
+                            ft.ResponsiveRow(
+                                controls=[
+                                    foundation_bearing,
+                                    foundation_soil_weight,
+                                ]
+                            ),
+                        ],
+                    ),
+                ),
+                card(
+                    "Automatic design assumptions",
+                    "These fixed preliminary values keep the user input to the two "
+                    "soil parameters and are repeated in the result for audit.",
+                    ft.Text(
+                        "SANS 10100-1 | 30 MPa concrete | 500 MPa reinforcement | "
+                        "T16@150 bottom mesh | 75 mm cover | 400 Ã— 400 mm loaded area | "
+                        "0.50 m soil cover | base friction coefficient 0.35 | "
+                        "ULS sliding and overturning safety factors â‰¥ 1.5.",
+                        size=12,
+                        color=TEXT_MUTED,
+                    ),
+                ),
+                card(
+                    "Foundation results",
+                    "The common pad passes service bearing/uplift, ULS sliding and "
+                    "overturning, flexure, one-way shear and punching shear.",
+                    foundation_result_summary,
+                ),
+                ft.Container(
+                    bgcolor=WARNING_BG,
+                    border_radius=10,
+                    padding=14,
+                    content=ft.Text(
+                        "HOLD POINTS: geotechnical bearing and settlement, anchors/base "
+                        "plate, pedestal and dowels, development length, exposure "
+                        "detailing, whole-building stability and adjacent-foundation interaction "
+                        "require separate project checks.",
+                        color="#745B2B",
+                        weight=ft.FontWeight.BOLD,
+                    ),
+                ),
+                ft.Row(
+                    alignment=ft.MainAxisAlignment.END,
+                    wrap=True,
+                    controls=[
+                        ft.OutlinedButton(
+                            "Back to connections",
+                            icon=ft.Icons.ARROW_BACK,
+                            on_click=lambda _: go_to(6),
                         ),
                         foundation_design_button,
                     ],
@@ -3591,6 +3914,12 @@ def main(page: ft.Page) -> None:
         label="Analysis",
         disabled=True,
     )
+    connection_destination = ft.NavigationRailDestination(
+        icon=ft.Icon(ft.Icons.HARDWARE_OUTLINED, color="#506A67"),
+        selected_icon=ft.Icon(ft.Icons.HARDWARE, color=ACCENT_DARK),
+        label="Connections",
+        disabled=True,
+    )
     foundation_destination = ft.NavigationRailDestination(
         icon=ft.Icon(ft.Icons.FOUNDATION_OUTLINED, color="#506A67"),
         selected_icon=ft.Icon(ft.Icons.FOUNDATION, color=ACCENT_DARK),
@@ -3660,6 +3989,7 @@ def main(page: ft.Page) -> None:
                 label="Review",
             ),
             analysis_destination,
+            connection_destination,
             foundation_destination,
         ],
     )
@@ -3675,8 +4005,8 @@ def main(page: ft.Page) -> None:
         current_index = index
         rail.selected_index = index
         content_host.controls = [sections[index]]
-        visual_builder.visible = index not in (5, 6)
-        running_summary_panel.visible = index not in (5, 6)
+        visual_builder.visible = index not in (5, 6, 7)
+        running_summary_panel.visible = index not in (5, 6, 7)
         page.update()
         page.run_task(content_host.scroll_to, offset=0, duration=0)
 

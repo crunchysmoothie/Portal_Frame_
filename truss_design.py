@@ -26,6 +26,7 @@ from truss_column_design import (
 from truss_loading import build_panel_point_loads, factored_node_loads, with_self_weight
 from truss_model import (
     PrattTrussGeometry,
+    WARREN_ALL_VERTICALS,
     analyse_truss,
     calculate_chord_restraint_layout,
     generate_flat_lattice_girder,
@@ -157,6 +158,54 @@ def load_angle_candidates(
     return sorted(
         candidates,
         key=lambda item: (item.mass_kg_m, item.area_mm2, item.designation),
+    )
+
+
+TRUSS_MEMBER_SECTION_ORDERS = (
+    "Automatic - lightest passing",
+    "Single angles first",
+    "Back-to-back angles first",
+)
+
+
+def ordered_angle_candidates(
+    candidates: list[AngleCandidate],
+    section_order: str,
+) -> list[AngleCandidate]:
+    """Apply the user-selected truss member section search order."""
+
+    if section_order not in TRUSS_MEMBER_SECTION_ORDERS:
+        raise ValueError(
+            "Choose a valid truss member section order: "
+            + ", ".join(TRUSS_MEMBER_SECTION_ORDERS)
+        )
+    configuration_rank = {
+        "Single angles first": {
+            "Single equal angle": 0,
+            "Back-to-back equal angles": 1,
+        },
+        "Back-to-back angles first": {
+            "Back-to-back equal angles": 0,
+            "Single equal angle": 1,
+        },
+    }.get(section_order)
+    if configuration_rank is None:
+        return sorted(
+            candidates,
+            key=lambda item: (
+                item.mass_kg_m,
+                item.area_mm2,
+                item.designation,
+            ),
+        )
+    return sorted(
+        candidates,
+        key=lambda item: (
+            configuration_rank[item.configuration],
+            item.mass_kg_m,
+            item.area_mm2,
+            item.designation,
+        ),
     )
 
 
@@ -300,7 +349,7 @@ def _fabrication_groups(
 
     groups: dict[str, list[str]] = {}
     member_to_group: dict[str, str] = {}
-    member_by_name = {member.name: member for member in geometry.members}
+    nodes = {node.name: node for node in geometry.nodes}
 
     def minimum_three_chunks(names: list[str]) -> list[list[str]]:
         """Partition consecutive webs without creating one- or two-panel groups."""
@@ -321,26 +370,47 @@ def _fabrication_groups(
             start += size
         return chunks
 
-    panel_start = 0
-    diagonal_start = 1
-    for span_index, panel_count in enumerate(geometry.bay_panel_counts, 1):
-        for role, prefix in (("top_chord", "TC"), ("bottom_chord", "BC")):
+    span_edges = [0.0]
+    for span in geometry.bay_spans_mm:
+        span_edges.append(span_edges[-1] + span)
+
+    def member_midpoint_x(member) -> float:
+        return (
+            nodes[member.i_node].x_mm + nodes[member.j_node].x_mm
+        ) / 2.0
+
+    for span_index, (span_start, span_end) in enumerate(
+        zip(span_edges, span_edges[1:]), 1
+    ):
+        span_members = [
+            member
+            for member in geometry.members
+            if span_start - 1e-6
+            <= member_midpoint_x(member)
+            <= span_end + 1e-6
+        ]
+        for role in ("top_chord", "bottom_chord"):
             group_name = f"{role}_span_{span_index}"
             names = [
-                f"{prefix}{index}"
-                for index in range(panel_start + 1, panel_start + panel_count + 1)
+                member.name
+                for member in sorted(
+                    span_members, key=member_midpoint_x
+                )
+                if member.role == role
             ]
-            groups[group_name] = names
-            member_to_group.update({name: group_name for name in names})
+            if names:
+                groups[group_name] = names
+                member_to_group.update({name: group_name for name in names})
 
         vertical_names = [
-            f"V{index + 1}"
-            for index in range(panel_start, panel_start + panel_count + 1)
-            if member_by_name[f"V{index + 1}"].role == "vertical"
+            member.name
+            for member in sorted(span_members, key=member_midpoint_x)
+            if member.role == "vertical"
         ]
         diagonal_names = [
-            f"D{index}"
-            for index in range(diagonal_start, diagonal_start + panel_count)
+            member.name
+            for member in sorted(span_members, key=member_midpoint_x)
+            if member.role == "diagonal"
         ]
         for role, names in (
             ("vertical", vertical_names),
@@ -350,9 +420,6 @@ def _fabrication_groups(
                 group_name = f"{role}_span_{span_index}_group_{group_index}"
                 groups[group_name] = chunk
                 member_to_group.update({name: group_name for name in chunk})
-
-        panel_start += panel_count
-        diagonal_start += panel_count
 
     for member in geometry.members:
         if member.name in member_to_group:
@@ -769,7 +836,7 @@ def _design_lattice_girder(
             panel_count = girder_bays * panels_per_bay
             geometry = generate_flat_lattice_girder(
                 span_mm, depth_mm, panel_count,
-                topology=str(truss_data.get("topology", "Warren with verticals")),
+                topology=str(truss_data.get("topology", WARREN_ALL_VERTICALS)),
             )
             restraint = calculate_chord_restraint_layout(
                 geometry, panels_per_bay, panels_per_bay
@@ -1413,7 +1480,14 @@ def design_truss(payload: Mapping[str, Any]) -> dict[str, Any]:
         _float(truss_data.get("maximum_depth_mm"), 4000.0),
         increment_mm,
     )
-    candidates = load_angle_candidates()
+    member_section_order = str(
+        truss_data.get(
+            "member_section_order", "Automatic - lightest passing"
+        )
+    )
+    candidates = ordered_angle_candidates(
+        load_angle_candidates(), member_section_order
+    )
     passing = []
     rejected = []
     for depth in depths:
@@ -1424,7 +1498,7 @@ def design_truss(payload: Mapping[str, Any]) -> dict[str, Any]:
                 _float(truss_data.get("roof_rise_mm"), 6000.0),
                 depth,
                 _float(truss_data.get("maximum_panel_width_mm"), 1700.0),
-                topology=str(truss_data.get("topology", "Warren with verticals")),
+                topology=str(truss_data.get("topology", WARREN_ALL_VERTICALS)),
                 chord_form=str(truss_data.get("chord_form", "Parallel chords")),
             )
             passing.append(_design_candidate(
@@ -1498,7 +1572,7 @@ def design_truss(payload: Mapping[str, Any]) -> dict[str, Any]:
     lightest_ranked = lightest_order[:requested]
 
     return {
-        "engine": "preliminary_generic_truss_v0.7",
+        "engine": "preliminary_generic_truss_v0.8",
         "validation_status": "CALCULATION DRAFT - member resistance and serviceability checks complete; connection design and independent verification outstanding",
         "project": dict(payload.get("project", {})),
         "structural_system": "Truss",
@@ -1506,7 +1580,13 @@ def design_truss(payload: Mapping[str, Any]) -> dict[str, Any]:
             "topology": str(truss_data.get("topology", "")),
             "roof_form": building_data.get("building_roof", ""),
             "chord_form": str(truss_data.get("chord_form", "")),
-            "joint_model": "2D pinned member joints with an explicit bearing node at every transverse support; the aligned vertical uses the selected supporting column or girder section",
+            "joint_model": (
+                "2D pinned member joints with an explicit bearing node at "
+                "every transverse support. Warren layouts without bearing "
+                "verticals transfer directly at the top-chord bearing node; "
+                "layouts with an aligned support vertical use the selected "
+                "supporting column or girder section for that vertical."
+            ),
             "steel_grade": "S355JR",
             "fy_mpa": _float(truss_data.get("fy_mpa"), DEFAULT_FY_MPA),
             "load_standard": building_data.get("load_combination_standard", ""),
@@ -1529,6 +1609,12 @@ def design_truss(payload: Mapping[str, Any]) -> dict[str, Any]:
                 "coverage": "Entire building length",
             },
             "selection_basis": "Practical cost-equivalent ranking with a separate lightest-member comparison",
+            "member_section_order": {
+                "selected": member_section_order,
+                "candidate_designations": [
+                    item.designation for item in candidates
+                ],
+            },
             "member_selection": "One common top-chord and bottom-chord section per fabricated span; ordinary webs are grouped in at least three consecutive panels and only downsize once retained utilisation is below 75%",
             "minimum_web_group_panels": 3,
             "web_section_change_utilisation_threshold": 0.75,
@@ -1565,7 +1651,7 @@ def design_truss(payload: Mapping[str, Any]) -> dict[str, Any]:
             "Existing PortalFrame load cases and combinations are reused; roof actions are converted to truss panel-point loads.",
             "No base angle smaller than 50x50x5 is considered so that the selected leg and thickness can accommodate the intended bolted detailing basis.",
             "Each top chord and bottom chord uses one common section within each transverse span; ordinary webs use practical groups of at least three consecutive panels and downsize only below 75% retained utilisation.",
-            "The vertical aligned with every bearing is excluded from truss-angle optimisation and analysed with the selected supporting column or longitudinal-girder vertical area.",
+            "Where the selected topology has a vertical aligned with a bearing, it is excluded from truss-angle optimisation and analysed with the selected supporting column or longitudinal-girder vertical area; other Warren variants bear directly at a top-chord node.",
             "Back-to-back equal angles are treated as symmetric heel-to-heel pairs with the single-angle x radius governing; no further gusset-gap benefit is used.",
             "The axial compression resistance curve is reused from the existing PortalFrame bracing implementation; angle flexural-torsional buckling is not separately benchmark-validated.",
             "Connection eccentricity, gussets, bolts, welds, bearings, splices and net-section rupture are not designed.",
@@ -1601,7 +1687,7 @@ def preview_truss(payload: Mapping[str, Any]) -> dict[str, Any]:
         _float(truss_data.get("roof_rise_mm"), 6000.0),
         depth,
         _float(truss_data.get("maximum_panel_width_mm"), 1700.0),
-        topology=str(truss_data.get("topology", "Warren with verticals")),
+        topology=str(truss_data.get("topology", WARREN_ALL_VERTICALS)),
         chord_form=str(truss_data.get("chord_form", "Parallel chords")),
     )
     restraint_layout = calculate_chord_restraint_layout(
@@ -1629,7 +1715,7 @@ def preview_truss(payload: Mapping[str, Any]) -> dict[str, Any]:
             span_mm,
             girder_depth,
             girder_bays * panels_per_bay,
-            topology=str(truss_data.get("topology", "Warren with verticals")),
+        topology=str(truss_data.get("topology", WARREN_ALL_VERTICALS)),
         ).to_dict()
     return {
         "structural_system": "Truss",
