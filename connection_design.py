@@ -766,6 +766,8 @@ def _haunch_connection_start(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     designs = [
         {
             **location,
+            "rafter_section": str(project.get("rafter_section", "")).strip(),
+            "column_section": str(project.get("column_section", "")).strip(),
             "connection": _design_haunch_end_plate(
                 location,
                 envelope,
@@ -937,34 +939,8 @@ def write_connection_markup_html(
     result: Mapping[str, Any],
     path: str | Path,
 ) -> Path:
-    """Write connection geometry, bolt distances and stiffeners as HTML/SVG."""
+    """Write coordinated fabrication-review connection drawing sheets."""
 
-    output = Path(path)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    base_svgs = [
-        _base_plate_markup_svg(item)
-        for item in result.get("base_plates", {}).get("supports", [])
-        if item.get("plate") and item.get("holding_down_bolts", {}).get("layout")
-    ]
-    haunch_svgs = [
-        _haunch_markup_svg(item)
-        for item in result.get("haunch_connections", {}).get("locations", [])
-        if item.get("connection", {}).get("plate")
-    ]
-    document = f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<title>Portal-frame connection markup</title>
-<style>
-body{{font-family:Arial,sans-serif;margin:28px;color:#173C3A;background:#F6F8F7}}
-main{{max-width:1240px;margin:auto}}h1{{margin-bottom:8px}}
-.warning{{background:#FFF3D6;border-left:5px solid #C17B00;padding:14px;margin:18px 0}}
-svg{{width:100%;height:auto;background:white;border:1px solid #CCD9D7;margin:14px 0 28px}}
-</style></head><body><main>
-<h1>Portal-frame connection markup</h1>
-<p>Calculated bolt pitch, gauge, edge/end distances, plate sizes and stiffener arrangements.</p>
-<div class="warning"><strong>Not for fabrication.</strong> Review the separate connection calculation report. Concrete anchor breakout, pull-out and embedment marked INPUT_REQUIRED must be completed.</div>
-<h2>Base plates</h2>{''.join(base_svgs) or '<p>No base-plate markup available.</p>'}
-<h2>Haunch/end-plate connections</h2>{''.join(haunch_svgs) or '<p>No haunch connection is required.</p>'}
-</main></body></html>"""
-    output.write_text(document, encoding="utf-8")
-    return output
+    from connection_markup import write_connection_markup_html as write_markup
+
+    return write_markup(result, path)

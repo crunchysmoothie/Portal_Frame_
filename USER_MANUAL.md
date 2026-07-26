@@ -150,8 +150,10 @@ calculated transverse stiffeners.
 
 Use **View calculation report** for the equation, numerical substitution,
 demand, resistance and utilisation of every check. Use **View connection
-markup** for plate, bolt-distance and stiffener geometry. Failed checks remain
-visible. Concrete anchor breakout, pull-out and embedment remain
+markup** for coordinated plan, elevation and section sheets with complete
+plate dimensions, bolt dimension chains, bolt/hole callouts, weld requirements,
+stiffener details and design-status references. Failed checks remain visible.
+Concrete anchor breakout, pull-out and embedment remain
 **INPUT_REQUIRED** until the anchor standard, anchor type, embedment and
 pedestal geometry are supplied; grout, shear keys and fabrication tolerances
 also require project detailing.

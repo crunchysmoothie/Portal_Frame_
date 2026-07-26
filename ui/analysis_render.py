@@ -716,13 +716,22 @@ def _render_deflection(
             )
         return abs(float(point.get(f"{component}_mm", 0.0)))
 
-    values = [
-        displacement_value(point)
+    candidates = [
+        ("node", node, displacement_value(node))
+        for node in nodes
+    ] + [
+        ("member", point, displacement_value(point))
         for member in members
         for point in member.get("displacement_points", [])
-    ] + [displacement_value(node) for node in nodes]
-    maximum = max(values, default=0.0)
-    model_size = max(extent_x, extent_y)
+    ]
+    governing_source, governing_point, maximum = max(
+        candidates,
+        key=lambda candidate: candidate[2],
+        default=("node", {}, 0.0),
+    )
+    # Use the shorter frame dimension so a wide span does not magnify vertical
+    # movement enough to flatten or invert the roof profile.
+    model_size = min(extent_x, extent_y)
     deformation_scale = (
         1.0 if maximum <= 1e-9 else min(120.0, 0.10 * model_size / maximum)
     )
@@ -745,7 +754,28 @@ def _render_deflection(
             'stroke-width="3"/>'
         )
 
-    for node in nodes:
+    member_endpoints = [
+        (float(point["x_mm"]), float(point["y_mm"]))
+        for member in members
+        for point in (
+            member.get("displacement_points", [{}])[0],
+            member.get("displacement_points", [{}])[-1],
+        )
+        if "x_mm" in point and "y_mm" in point
+    ]
+
+    def is_physical_endpoint(node: dict[str, Any]) -> bool:
+        node_x = float(node["x_mm"])
+        node_y = float(node["y_mm"])
+        return any(
+            math.isclose(node_x, endpoint_x, abs_tol=1e-4)
+            and math.isclose(node_y, endpoint_y, abs_tol=1e-4)
+            for endpoint_x, endpoint_y in member_endpoints
+        )
+
+    display_nodes = [node for node in nodes if is_physical_endpoint(node)]
+    labelled_positions: list[tuple[float, float]] = []
+    for node in display_nodes:
         dx = float(node.get("dx_mm", 0.0))
         dy = float(node.get("dy_mm", 0.0))
         if is_total:
@@ -763,12 +793,59 @@ def _render_deflection(
             )
             node_label = f'{node["name"]} {component.upper()} {value:+.2f} mm'
         px, py = sx(xx), sy(yy)
-        body.append(f'<circle cx="{px:.2f}" cy="{py:.2f}" r="3.5" fill="{DEFORMED}"/>')
+        labelled_positions.append((float(node["x_mm"]), float(node["y_mm"])))
+        body.append(
+            f'<circle data-role="deflection-node" '
+            f'data-node-name="{html.escape(str(node["name"]))}" '
+            f'cx="{px:.2f}" cy="{py:.2f}" r="3.5" fill="{DEFORMED}"/>'
+        )
+        label_y = py - 10
+        if component != "dx" and abs(dy) >= 1.0:
+            # Put roof labels on the displaced side of the curve, away from the
+            # undeformed member line that would otherwise run through the text.
+            label_y = py + 17 if dy < 0 else py - 11
         body.append(
             _halo_text(
                 node_label,
                 px,
-                py - 10,
+                label_y,
+                colour=DEFORMED,
+                size=10,
+            )
+        )
+
+    governing_x = float(governing_point.get("x_mm", 0.0))
+    governing_y = float(governing_point.get("y_mm", 0.0))
+    governing_is_labelled = any(
+        math.isclose(governing_x, labelled_x, abs_tol=1e-4)
+        and math.isclose(governing_y, labelled_y, abs_tol=1e-4)
+        for labelled_x, labelled_y in labelled_positions
+    )
+    if governing_point and not governing_is_labelled:
+        governing_dx = float(governing_point.get("dx_mm", 0.0))
+        governing_dy = float(governing_point.get("dy_mm", 0.0))
+        if is_total:
+            governing_x += deformation_scale * governing_dx
+            governing_y += deformation_scale * governing_dy
+            governing_label = f"Max Total {maximum:.2f} mm"
+        else:
+            signed_value = float(governing_point.get(f"{component}_mm", 0.0))
+            if component == "dx":
+                governing_x += deformation_scale * signed_value
+            else:
+                governing_y += deformation_scale * signed_value
+            governing_label = f"Max {component.upper()} {signed_value:+.2f} mm"
+        governing_px, governing_py = sx(governing_x), sy(governing_y)
+        body.append(
+            f'<circle data-role="governing-deflection" '
+            f'data-source="{governing_source}" cx="{governing_px:.2f}" '
+            f'cy="{governing_py:.2f}" r="4.5" fill="{DEFORMED}"/>'
+        )
+        body.append(
+            _halo_text(
+                governing_label,
+                governing_px,
+                governing_py - 11,
                 colour=DEFORMED,
                 size=10,
             )
@@ -776,9 +853,9 @@ def _render_deflection(
 
     component_label = "Total" if is_total else component.upper()
     legend_label = (
-        "magnified complete displacement vector; node labels show exact resultant values"
+        "magnified complete displacement vector; physical-node labels show exact resultant values"
         if is_total
-        else "magnified selected component; node labels show exact unscaled values"
+        else "magnified selected component; physical-node labels show exact unscaled values"
     )
     body.extend(
         [

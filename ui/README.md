@@ -57,9 +57,11 @@ as a completed concrete capacity check.
 The post-analysis **Connections** page is enabled only after a portal frame has
 been designed. It shows governing utilisation for base plates and haunch
 connections and links to the full equation-by-equation report and dimensioned
-markup. Bolt geometry, prying, plates, weld groups, supporting-member effects
-and stiffeners are calculated. Concrete anchor breakout, pull-out and embedment
-remain visibly `INPUT_REQUIRED`.
+markup. The markup provides coordinated plan, elevation, section and component
+details with full bolt dimension chains, plate sizes, weld callouts and
+stiffener dimensions. Bolt geometry, prying, plates, weld groups,
+supporting-member effects and stiffeners are calculated. Concrete anchor
+breakout, pull-out and embedment remain visibly `INPUT_REQUIRED`.
 
 The Foundation page requests only soil unit weight and permissible bearing
 pressure. It automatically searches a common pad length, width and height and

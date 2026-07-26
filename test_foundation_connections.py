@@ -210,9 +210,19 @@ class PostAnalysisConnectionTests(unittest.TestCase):
                 result, Path(directory) / "connections.html"
             )
             markup = path.read_text(encoding="utf-8")
-            self.assertIn("Base plate N1", markup)
-            self.assertIn("Pitch", markup)
-            self.assertIn("Stiffeners", markup)
+            self.assertIn("BASE PLATE N1", markup)
+            self.assertIn("PLAN OF BASE PLATE", markup)
+            self.assertIn("SECTION A-A", markup)
+            self.assertIn("HOLDING-DOWN BOLTS", markup)
+            self.assertIn("STIFFENER DETAIL B", markup)
+            self.assertIn("END-PLATE ELEVATION", markup)
+            self.assertIn("CJP WELD", markup)
+            self.assertIn("4 @ 170", markup)
+            self.assertIn('data-role="flat-stiffener"', markup)
+            self.assertIn("FLAT-PLATE STIFFENER DETAIL B", markup)
+            self.assertIn("TAPERED HAUNCH", markup)
+            self.assertNotIn("DESIGN STATUS", markup)
+            self.assertNotIn(" U=", markup)
             report_path = write_connection_report_html(
                 result, Path(directory) / "connection_calculations.html"
             )

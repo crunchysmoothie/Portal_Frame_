@@ -1,3 +1,4 @@
+import base64
 import unittest
 from types import SimpleNamespace
 
@@ -18,6 +19,7 @@ from serviceability_deflection import (
     serviceability_deflection_rows,
 )
 from design_calculations import governing_serviceability_deflections
+from ui.analysis_render import load_case_svg
 from ui.input_model import (
     DEFAULT_VALUES,
     InputValidationError,
@@ -143,6 +145,76 @@ class HaunchDesignTests(unittest.TestCase):
         with self.assertRaises(InputValidationError) as context:
             build_analysis_payload(values)
         self.assertIn("apex_haunch_length_m", context.exception.errors)
+
+    def test_portal_deflection_view_uses_height_scale_and_hides_internal_nodes(self):
+        def point(x_mm, y_mm, dx_mm=0.0, dy_mm=0.0):
+            return {
+                "x_mm": x_mm,
+                "y_mm": y_mm,
+                "dx_mm": dx_mm,
+                "dy_mm": dy_mm,
+            }
+
+        visualisation = {
+            "structural_system": "portal",
+            "combinations": [{
+                "name": "1.1 DL + 1.0 LL",
+                "kind": "SLS",
+                "factors": {"D": 1.1, "D_MAX": 1.1, "L": 1.0},
+                "nodes": [
+                    {"name": "N1", **point(0.0, 0.0)},
+                    {"name": "N2", **point(0.0, 6500.0, -19.0, -0.3)},
+                    {"name": "N3", **point(9000.0, 8500.0, 0.0, -89.9)},
+                    {"name": "N4", **point(18000.0, 6500.0, 19.0, -0.3)},
+                    {"name": "N5", **point(18000.0, 0.0)},
+                    {"name": "HN1", **point(250.0, 6555.0, -18.5, -2.0)},
+                ],
+                "members": [
+                    {
+                        "name": "M1",
+                        "displacement_points": [
+                            point(0.0, 0.0),
+                            point(0.0, 6500.0, -19.0, -0.3),
+                        ],
+                    },
+                    {
+                        "name": "M2",
+                        "displacement_points": [
+                            point(0.0, 6500.0, -19.0, -0.3),
+                            point(9000.0, 8500.0, 0.0, -89.9),
+                        ],
+                    },
+                    {
+                        "name": "M3",
+                        "displacement_points": [
+                            point(9000.0, 8500.0, 0.0, -89.9),
+                            point(18000.0, 6500.0, 19.0, -0.3),
+                        ],
+                    },
+                    {
+                        "name": "M4",
+                        "displacement_points": [
+                            point(18000.0, 6500.0, 19.0, -0.3),
+                            point(18000.0, 0.0),
+                        ],
+                    },
+                ],
+            }],
+        }
+        svg = base64.b64decode(
+            load_case_svg(
+                visualisation,
+                "1.1 DL + 1.0 LL",
+                view="deflection",
+                component="total deflection",
+            ).split(",", 1)[1]
+        ).decode("utf-8")
+
+        self.assertIn("displayed &#215;9.5", svg)
+        self.assertIn('data-node-name="N3"', svg)
+        self.assertNotIn('data-node-name="HN1"', svg)
+        self.assertNotIn("HN1 Total", svg)
+        self.assertIn("physical-node labels", svg)
 
     def test_dead_live_vertical_limit_can_be_ignored_without_removing_combo(self):
         frame_data = {
