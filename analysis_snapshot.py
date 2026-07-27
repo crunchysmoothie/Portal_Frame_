@@ -18,6 +18,8 @@ SNAPSHOT_SCHEMA_VERSION = 1
 DEFAULT_SNAPSHOT_PATH = Path("output/analysis/analysis_results.json")
 ENGINE_SOURCE_FILES = (
     "portal_frame_analysis.py",
+    "haunch_design.py",
+    "haunch_geometry.py",
     "bracing_design.py",
     "internal_pressure.py",
     "strength_checks.py",

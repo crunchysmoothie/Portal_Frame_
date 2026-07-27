@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 
 from analysis_snapshot import load_analysis_snapshot
 from backend.analysis_service import (
@@ -22,6 +22,10 @@ from backend.analysis_service import (
     submit_analysis_job,
 )
 from preview_geometry import build_preview_geometry
+from connection_viewer import (
+    build_connection_viewer_html,
+    list_connection_views,
+)
 from truss_design import preview_truss
 
 
@@ -128,6 +132,46 @@ def foundation_design(
         raise HTTPException(status_code=422, detail=detail) from exc
 
 
+@app.get(
+    "/api/analysis/{analysis_id}/connection-viewer",
+    response_class=HTMLResponse,
+    tags=["analysis"],
+)
+def connection_viewer(analysis_id: str, view: str) -> HTMLResponse:
+    """Serve one interactive, in-app-only 3D connection view."""
+
+    try:
+        job = get_analysis_job(analysis_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if job.get("status") != "complete":
+        raise HTTPException(status_code=409, detail="Analysis is not complete.")
+    summary = job.get("design_summary", {})
+    connection_design = summary.get("connection_design", {})
+    valid_views = {
+        str(item["key"]) for item in list_connection_views(connection_design)
+    }
+    if view not in valid_views:
+        raise HTTPException(status_code=404, detail="Unknown connection view.")
+    try:
+        html = build_connection_viewer_html(connection_design, view)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Connection viewer geometry is invalid: {exc}",
+        ) from exc
+    return HTMLResponse(
+        content=html,
+        headers={
+            "Cache-Control": "no-store",
+            "Cross-Origin-Embedder-Policy": "require-corp",
+            "Cross-Origin-Resource-Policy": "cross-origin",
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "no-referrer",
+        },
+    )
+
+
 @app.get("/api/analysis/{analysis_id}/artifacts/{artifact}", tags=["analysis"])
 def analysis_artifact(analysis_id: str, artifact: str):
     """Download a generated design report or markup drawing artifact."""
@@ -138,6 +182,8 @@ def analysis_artifact(analysis_id: str, artifact: str):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     media_type = {
         ".pdf": "application/pdf",
+        ".dxf": "application/dxf",
+        ".dwg": "application/acad",
         ".html": "text/html; charset=utf-8",
         ".json": "application/json",
     }.get(path.suffix.lower(), "application/octet-stream")
@@ -146,7 +192,9 @@ def analysis_artifact(analysis_id: str, artifact: str):
         media_type=media_type,
         filename=path.name,
         content_disposition_type=(
-            "inline" if path.suffix.lower() == ".html" else "attachment"
+            "inline"
+            if path.suffix.lower() in {".html", ".pdf"}
+            else "attachment"
         ),
     )
 

@@ -12,6 +12,7 @@ import math
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from haunch_geometry import haunch_cut_depth_check
 from member_database import load_member_database
 
 
@@ -575,17 +576,76 @@ def _haunch_checks(
     haunch_connections: Mapping[str, Any],
 ) -> dict[str, Any]:
     project = snapshot["results"].get("project", {})
-    rafter = _section(str(project.get("rafter_section", "")))
-    column = _section(str(project.get("column_section", "")))
+    rafter_section = str(project.get("rafter_section", ""))
+    column_section = str(project.get("column_section", ""))
+    rafter = _section(rafter_section)
     envelope = haunch_connections.get("preliminary_uls_envelope", {})
     locations = []
     for location in haunch_connections.get("locations", []):
         connection = location.get("connection", {})
+        connection_type = str(
+            location.get(
+                "connection_type",
+                (
+                    "apex_splice"
+                    if str(location.get("location", "")).lower().startswith(
+                        "apex"
+                    )
+                    else "eaves_end_plate"
+                ),
+            )
+        )
+        is_apex = connection_type == "apex_splice"
+        supporting_member_type = str(
+            location.get(
+                "supporting_member_type",
+                "opposing_rafter" if is_apex else "column",
+            )
+        )
+        supporting_member_section = str(
+            location.get(
+                "supporting_member_section",
+                rafter_section if is_apex else column_section,
+            )
+        )
+        supporting_member = _section(supporting_member_section)
+        if is_apex:
+            supporting_label = "Opposing rafter"
+            resistance_suffix = "opposing-rafter"
+            source_target = "opposing rafter"
+        else:
+            supporting_label = "Supporting column"
+            resistance_suffix = "column"
+            source_target = "supporting column"
+        cut_depth = float(location.get("added_depth_mm", 0.0))
+        cut_geometry = haunch_cut_depth_check(rafter, cut_depth)
+        fabrication_check = _check(
+            reference="HC-00",
+            name="Donor-section haunch cut depth",
+            equation="d_cut <= h - b",
+            substitution=(
+                f"{cut_depth:.1f} <= "
+                f"{cut_geometry.source_section_depth_mm:.1f} - "
+                f"{cut_geometry.source_flange_width_mm:.1f} = "
+                f"{cut_geometry.maximum_cut_depth_mm:.1f}"
+            ),
+            demand=cut_depth,
+            resistance=cut_geometry.maximum_cut_depth_mm,
+            units="mm",
+            source=(
+                "Fabrication geometry: haunch cut from the selected rafter "
+                "with the donor top flange removed and the remaining web "
+                "welded to the main rafter."
+            ),
+        )
         if not connection.get("plate"):
             locations.append({
                 "location": location.get("location", ""),
+                "connection_type": connection_type,
+                "supporting_member_section": supporting_member_section,
+                "supporting_member_type": supporting_member_type,
                 "status": "FAIL",
-                "checks": [],
+                "checks": [fabrication_check],
                 "reason": connection.get("reason", "No connection geometry."),
             })
             continue
@@ -603,6 +663,7 @@ def _haunch_checks(
             / float(bolts["tension_resistance_kN"])
         )
         checks = [
+            fabrication_check,
             _check(
                 reference="HC-01",
                 name="T-stub/end-plate yield-line mechanism",
@@ -674,24 +735,24 @@ def _haunch_checks(
                 connection["plate"]["provided_thickness_mm"]
             ),
         )
-        column_flange_mr_nmm = (
+        supporting_flange_mr_nmm = (
             0.25
             * RESISTANCE_FACTOR
-            * float(column["b"])
-            * float(column["tf"]) ** 2
+            * float(supporting_member["b"])
+            * float(supporting_member["tf"]) ** 2
             * STEEL_FY_MPA
         )
-        column_flange_demand_nmm = (
+        supporting_flange_demand_nmm = (
             0.25 * prying["m_mm"] * flange_force * 1000.0
         )
         bearing_length = (
             float(connection["plate"]["provided_thickness_mm"])
-            + 2.5 * float(column["tf"])
-            + 2.0 * float(column.get("r1", 0.0))
+            + 2.5 * float(supporting_member["tf"])
+            + 2.0 * float(supporting_member.get("r1", 0.0))
         )
         web_yield_resistance = (
             RESISTANCE_FACTOR
-            * float(column["tw"])
+            * float(supporting_member["tw"])
             * bearing_length
             * STEEL_FY_MPA
             / 1000.0
@@ -699,38 +760,45 @@ def _haunch_checks(
         local_checks = [
             _check(
                 reference="HC-04",
-                name="Supporting column flange T-stub bending",
-                equation="U = 0.25 m P_u / M_r,column",
-                substitution=(
-                    f"{column_flange_demand_nmm / 1e6:.3f} / "
-                    f"{column_flange_mr_nmm / 1e6:.3f}"
+                name=f"{supporting_label} flange T-stub bending",
+                equation=(
+                    "U = 0.25 m P_u / "
+                    f"M_r,{resistance_suffix}"
                 ),
-                demand=column_flange_demand_nmm,
-                resistance=column_flange_mr_nmm,
+                substitution=(
+                    f"{supporting_flange_demand_nmm / 1e6:.3f} / "
+                    f"{supporting_flange_mr_nmm / 1e6:.3f}"
+                ),
+                demand=supporting_flange_demand_nmm,
+                resistance=supporting_flange_mr_nmm,
                 units="N.mm",
                 source=(
                     "Mahachi Example E7.5 T-stub yield-line model applied "
-                    "preliminarily to the supporting column flange."
+                    f"preliminarily to the {source_target} flange."
                 ),
                 note=(
                     "A failed check requires transverse stiffeners or a "
-                    "thicker/stronger supporting flange."
+                    f"thicker/stronger {source_target} flange."
                 ),
             ),
             _check(
                 reference="HC-05",
-                name="Supporting column web local yielding",
-                equation="R_w = phi t_w (t_p + 2.5t_f + 2r) f_y",
+                name=f"{supporting_label} web local yielding",
+                equation=(
+                    f"R_w,{resistance_suffix} = "
+                    "phi t_w (t_p + 2.5t_f + 2r) f_y"
+                ),
                 substitution=(
-                    f"0.90 x {float(column['tw']):.2f} x "
+                    f"0.90 x {float(supporting_member['tw']):.2f} x "
                     f"{bearing_length:.2f} x 355 / 1000"
                 ),
                 demand=flange_force,
                 resistance=web_yield_resistance,
                 units="kN",
                 source=(
-                    "Preliminary concentrated-force web-yielding model; "
-                    "confirm against the adopted connection standard."
+                    "Preliminary concentrated-force web-yielding model "
+                    f"applied to the {source_target}; confirm against the "
+                    "adopted connection standard."
                 ),
             ),
         ]
@@ -758,6 +826,9 @@ def _haunch_checks(
         )
         locations.append({
             "location": location["location"],
+            "connection_type": connection_type,
+            "supporting_member_section": supporting_member_section,
+            "supporting_member_type": supporting_member_type,
             "status": (
                 "PASS_WITH_STIFFENERS"
                 if calculated_pass and reinforced
@@ -800,12 +871,16 @@ def calculate_connection_checks(
         "base_plates": base,
         "haunch_connections": haunch,
         "completed_check_scope": [
+            "Donor-section haunch cut-depth geometry",
             "Base-plate concrete bearing and plate bending",
             "Bolt distances and steel shear/tension interaction",
             "T-stub prying and end-plate yield-line mechanism",
             "E70XX fillet/CJP weld selection from elastic weld-group demand",
             "Stiffener yielding, plate-column buckling and weld demand",
-            "Preliminary supporting flange bending and web local yielding",
+            (
+                "Preliminary connection-specific supporting-member flange "
+                "bending and web local yielding"
+            ),
         ],
         "input_required_scope": [
             "Concrete anchor breakout, pull-out and embedment",

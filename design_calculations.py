@@ -21,6 +21,7 @@ from typing import Any, Iterable, Mapping, Sequence
 import member_database as mdb
 from analysis_visualisation import build_analysis_visualisation
 from analysis_snapshot import load_analysis_snapshot, validate_snapshot_input
+from haunch_geometry import maximum_haunch_cut_depth_mm
 from serviceability_deflection import serviceability_deflection_rows
 from strength_checks import (
     element_property_details,
@@ -1010,6 +1011,11 @@ def build_calculation_sheet_data_from_frame(
             "hvac_load_kpa",
         )
     }
+    selected_rafter_properties = mdb.member_properties(
+        rafter_section_type,
+        rafter_section,
+        member_db,
+    )
     project = {
         "generated": datetime.now().astimezone().isoformat(timespec="seconds"),
         "input_file": str(input_path.resolve()),
@@ -1057,6 +1063,12 @@ def build_calculation_sheet_data_from_frame(
             )
         ),
         "rafter_section": rafter_section,
+        "rafter_section_depth_mm": selected_rafter_properties["h"],
+        "rafter_flange_width_mm": selected_rafter_properties["b"],
+        "rafter_flange_thickness_mm": selected_rafter_properties["tf"],
+        "maximum_haunch_cut_depth_mm": maximum_haunch_cut_depth_mm(
+            selected_rafter_properties
+        ),
         "column_section": column_section,
         "column_bracing_type": frame_data.get("column_bracing_type", "X"),
         "purlin_section": frame_data.get("purlin_section", ""),
@@ -1104,6 +1116,7 @@ def build_calculation_sheet_data_from_frame(
     ):
         assumptions.extend([
             "Rafter haunches are modelled as cut from the selected rafter and welded below it.",
+            "The entered haunch cut cannot exceed the selected donor-section limit h - b, using the actual database section depth h and flange width b.",
             "Each tapered haunch zone uses eight constant-property PyNite sub-elements with composite properties sampled at each sub-element midpoint.",
             "The inclined haunch flange is numerically tapered over its final flange thickness so area and Ixx converge to the parent rafter at the toe.",
             "Haunch sub-elements retain the parent rafter brace-panel stability length; numerical subdivision is not treated as lateral restraint.",

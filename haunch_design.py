@@ -15,6 +15,8 @@ from typing import Any, Callable, Mapping
 
 from Pynite.PhysMember import PhysMember
 
+from haunch_geometry import haunch_cut_depth_check, haunch_cut_error
+
 
 HAUNCH_SEGMENTS = 8
 _TOLERANCE_MM = 1e-6
@@ -107,6 +109,15 @@ def _composite_properties_cached(key: tuple) -> dict[str, Any]:
             "haunch_added_depth_mm": 0.0,
             "haunch_extra_area_mm2": 0.0,
         }
+
+    donor = {
+        "Designation": designation,
+        "h": h,
+        "b": b,
+    }
+    cut_check = haunch_cut_depth_check(donor, depth)
+    if not cut_check.is_valid:
+        raise ValueError(haunch_cut_error(str(designation), cut_check))
 
     # The inclined haunch flange terminates at the toe.  Its effective
     # thickness reduces only over the final flange thickness, making area and

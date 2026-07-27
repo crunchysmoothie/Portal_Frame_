@@ -20,6 +20,11 @@ from haunch_design import (
     composite_haunch_properties,
     haunch_extra_mass_kg,
 )
+from haunch_geometry import (
+    governing_requested_haunch_cut_depth_mm,
+    haunch_cut_depth_check,
+    haunch_cut_error,
+)
 from serviceability_deflection import (
     add_permanent_baseline_combinations,
     serviceability_deflection_rows,
@@ -107,6 +112,14 @@ def build_model(r_mem, c_mem, data: PortalFrame):
     """
     Builds and returns the FE model based on the imported JSON data.
     """
+    requested_cut = governing_requested_haunch_cut_depth_mm(data.frame_data[0])
+    if requested_cut > 0.0:
+        cut_check = haunch_cut_depth_check(r_mem, requested_cut)
+        if not cut_check.is_valid:
+            raise ValueError(
+                haunch_cut_error(str(r_mem["Designation"]), cut_check)
+            )
+
     # Create a new model
     frame = FEModel3D()
 
@@ -566,6 +579,43 @@ def sls_check(
         raise ValueError(f"No sections flagged as Preferred='{preferred_section}' found.")
 
     data = import_data(str(input_path))
+    requested_cut = governing_requested_haunch_cut_depth_mm(
+        data.frame_data[0]
+    )
+    if requested_cut > 0.0:
+        compatible_rafters = [
+            name
+            for name in r_list
+            if haunch_cut_depth_check(
+                member_db[r_section_type][name],
+                requested_cut,
+            ).is_valid
+        ]
+        if not compatible_rafters:
+            best_name = max(
+                r_list,
+                key=lambda name: haunch_cut_depth_check(
+                    member_db[r_section_type][name],
+                    0.0,
+                ).maximum_cut_depth_mm,
+            )
+            check = haunch_cut_depth_check(
+                member_db[r_section_type][best_name],
+                requested_cut,
+            )
+            forced_rafter = str(selected_rafter_section or "").strip()
+            if (
+                forced_rafter
+                and not forced_rafter.lower().startswith("automatic")
+            ):
+                raise ValueError(haunch_cut_error(best_name, check))
+            raise ValueError(
+                f"No Preferred {r_section_type} rafter can supply a "
+                f"{requested_cut:.1f} mm haunch cut. Family maximum is "
+                f"{best_name}: {check.equation}."
+            )
+        r_list = compatible_rafters
+
     r_total_m, c_total_m = get_member_lengths(data)
     vert_limit = data.frame_data[0]['gable_width'] / 180
     horiz_limit = data.frame_data[0]['eaves_height'] / 180

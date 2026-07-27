@@ -105,7 +105,7 @@ def _snapshot() -> dict:
             "frame_data": [{
                 "use_eaves_haunch": "Yes",
                 "eaves_haunch_length": 1_500.0,
-                "eaves_haunch_depth": 450.0,
+                "eaves_haunch_depth": 100.0,
                 "use_apex_haunch": "No",
             }],
         },
@@ -217,7 +217,13 @@ class PostAnalysisConnectionTests(unittest.TestCase):
             self.assertIn("STIFFENER DETAIL B", markup)
             self.assertIn("END-PLATE ELEVATION", markup)
             self.assertIn("CJP WELD", markup)
-            self.assertIn("4 @ 170", markup)
+            self.assertIn(
+                (
+                    f"{connection['bolts']['row_count'] - 1} @ "
+                    f"{connection['bolts']['pitch_mm']:.0f}"
+                ),
+                markup,
+            )
             self.assertIn('data-role="flat-stiffener"', markup)
             self.assertIn("FLAT-PLATE STIFFENER DETAIL B", markup)
             self.assertIn("TAPERED HAUNCH", markup)

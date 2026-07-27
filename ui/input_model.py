@@ -9,6 +9,11 @@ from typing import Any, Mapping
 
 import member_database as portal_members
 from foundation_design import DEFAULT_FOUNDATION_VALUES
+from haunch_geometry import (
+    haunch_cut_depth_check,
+    haunch_cut_error,
+    maximum_haunch_cut_depth_mm,
+)
 from roof_layout import calculate_roof_bracing_layout
 from truss_model import (
     WARREN_ALL_VERTICALS,
@@ -102,6 +107,53 @@ PORTAL_SECTIONS_BY_FAMILY: dict[str, tuple[str, ...]] = {
     for family in PORTAL_SECTION_FAMILIES
 }
 
+
+def rafter_haunch_cut_limit(
+    section_family: str,
+    selected_section: str,
+) -> dict[str, Any]:
+    """Return the exact manual or automatic-family haunch cut ceiling."""
+
+    family = _PORTAL_MEMBER_DATABASE.get(section_family, {})
+    selected = str(selected_section or "").strip()
+    if selected and selected != AUTOMATIC_SECTION:
+        properties = family.get(selected)
+        if properties is None:
+            return {
+                "mode": "unavailable",
+                "section": selected,
+                "maximum_cut_depth_mm": 0.0,
+            }
+        return {
+            "mode": "manual",
+            "section": selected,
+            "maximum_cut_depth_mm": maximum_haunch_cut_depth_mm(properties),
+            "properties": properties,
+        }
+
+    preferred = [
+        (name, properties)
+        for name, properties in family.items()
+        if properties.get("Preferred", "No") == "Yes"
+    ]
+    if not preferred:
+        return {
+            "mode": "unavailable",
+            "section": "",
+            "maximum_cut_depth_mm": 0.0,
+        }
+    name, properties = max(
+        preferred,
+        key=lambda item: maximum_haunch_cut_depth_mm(item[1]),
+    )
+    return {
+        "mode": "automatic",
+        "section": name,
+        "maximum_cut_depth_mm": maximum_haunch_cut_depth_mm(properties),
+        "properties": properties,
+    }
+
+
 DEFAULT_VALUES: dict[str, Any] = {
     "project_name": "New portal frame",
     "project_number": "",
@@ -125,10 +177,10 @@ DEFAULT_VALUES: dict[str, Any] = {
     "column_section": AUTOMATIC_SECTION,
     "use_eaves_haunch": False,
     "eaves_haunch_length_m": "1.5",
-    "eaves_haunch_depth_mm": "450",
+    "eaves_haunch_depth_mm": "100",
     "use_apex_haunch": False,
     "apex_haunch_length_m": "1.0",
-    "apex_haunch_depth_mm": "300",
+    "apex_haunch_depth_mm": "100",
     "base_support_condition": "Spring",
     "base_rotational_stiffness_knm_per_rad": "10000",
     "fundamental_basic_wind_speed": "32",
@@ -536,6 +588,42 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
         apex_haunch_depth_mm = number(
             "apex_haunch_depth_mm", strictly_positive=True, maximum=2000
         )
+
+    cut_limit = rafter_haunch_cut_limit(
+        rafter_section_type,
+        rafter_section,
+    )
+
+    def validate_cut_depth(field: str, provided: float) -> None:
+        properties = cut_limit.get("properties")
+        if not properties or field in errors:
+            return
+        check = haunch_cut_depth_check(properties, provided)
+        if check.is_valid:
+            return
+        if cut_limit.get("mode") == "automatic":
+            errors[field] = (
+                f"No Preferred {rafter_section_type} rafter can supply a "
+                f"{provided:.1f} mm cut. Family maximum is "
+                f"{cut_limit['section']}: {check.equation}."
+            )
+        else:
+            errors[field] = haunch_cut_error(
+                str(cut_limit.get("section", rafter_section)),
+                check,
+            )
+
+    if use_eaves_haunch:
+        validate_cut_depth(
+            "eaves_haunch_depth_mm",
+            eaves_haunch_depth_mm,
+        )
+    if use_apex_haunch:
+        validate_cut_depth(
+            "apex_haunch_depth_mm",
+            apex_haunch_depth_mm,
+        )
+
     roof_slope_length_m = math.hypot(
         width_m / (2 if roof_type == "Duo Pitched" else 1),
         apex_m - eaves_m,

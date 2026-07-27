@@ -11,10 +11,13 @@ from threading import Lock
 from typing import Any, Mapping
 from uuid import uuid4
 
-from connection_design import (
-    design_portal_connections,
-    write_connection_markup_html,
+from connection_cad import (
+    dwg_converter_status,
+    write_connection_dwg,
+    write_connection_dxf,
+    write_connection_pdf,
 )
+from connection_design import design_portal_connections
 from connection_report import write_connection_report_html
 from design_calculations import (
     ReportScope,
@@ -160,6 +163,16 @@ def _design_summary(
             "column": project.get("column_section", ""),
         },
         "haunches": {
+            "source_rafter_section": project.get("rafter_section", ""),
+            "source_section_depth_mm": project.get(
+                "rafter_section_depth_mm", 0
+            ),
+            "source_flange_width_mm": project.get(
+                "rafter_flange_width_mm", 0
+            ),
+            "maximum_cut_depth_mm": project.get(
+                "maximum_haunch_cut_depth_mm", 0
+            ),
             "eaves": {
                 "used": project.get("use_eaves_haunch", "No") == "Yes",
                 "length_mm": project.get("eaves_haunch_length_mm", 0),
@@ -318,10 +331,36 @@ def _run_job(analysis_id: str, payload: dict[str, Any]) -> None:
             connection_result,
             report_dir / "portal_connection_calculations.html",
         )
-        connection_markup = write_connection_markup_html(
+        connection_pdf = write_connection_pdf(
             connection_result,
-            markup_dir / "portal_connection_markup.html",
+            markup_dir / "portal_connection_markup.pdf",
         )
+        connection_dxf = write_connection_dxf(
+            connection_result,
+            markup_dir / "portal_connection_markup.dxf",
+        )
+        converter = dwg_converter_status()
+        connection_dwg: Path | None = None
+        if converter["available"]:
+            try:
+                connection_dwg = write_connection_dwg(
+                    connection_dxf,
+                    markup_dir / "portal_connection_markup.dwg",
+                )
+                converter = {
+                    **converter,
+                    "created": True,
+                    "reason": "AutoCAD created the calculated 2D DWG.",
+                }
+            except Exception as exc:
+                converter = {
+                    **converter,
+                    "created": False,
+                    "reason": "AutoCAD could not create the DWG during this run.",
+                    "error_type": type(exc).__name__,
+                }
+        else:
+            converter = {**converter, "created": False}
 
         artifact_paths = {
             "design-report-html": str(report_html),
@@ -329,11 +368,28 @@ def _run_job(analysis_id: str, payload: dict[str, Any]) -> None:
             "markup-html": str(markup_html),
             "connection-design-json": str(connection_path),
             "connection-report-html": str(connection_report),
-            "connection-markup-html": str(connection_markup),
+            "connection-markup-pdf": str(connection_pdf),
+            "connection-markup-dxf": str(connection_dxf),
         }
+        if connection_dwg is not None:
+            artifact_paths["connection-markup-dwg"] = str(connection_dwg)
         if markup_pdf is not None:
             artifact_paths["markup-pdf"] = str(markup_pdf)
 
+        design_summary = _design_summary(
+            calculation_data,
+            analysis_id,
+            connection_result,
+        )
+        design_summary["connection_exports"] = {
+            "formats": [
+                "PDF",
+                "DXF",
+                *(["DWG"] if connection_dwg is not None else []),
+            ],
+            "three_dimensional_export": False,
+            "dwg": converter,
+        }
         job.update(
             {
                 "status": "complete",
@@ -343,11 +399,7 @@ def _run_job(analysis_id: str, payload: dict[str, Any]) -> None:
                     "calculations are complete."
                 ),
                 "snapshot_path": str(written_snapshot),
-                "design_summary": _design_summary(
-                    calculation_data,
-                    analysis_id,
-                    connection_result,
-                ),
+                "design_summary": design_summary,
                 "artifact_paths": artifact_paths,
             }
         )

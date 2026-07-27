@@ -146,13 +146,25 @@ bolt distances and steel interaction are checked. Haunch end plates include
 T-stub prying/yield-line behaviour, bolt interaction, elastic weld-group design,
 supporting flange/web local checks, and stiffener yielding, buckling and weld
 checks. Supporting-member screens that exceed unity automatically trigger
-calculated transverse stiffeners.
+calculated flat transverse stiffeners. The app shows each connection as an
+interactive 3D inspection model, but does not export a 3D file.
+
+Every haunch donor is cut from the selected rafter section. Its displayed and
+checked maximum cut depth is `h - b`, using the section depth and flange width
+from the member database. The donor top flange is removed, its bottom flange is
+retained, and the remaining web is welded to the main rafter. Manual depths
+above this limit are rejected; automatic rafter selection excludes incompatible
+sections.
 
 Use **View calculation report** for the equation, numerical substitution,
-demand, resistance and utilisation of every check. Use **View connection
-markup** for coordinated plan, elevation and section sheets with complete
+demand, resistance and utilisation of every check. Use **View 2D PDF** or
+download **DXF**/**DWG** for coordinated plan, elevation and section sheets with complete
 plate dimensions, bolt dimension chains, bolt/hole callouts, weld requirements,
-stiffener details and design-status references. Failed checks remain visible.
+and stiffener details. Calculation utilisation and design-status text are kept
+in the report and intentionally omitted from the fabrication markup.
+The DWG button is enabled after the installed AutoCAD 2026 Core Console
+successfully converts the calculated DXF; the PDF and DXF remain available if
+that local converter cannot run.
 Concrete anchor breakout, pull-out and embedment remain
 **INPUT_REQUIRED** until the anchor standard, anchor type, embedment and
 pedestal geometry are supplied; grout, shear keys and fabrication tolerances

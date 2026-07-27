@@ -41,7 +41,8 @@ class HaunchDesignTests(unittest.TestCase):
         )
 
     def test_composite_ix_converges_and_increases_monotonically(self):
-        depths = (0.0, 1.0, 10.0, 100.0, 400.0)
+        maximum_cut = self.rafter["h"] - self.rafter["b"]
+        depths = (0.0, 1.0, 10.0, maximum_cut * 0.75, maximum_cut)
         properties = [
             composite_haunch_properties(self.rafter, depth)
             for depth in depths
@@ -87,10 +88,10 @@ class HaunchDesignTests(unittest.TestCase):
                 "apex_height": 8100,
                 "use_eaves_haunch": "Yes",
                 "eaves_haunch_length": 1500,
-                "eaves_haunch_depth": 450,
+                "eaves_haunch_depth": 40,
                 "use_apex_haunch": "Yes",
                 "apex_haunch_length": 1000,
-                "apex_haunch_depth": 300,
+                "apex_haunch_depth": 30,
             }],
             nodes=nodes,
             members=members,

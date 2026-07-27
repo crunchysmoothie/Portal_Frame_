@@ -6,10 +6,13 @@ import asyncio
 import json
 import math
 from typing import Any
+from urllib.parse import quote
 
 import flet as ft
+import flet_webview as fwv
 import httpx
 
+from connection_viewer import list_connection_views
 from foundation_design import FOUNDATION_STANDARDS
 from preview_geometry import build_preview_geometry
 from truss_design import preview_truss
@@ -42,6 +45,7 @@ from ui.input_model import (
     WIND_DESIGN_MODES,
     InputValidationError,
     build_analysis_payload,
+    rafter_haunch_cut_limit,
 )
 from ui.project_file import (
     ProjectInputFileError,
@@ -500,6 +504,11 @@ def main(page: ft.Page) -> None:
     apex_haunch_fields = ft.ResponsiveRow(
         controls=[apex_haunch_length, apex_haunch_depth],
         visible=bool(DEFAULT_VALUES["use_apex_haunch"]),
+    )
+    haunch_cut_guidance = ft.Text(
+        "",
+        size=12,
+        color=TEXT_MUTED,
     )
 
     def sync_portal_section_options() -> None:
@@ -1193,6 +1202,37 @@ def main(page: ft.Page) -> None:
             )
         ],
     )
+    current_connection_design: dict[str, Any] = {}
+    connection_view_status = ft.Text(
+        "Run a portal-frame analysis to load the display-only 3D model.",
+        size=12,
+        color=TEXT_MUTED,
+    )
+    connection_3d_viewer = ft.Container(
+        height=610,
+        expand=True,
+        visible=False,
+        bgcolor="#F7FAF9",
+    )
+    connection_3d_viewer_generation = 0
+
+    def build_connection_3d_viewer(url: str) -> ft.Container:
+        """Create a keyed wrapper that forces a fresh web platform view."""
+
+        nonlocal connection_3d_viewer_generation
+        connection_3d_viewer_generation += 1
+        return ft.Container(
+            key=f"connection-viewer-host-{connection_3d_viewer_generation}",
+            height=610,
+            expand=True,
+            content=fwv.WebView(
+                url=url,
+                height=610,
+                expand=True,
+                bgcolor="#F7FAF9",
+            ),
+        )
+
     foundation_status_text = ft.Text(
         "Run a portal-frame analysis before designing foundations.",
         size=12,
@@ -1821,9 +1861,25 @@ def main(page: ft.Page) -> None:
         )
         connection_result_summary.controls = rows
     connection_markup_button = ft.OutlinedButton(
-        "View connection markup",
-        icon=ft.Icons.HARDWARE,
+        "View 2D PDF",
+        icon=ft.Icons.PICTURE_AS_PDF,
         disabled=True,
+    )
+    connection_dxf_button = ft.OutlinedButton(
+        "Download DXF",
+        icon=ft.Icons.DOWNLOAD,
+        disabled=True,
+    )
+    connection_dwg_button = ft.OutlinedButton(
+        "Download DWG",
+        icon=ft.Icons.DOWNLOAD,
+        disabled=True,
+    )
+    connection_export_status_text = ft.Text(
+        "The 2D PDF and DXF will be created after analysis; DWG conversion "
+        "will be attempted when AutoCAD is available.",
+        size=12,
+        color=TEXT_MUTED,
     )
     connection_report_button = ft.OutlinedButton(
         "View calculation report",
@@ -2348,6 +2404,8 @@ def main(page: ft.Page) -> None:
                 foundation_design_button.disabled = True
                 download_markup_button.disabled = True
                 connection_markup_button.disabled = True
+                connection_dxf_button.disabled = True
+                connection_dwg_button.disabled = True
                 connection_report_button.disabled = True
                 open_connections_button.disabled = True
                 load_case_dropdown.disabled = True
@@ -2392,8 +2450,10 @@ def main(page: ft.Page) -> None:
 
     def show_analysis_failure(message: str) -> None:
         nonlocal current_analysis_id, current_visualisation
+        nonlocal current_connection_design
         current_analysis_id = None
         current_visualisation = {}
+        current_connection_design = {}
         analysis_progress.visible = False
         analysis_status_card.bgcolor = ERROR_BG
         analysis_status_icon.visible = True
@@ -2414,8 +2474,19 @@ def main(page: ft.Page) -> None:
         open_analysis_button.disabled = True
         download_markup_button.disabled = True
         connection_markup_button.disabled = True
+        connection_dxf_button.disabled = True
+        connection_dwg_button.disabled = True
         connection_report_button.disabled = True
         open_connections_button.disabled = True
+        connection_3d_viewer.content = None
+        connection_3d_viewer.visible = False
+        connection_view_status.value = (
+            "Run a portal-frame analysis to load the display-only 3D model."
+        )
+        connection_export_status_text.value = (
+            "The 2D PDF and DXF will be created after analysis; DWG conversion "
+            "will be attempted when AutoCAD is available."
+        )
         load_case_dropdown.disabled = True
         previous_load_case_button.disabled = True
         next_load_case_button.disabled = True
@@ -2429,9 +2500,21 @@ def main(page: ft.Page) -> None:
 
     def show_analysis_results(result: dict[str, Any]) -> None:
         nonlocal current_visualisation, current_analysis_id
+        nonlocal current_connection_design
         summary = result["design_summary"]
         if summary.get("structural_system") == "Truss":
             current_analysis_id = None
+            current_connection_design = {}
+            connection_3d_viewer.content = None
+            connection_3d_viewer.visible = False
+            connection_view_status.value = (
+                "Connection 3D models are currently available for portal "
+                "frames only."
+            )
+            connection_export_status_text.value = (
+                "Portal-frame connection exports are not available for truss "
+                "analysis."
+            )
             connection_destination.disabled = True
             foundation_destination.disabled = True
             foundation_design_button.disabled = True
@@ -2601,6 +2684,8 @@ def main(page: ft.Page) -> None:
             else:
                 download_markup_button.disabled = True
             connection_markup_button.disabled = True
+            connection_dxf_button.disabled = True
+            connection_dwg_button.disabled = True
             connection_report_button.disabled = True
             open_connections_button.disabled = True
             all_names = combination_names(current_visualisation, "SLS")
@@ -2631,6 +2716,7 @@ def main(page: ft.Page) -> None:
             page.update()
             return
         set_analysis_view_options(truss_deflection_only=False)
+        current_analysis_id = str(result["analysis_id"])
         sections = summary["portal_sections"]
         haunches = summary.get("haunches", {})
         strength = summary["governing_strength"]
@@ -2667,6 +2753,7 @@ def main(page: ft.Page) -> None:
             summary.get("load_case_visualisation", {})
         )
         connections = summary.get("connection_design", {})
+        current_connection_design = dict(connections)
         base_plates = connections.get("base_plates", {})
         base_supports = list(base_plates.get("supports", []))
         base_plate_text = "No base-plate result."
@@ -2706,6 +2793,17 @@ def main(page: ft.Page) -> None:
                 "Selected portal sections",
                 f"Rafter {sections['rafter']} | Column {sections['column']}",
                 ft.Icons.VIEW_WEEK_OUTLINED,
+            ),
+            analysis_summary_line(
+                "Selected rafter haunch-cut limit",
+                (
+                    f"{haunches.get('source_rafter_section', sections['rafter'])}: "
+                    f"h - b = "
+                    f"{float(haunches.get('source_section_depth_mm', 0)):.1f} - "
+                    f"{float(haunches.get('source_flange_width_mm', 0)):.1f} = "
+                    f"{float(haunches.get('maximum_cut_depth_mm', 0)):.1f} mm"
+                ),
+                ft.Icons.STRAIGHTEN,
             ),
             analysis_summary_line(
                 "Modelled haunches",
@@ -2784,7 +2882,9 @@ def main(page: ft.Page) -> None:
         report = artifacts.get("design-report-html")
         markup = artifacts.get("markup-pdf") or artifacts.get("markup-html")
         connection_report = artifacts.get("connection-report-html")
-        connection_markup = artifacts.get("connection-markup-html")
+        connection_markup = artifacts.get("connection-markup-pdf")
+        connection_dxf = artifacts.get("connection-markup-dxf")
+        connection_dwg = artifacts.get("connection-markup-dwg")
         if report:
             view_report_button.url = ft.Url(
                 url=f"{API_URL}{report['download_url']}",
@@ -2800,6 +2900,28 @@ def main(page: ft.Page) -> None:
                 target=ft.UrlTarget.SELF,
             )
             connection_markup_button.disabled = False
+        if connection_dxf:
+            connection_dxf_button.url = (
+                f"{API_URL}{connection_dxf['download_url']}"
+            )
+            connection_dxf_button.disabled = False
+        if connection_dwg:
+            connection_dwg_button.url = (
+                f"{API_URL}{connection_dwg['download_url']}"
+            )
+            connection_dwg_button.disabled = False
+        export_status = summary.get("connection_exports", {})
+        formats = ", ".join(export_status.get("formats", []))
+        dwg_status = export_status.get("dwg", {})
+        connection_export_status_text.value = (
+            f"Calculated 2D exports ready: {formats}. "
+            "The interactive 3D model remains in-app only."
+            if connection_dwg
+            else (
+                f"Calculated 2D exports ready: {formats}. "
+                f"{dwg_status.get('reason', 'DWG conversion is unavailable.')}"
+            )
+        )
         if connection_report:
             connection_report_button.url = ft.Url(
                 url=f"{API_URL}{connection_report['download_url']}",
@@ -2807,6 +2929,40 @@ def main(page: ft.Page) -> None:
             )
             connection_report_button.disabled = False
         show_connection_results(connections)
+        connection_views = list_connection_views(current_connection_design)
+        if connection_views:
+            preferred_view = next(
+                (
+                    item
+                    for item in connection_views
+                    if item["available"]
+                ),
+                connection_views[0],
+            )
+            if preferred_view["available"]:
+                connection_3d_viewer.content = build_connection_3d_viewer(
+                    f"{API_URL}/api/analysis/{current_analysis_id}/"
+                    "connection-viewer?view="
+                    f"{quote(preferred_view['key'], safe='')}"
+                )
+                connection_3d_viewer.visible = True
+                connection_view_status.value = (
+                    "Select a connection in the viewer, drag to orbit and "
+                    "scroll to zoom. The model is in-app only and has no "
+                    "3D export."
+                )
+            else:
+                connection_3d_viewer.content = None
+                connection_3d_viewer.visible = False
+                connection_view_status.value = (
+                    f"3D view unavailable: {preferred_view['reason']}"
+                )
+        else:
+            connection_3d_viewer.content = None
+            connection_3d_viewer.visible = False
+            connection_view_status.value = (
+                "No connection geometry is available for this analysis."
+            )
         open_connections_button.disabled = False
 
         all_names = combination_names(current_visualisation)
@@ -2814,7 +2970,6 @@ def main(page: ft.Page) -> None:
         open_analysis_button.disabled = not all_names
         analysis_destination.disabled = not all_names
         connection_destination.disabled = False
-        current_analysis_id = str(result["analysis_id"])
         foundation_destination.disabled = False
         foundation_design_button.disabled = False
         foundation_status_card.bgcolor = WARNING_BG
@@ -2849,10 +3004,12 @@ def main(page: ft.Page) -> None:
 
     async def run_analysis(_=None) -> None:
         nonlocal submitted_payload_fingerprint, current_analysis_id
+        nonlocal current_connection_design
         if not validate_form() or last_payload is None:
             return
 
         current_analysis_id = None
+        current_connection_design = {}
         submitted_payload_fingerprint = json.dumps(last_payload, sort_keys=True)
         run_analysis_button.disabled = True
         run_analysis_button.content = "Analysis running..."
@@ -2864,8 +3021,17 @@ def main(page: ft.Page) -> None:
         foundation_design_button.disabled = True
         download_markup_button.disabled = True
         connection_markup_button.disabled = True
+        connection_dxf_button.disabled = True
+        connection_dwg_button.disabled = True
         connection_report_button.disabled = True
         open_connections_button.disabled = True
+        connection_3d_viewer.content = None
+        connection_3d_viewer.visible = False
+        connection_view_status.value = "Connection model will load after analysis."
+        connection_export_status_text.value = (
+            "The 2D PDF and DXF are being prepared; AutoCAD DWG conversion "
+            "will be attempted if available."
+        )
         load_case_dropdown.disabled = True
         analysis_view_dropdown.disabled = True
         analysis_component_dropdown.disabled = True
@@ -3141,6 +3307,33 @@ def main(page: ft.Page) -> None:
         apex_haunch_fields.visible = (
             not is_truss and bool(use_apex_haunch.value)
         )
+        cut_limit = rafter_haunch_cut_limit(
+            str(rafter_section_type.value),
+            str(rafter_section.value),
+        )
+        cut_properties = cut_limit.get("properties", {})
+        cut_formula = (
+            f"h - b = {float(cut_properties.get('h', 0)):.1f} - "
+            f"{float(cut_properties.get('b', 0)):.1f} = "
+            f"{float(cut_limit.get('maximum_cut_depth_mm', 0)):.1f} mm"
+        )
+        if cut_limit.get("mode") == "automatic":
+            haunch_cut_guidance.value = (
+                "Automatic sizing excludes rafters that cannot supply the "
+                "entered cut. Current family ceiling: "
+                f"{cut_limit.get('section', '-')} ({cut_formula}). The "
+                "selected-section limit is reported after analysis."
+            )
+        elif cut_limit.get("mode") == "manual":
+            haunch_cut_guidance.value = (
+                f"Selected donor {cut_limit.get('section', '-')}: maximum "
+                f"fabricable cut {cut_formula}."
+            )
+        else:
+            haunch_cut_guidance.value = (
+                "Select a valid rafter section to calculate its haunch cut limit."
+            )
+        haunch_cut_guidance.visible = not is_truss
         gable_column_count.disabled = is_canopy
         gable_brace_intervals.disabled = is_canopy
         gable_section_type.disabled = is_canopy
@@ -3169,6 +3362,8 @@ def main(page: ft.Page) -> None:
     structural_system.on_select = update_conditionals
     wind_design_mode.on_select = update_conditionals
     base_support.on_select = update_conditionals
+    rafter_section_type.on_select = update_conditionals
+    rafter_section.on_select = update_conditionals
     use_eaves_haunch.on_change = update_conditionals
     use_apex_haunch.on_change = update_conditionals
     ignore_dead_live_vertical_limit.on_change = update_conditionals
@@ -3290,6 +3485,7 @@ def main(page: ft.Page) -> None:
                         ),
                         eaves_haunch_fields,
                         apex_haunch_fields,
+                        haunch_cut_guidance,
                     ],
                 ),
             ),
@@ -3683,14 +3879,35 @@ def main(page: ft.Page) -> None:
                     connection_result_summary,
                 ),
                 card(
-                    "Connection outputs",
-                    "Open the full equation-by-equation calculation report or the "
-                    "dimensioned plate, bolt and stiffener markup.",
-                    ft.Row(
-                        wrap=True,
+                    "Interactive 3D connection model",
+                    "Inspect the calculated members, plates, bolts and flat "
+                    "stiffeners in the app. The model is display-only; all "
+                    "exported deliverables remain two-dimensional.",
+                    ft.Column(
+                        spacing=10,
                         controls=[
-                            connection_report_button,
-                            connection_markup_button,
+                            connection_view_status,
+                            connection_3d_viewer,
+                        ],
+                    ),
+                ),
+                card(
+                    "Connection outputs",
+                    "Open the calculation report or export the same checked, "
+                    "dimensioned 2D connection sheets as PDF, DXF or DWG.",
+                    ft.Column(
+                        spacing=10,
+                        controls=[
+                            connection_export_status_text,
+                            ft.Row(
+                                wrap=True,
+                                controls=[
+                                    connection_report_button,
+                                    connection_markup_button,
+                                    connection_dxf_button,
+                                    connection_dwg_button,
+                                ],
+                            ),
                         ],
                     ),
                 ),

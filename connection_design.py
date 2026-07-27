@@ -15,6 +15,7 @@ from typing import Any, Mapping
 
 from connection_checks import calculate_connection_checks
 from foundation_design import bearing_pressures
+from haunch_geometry import haunch_cut_depth_check, haunch_cut_error
 from member_database import load_member_database
 
 
@@ -79,6 +80,25 @@ def _minimum_bolt_distances(diameter_mm: float) -> dict[str, float]:
         "minimum_pitch_mm": 2.7 * diameter_mm,
         "minimum_gauge_mm": 2.7 * diameter_mm,
     }
+
+
+def _bolt_centre_coordinates(
+    row_count: int,
+    pitch_mm: float,
+    gauge_mm: float,
+) -> list[dict[str, float]]:
+    """Return a row-major two-column layout about the end-plate centre."""
+
+    first_y = -0.5 * (row_count - 1) * pitch_mm
+    half_gauge = 0.5 * gauge_mm
+    return [
+        {
+            "x": x,
+            "y": first_y + row * pitch_mm,
+        }
+        for row in range(row_count)
+        for x in (-half_gauge, half_gauge)
+    ]
 
 
 def _four_bolt_layout(
@@ -258,7 +278,7 @@ def _section_properties(
         if designation in sections:
             return family, sections[designation]
     raise ValueError(
-        f"Column section {designation!r} was not found for base-plate design."
+        f"Section {designation!r} was not found in the portal member database."
     )
 
 
@@ -532,8 +552,22 @@ def _design_haunch_end_plate(
     location: Mapping[str, Any],
     envelope: Mapping[str, Any],
     rafter: Mapping[str, Any],
-    column: Mapping[str, Any],
+    supporting_member: Mapping[str, Any],
 ) -> dict[str, Any]:
+    connection_type = str(
+        location.get("connection_type", "eaves_end_plate")
+    )
+    supporting_member_section = str(
+        location.get("supporting_member_section", "")
+    )
+    supporting_member_type = str(
+        location.get("supporting_member_type", "column")
+    )
+    topology = {
+        "connection_type": connection_type,
+        "supporting_member_section": supporting_member_section,
+        "supporting_member_type": supporting_member_type,
+    }
     steel_yield_mpa = 355.0
     effective_depth = (
         float(rafter["h"])
@@ -554,7 +588,11 @@ def _design_haunch_end_plate(
         minimums = _minimum_bolt_distances(float(diameter))
         nominal_edge = _round_up(max(1.5 * diameter, 40.0))
         gauge = _round_up(
-            max(float(rafter["b"]), float(column["b"]), 2.7 * diameter),
+            max(
+                float(rafter["b"]),
+                float(supporting_member["b"]),
+                2.7 * diameter,
+            ),
             5.0,
         )
         plate_width = _round_up(gauge + 2.0 * nominal_edge, 25.0)
@@ -606,6 +644,7 @@ def _design_haunch_end_plate(
         if provided_plate_thickness is None:
             continue
         selected = {
+            **topology,
             "status": "PRELIMINARY_PASS",
             "plate": {
                 "height_mm": plate_height,
@@ -629,6 +668,13 @@ def _design_haunch_end_plate(
                 **minimums,
                 "maximum_pitch_mm": maximum_pitch_mm,
                 "distance_status": "PASS",
+                "coordinates_from_plate_centre_mm": (
+                    _bolt_centre_coordinates(
+                        row_count,
+                        pitch,
+                        gauge,
+                    )
+                ),
                 "bolt_tension_kN": bolt_tension,
                 "bolt_shear_kN": bolt_shear,
                 "linear_interaction": interaction,
@@ -641,31 +687,32 @@ def _design_haunch_end_plate(
         break
     if selected is None:
         return {
+            **topology,
             "status": "HOLD_POINT",
             "reason": (
-                "No four-row M20-M36 end-plate bolt layout passed the "
+                "No two-column M20-M36 end-plate bolt layout passed the "
                 "preliminary bolt interaction and plate-bending checks."
             ),
         }
 
     plate = selected["plate"]
-    column_flange_resistance_kN = (
+    supporting_flange_resistance_kN = (
         0.25
         * PLATE_RESISTANCE_FACTOR
-        * float(column["b"])
-        * float(column["tf"]) ** 2
+        * float(supporting_member["b"])
+        * float(supporting_member["tf"]) ** 2
         * steel_yield_mpa
         / max(0.25 * max(float(selected["bolts"]["gauge_mm"]) / 2.0, 1.0), 1.0)
         / 1000.0
     )
     bearing_length = (
         float(plate["provided_thickness_mm"])
-        + 2.5 * float(column["tf"])
-        + 2.0 * float(column.get("r1", 0.0))
+        + 2.5 * float(supporting_member["tf"])
+        + 2.0 * float(supporting_member.get("r1", 0.0))
     )
-    column_web_resistance_kN = (
+    supporting_web_resistance_kN = (
         PLATE_RESISTANCE_FACTOR
-        * float(column["tw"])
+        * float(supporting_member["tw"])
         * bearing_length
         * steel_yield_mpa
         / 1000.0
@@ -673,8 +720,8 @@ def _design_haunch_end_plate(
     stiffeners_required = (
         float(plate["provided_thickness_mm"]) > 25.0
         or float(selected["bolts"]["linear_interaction"]) > 0.85
-        or flange_force > column_flange_resistance_kN
-        or flange_force > column_web_resistance_kN
+        or flange_force > supporting_flange_resistance_kN
+        or flange_force > supporting_web_resistance_kN
     )
     stiffener_height = _round_up(max(100.0, effective_depth * 0.25), 10.0)
     required_stiffener_thickness = (
@@ -706,7 +753,8 @@ def _design_haunch_end_plate(
             "provided_thickness_mm": provided_stiffener_thickness,
             "qualification": (
                 "Transverse stiffeners are automatically added when the "
-                "unreinforced supporting flange or web screen is exceeded. "
+                "unreinforced supporting-member flange or web screen is "
+                "exceeded. "
                 "Yielding, buckling and weld checks follow in the detailed "
                 "post-analysis module."
             ),
@@ -747,36 +795,86 @@ def _haunch_connection_start(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     if str(input_frame.get("use_eaves_haunch", "No")).lower() == "yes":
         locations.append({
             "location": "Eaves haunch",
+            "connection_type": "eaves_end_plate",
             "length_mm": float(input_frame.get("eaves_haunch_length", 0.0)),
             "added_depth_mm": float(input_frame.get("eaves_haunch_depth", 0.0)),
         })
     if str(input_frame.get("use_apex_haunch", "No")).lower() == "yes":
         locations.append({
             "location": "Apex haunch",
+            "connection_type": "apex_splice",
             "length_mm": float(input_frame.get("apex_haunch_length", 0.0)),
             "added_depth_mm": float(input_frame.get("apex_haunch_depth", 0.0)),
         })
     project = results.get("project", {})
-    _, rafter_properties = _section_properties(
-        str(project.get("rafter_section", "")).strip()
+    rafter_section = str(project.get("rafter_section", "")).strip()
+    column_section = str(project.get("column_section", "")).strip()
+    rafter_family, rafter_properties = _section_properties(
+        rafter_section
     )
-    _, column_properties = _section_properties(
-        str(project.get("column_section", "")).strip()
+    column_family, column_properties = _section_properties(
+        column_section
     )
-    designs = [
-        {
+    source_rafter_geometry = {
+        key: float(rafter_properties[key])
+        for key in ("h", "b", "tw", "tf")
+    }
+    donor_fabrication_note = (
+        "The haunch donor is cut from the selected rafter section with its "
+        "top flange removed and the remaining web welded to the main rafter."
+    )
+    designs = []
+    for location in locations:
+        is_apex = location["connection_type"] == "apex_splice"
+        supporting_properties = (
+            rafter_properties if is_apex else column_properties
+        )
+        supporting_section = rafter_section if is_apex else column_section
+        supporting_type = "opposing_rafter" if is_apex else "column"
+        supporting_family = rafter_family if is_apex else column_family
+        topology = {
             **location,
-            "rafter_section": str(project.get("rafter_section", "")).strip(),
-            "column_section": str(project.get("column_section", "")).strip(),
+            "rafter_section": rafter_section,
+            "column_section": column_section,
+            "supporting_member_section": supporting_section,
+            "supporting_member_type": supporting_type,
+            "supporting_member_section_family": supporting_family,
+            "source_rafter_geometry": dict(source_rafter_geometry),
+            "source_rafter_section_family": rafter_family,
+            "donor_fabrication_note": donor_fabrication_note,
+        }
+        cut_check = haunch_cut_depth_check(
+            rafter_properties,
+            float(location.get("added_depth_mm", 0.0)),
+        )
+        topology["haunch_cut_check"] = cut_check.as_dict()
+        topology["maximum_cut_depth_mm"] = (
+            cut_check.maximum_cut_depth_mm
+        )
+        if not cut_check.is_valid:
+            designs.append({
+                **topology,
+                "connection": {
+                    "connection_type": location["connection_type"],
+                    "supporting_member_section": supporting_section,
+                    "supporting_member_type": supporting_type,
+                    "status": "HOLD_POINT",
+                    "reason": haunch_cut_error(
+                        rafter_section,
+                        cut_check,
+                    ),
+                },
+            })
+            continue
+        designs.append({
+            **topology,
             "connection": _design_haunch_end_plate(
-                location,
+                topology,
                 envelope,
                 rafter_properties,
-                column_properties,
+                supporting_properties,
             ),
-        }
-        for location in locations
-    ]
+        })
     return {
         "status": (
             "PRELIMINARY_PASS"
@@ -820,7 +918,7 @@ def design_portal_connections(
         haunch_connections=haunch_connections,
     )
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "status": detailed_checks["status"],
         "base_plates": base_plates,
         "haunch_connections": haunch_connections,

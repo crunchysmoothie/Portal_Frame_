@@ -64,7 +64,9 @@ is assumed across the whole building. Results remain preliminary until checked
 against independent calculations and the applicable SANS editions are confirmed.
 
 Portal jobs also create connection-design JSON, a detailed HTML calculation
-report and HTML/SVG markup. The post-analysis module checks Mahachi-based
+report, vector A3 PDF sheets, R2018 DXF layouts and a DWG converted by the
+installed AutoCAD Core Console. The in-app Plotly connection model is
+display-only and is not an artifact. The post-analysis module checks Mahachi-based
 base-plate bearing/bending, bolt geometry and steel interaction, T-stub prying,
 end plates, elastic weld groups, supporting flange/web effects, and stiffener
 yielding, buckling and welds. Failed checks remain reported and supporting

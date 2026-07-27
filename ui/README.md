@@ -59,9 +59,14 @@ been designed. It shows governing utilisation for base plates and haunch
 connections and links to the full equation-by-equation report and dimensioned
 markup. The markup provides coordinated plan, elevation, section and component
 details with full bolt dimension chains, plate sizes, weld callouts and
-stiffener dimensions. Bolt geometry, prying, plates, weld groups,
+flat-stiffener dimensions. The same canonical 2D sheets are exported as a
+vector PDF, R2018 DXF and DWG. The interactive Plotly model is for in-app
+inspection only and exposes no 3D-file export. Bolt geometry, prying, plates, weld groups,
 supporting-member effects and stiffeners are calculated. Concrete anchor
 breakout, pull-out and embedment remain visibly `INPUT_REQUIRED`.
+Connection drawings omit utilisation/status text; those values remain in the
+calculation report. Haunch donors omit their top flange, retain the bottom
+flange and enforce the displayed database-dimension limit `h - b`.
 
 The Foundation page requests only soil unit weight and permissible bearing
 pressure. It automatically searches a common pad length, width and height and
@@ -122,8 +127,9 @@ use the browser Back action to return to the designer.
 Use its **Print / save as PDF** action when a PDF is required. **Download markup
 drawings** remains available for the completed, current input set. Portal
 results also provide **Open connection design**. The Connections page provides
-**View calculation report** and **View connection markup** for the calculated
-plates, bolts, distances, welds and stiffeners.
+**View calculation report**, **View 2D PDF**, **Download DXF** and
+**Download DWG** for the calculated plates, bolts, distances, welds and
+stiffeners.
 
 If an input changes after analysis, run the analysis again before viewing or
 downloading outputs. The browser UI does not open the legacy PyNite deformation window;
