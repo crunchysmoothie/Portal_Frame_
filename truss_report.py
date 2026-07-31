@@ -45,6 +45,100 @@ def _member_calculation_rows(schedule: list[Mapping[str, Any]]) -> str:
     )
 
 
+def _wind_audit_html(best: Mapping[str, Any]) -> str:
+    audit = best.get("load_audit", {})
+    wind = audit.get("wind_calculation", {})
+    if not audit:
+        return ""
+
+    pressure_tables = []
+    for table in audit.get("wind_zone_tables", []):
+        rows = "".join(
+            "<tr>"
+            f"<td>{escape(str(item.get('zone', '')))}</td>"
+            f"<td>{_number(item.get('cpe', 0), 2)}</td>"
+            f"<td>{_number(item.get('zone_length_m', 0), 2)}</td>"
+            f"<td>{_number(item.get('cpi=0.2_pressure_kpa', 0), 3)}</td>"
+            f"<td>{_number(item.get('cpi=0.2_line_load_kn_m', 0), 3)}</td>"
+            f"<td>{_number(item.get('cpi=-0.3_pressure_kpa', 0), 3)}</td>"
+            f"<td>{_number(item.get('cpi=-0.3_line_load_kn_m', 0), 3)}</td>"
+            "</tr>"
+            for item in table.get("rows", [])
+        )
+        pressure_tables.append(
+            f"<h3>{escape(str(table.get('label', 'Wind zones')))}</h3>"
+            "<table class=\"wind-table\"><thead><tr>"
+            "<th>Zone</th><th>cpe</th><th>Zone length (m)</th>"
+            "<th>Net p, cpi=+0.2 (kPa)</th><th>Line load (kN/m)</th>"
+            "<th>Net p, cpi=-0.3 (kPa)</th><th>Line load (kN/m)</th>"
+            f"</tr></thead><tbody>{rows}</tbody></table>"
+        )
+
+    resultant_rows = "".join(
+        "<tr>"
+        f"<td>{escape(str(item.get('case', '')))}</td>"
+        f"<td>{item.get('loaded_node_count', '')}</td>"
+        f"<td>{_number(item.get('sum_fx_kn', 0), 3)}</td>"
+        f"<td>{_number(item.get('sum_fy_kn', 0), 3)}</td>"
+        "</tr>"
+        for item in audit.get("wind_case_resultants", [])
+    )
+    applied_rows = "".join(
+        "<tr>"
+        f"<td>{escape(str(item.get('case', '')))}</td>"
+        f"<td>{escape(str(item.get('truss_member', '')))}</td>"
+        f"<td>{escape(str(item.get('i_node', '')))} - {escape(str(item.get('j_node', '')))}</td>"
+        f"<td>{_number(item.get('global_x_start_m', 0), 3)} to {_number(item.get('global_x_end_m', 0), 3)}</td>"
+        f"<td>{_number(item.get('loaded_length_m', 0), 3)}</td>"
+        f"<td>{escape(str(item.get('direction', '')))}</td>"
+        f"<td>{_number(item.get('line_load_start_kn_m', 0), 3)} to {_number(item.get('line_load_end_kn_m', 0), 3)}</td>"
+        f"<td>{_number(item.get('equivalent_i_fx_kn', 0), 3)}, {_number(item.get('equivalent_i_fy_kn', 0), 3)}</td>"
+        f"<td>{_number(item.get('equivalent_j_fx_kn', 0), 3)}, {_number(item.get('equivalent_j_fy_kn', 0), 3)}</td>"
+        "</tr>"
+        for item in audit.get("applied_wind_segments", [])
+    )
+
+    def combination_rows(key: str) -> str:
+        return "".join(
+            "<tr>"
+            f"<td>{escape(str(item.get('name', '')))}</td>"
+            f"<td>{escape(', '.join(f'{case}={float(factor):g}' for case, factor in item.get('factors', {}).items()))}</td>"
+            "</tr>"
+            for item in audit.get(key, [])
+            if any(
+                str(case).upper().startswith("W")
+                for case in item.get("factors", {})
+            )
+        )
+
+    return f"""
+<section id="wind-load-audit">
+<h2 class="page-break">Wind loading calculation and truss application audit</h2>
+<p>This section records the wind data and loads generated for the selected rank-1 geometry. Pressures are recovered from the generated line loads using the stated tributary truss spacing. The segment table is the actual source-load overlap converted to truss panel-point actions.</p>
+<table><tbody>
+<tr><th>Fundamental basic wind speed</th><td>{_number(wind.get('fundamental_basic_wind_speed_m_s', 0), 2)} m/s</td></tr>
+<tr><th>Design basic wind speed</th><td>{_number(wind.get('design_basic_wind_speed_m_s', 0), 2)} m/s</td></tr>
+<tr><th>Return period</th><td>{_number(wind.get('return_period_years', 0), 0)} years</td></tr>
+<tr><th>Terrain</th><td>{escape(str(wind.get('terrain_category', '')))}; roughness factor {_number(wind.get('terrain_roughness_factor', 0), 4)}</td></tr>
+<tr><th>Topography / altitude</th><td>{_number(wind.get('topographic_factor', 0), 3)} / {_number(wind.get('altitude_m', 0), 1)} m</td></tr>
+<tr><th>Peak velocity pressure</th><td>{_number(wind.get('peak_velocity_pressure_kpa', 0), 3)} kPa</td></tr>
+<tr><th>Roof pitch / tributary truss spacing</th><td>{_number(wind.get('roof_pitch_deg', 0), 3)} degrees / {_number(wind.get('tributary_width_m', 0), 3)} m</td></tr>
+<tr><th>Internal pressure basis</th><td><code>{escape(json.dumps(wind.get('internal_pressure', {}), sort_keys=True))}</code></td></tr>
+</tbody></table>
+{"".join(pressure_tables)}
+<h3>Characteristic wind-case resultants applied to one transverse truss</h3>
+<table><thead><tr><th>Case</th><th>Loaded nodes</th><th>Sum Fx (kN)</th><th>Sum Fy (kN)</th></tr></thead><tbody>{resultant_rows}</tbody></table>
+<h3>Applied wind line loads and equivalent panel-point actions</h3>
+<p><small>{escape(str(audit.get('sign_convention', '')))}</small></p>
+<table class="wind-segments"><thead><tr><th>Case</th><th>Top chord</th><th>Nodes</th><th>Global x-range (m)</th><th>Loaded slope length (m)</th><th>Direction</th><th>w start to end (kN/m)</th><th>At i: Fx, Fy (kN)</th><th>At j: Fx, Fy (kN)</th></tr></thead><tbody>{applied_rows}</tbody></table>
+<h3>ULS wind combinations</h3>
+<table><thead><tr><th>Combination</th><th>Factors</th></tr></thead><tbody>{combination_rows('uls_combinations')}</tbody></table>
+<h3>SLS wind combinations</h3>
+<table><thead><tr><th>Combination</th><th>Factors</th></tr></thead><tbody>{combination_rows('sls_combinations')}</tbody></table>
+</section>
+"""
+
+
 def write_truss_markup_html(
     result: Mapping[str, Any], path: str | Path
 ) -> Path:
@@ -374,7 +468,9 @@ h1,h2{{color:#183b56}} h1{{margin-bottom:4px}} .warning{{background:#fce4d6;bord
 table{{width:100%;border-collapse:collapse;margin:12px 0 24px}} th{{background:#183b56;color:white;text-align:left;padding:7px}}
 td{{border-bottom:1px solid #c9d3d9;padding:6px;vertical-align:top}} tr:nth-child(even){{background:#f7fafb}}
 .calc{{font-size:10px}} .formula{{background:#eef5f4;border-left:4px solid #258475;padding:12px;margin:12px 0 20px}}
-small{{color:#667681}} @media print{{body{{margin:10mm}} .no-print{{display:none}}}}
+small{{color:#667681}} .wind-table,.wind-segments{{font-size:9px}} .page-break{{break-before:page;page-break-before:always}}
+@page{{size:A4 landscape;margin:10mm}}
+@media print{{body{{margin:0}} .no-print{{display:none}} tr{{break-inside:avoid;page-break-inside:avoid}}}}
 </style></head><body>
 <h1>Truss Design Calculation - Draft</h1><div><strong>{escape(str(result.get('validation_status', '')))}</strong></div>
 <div class="meta">
@@ -396,6 +492,7 @@ small{{color:#667681}} @media print{{body{{margin:10mm}} .no-print{{display:none
   <div>Practical cost comparison</div><div>{_number(best.get('practical_cost_equivalent_kg', 0), 1)} kg-equivalent including an {_number(float(basis.get('platework_cost_allowance_fraction', 0)) * 100, 0)}% platework allowance on primary truss, column and girder steel; purlins are included without that allowance. Individually optimised-web comparison {_number(best.get('lightest_member_arrangement_mass_kg', 0), 1)} kg total</div>
 </div>
 <div class="warning"><strong>Engineering hold point</strong><ul>{warnings}</ul></div>
+{_wind_audit_html(best)}
 <h2>Ranked passing solutions</h2>
 <table><thead><tr><th>Practical rank</th><th>Depth (m)</th><th>Panels</th><th>Panel (mm)</th><th>Total modelled mass (kg)</th><th>Practical kg-eq.</th><th>Individual-web total (kg)</th><th>Unique sections</th><th>ULS util.</th><th>SLS dy / limit (mm)</th></tr></thead><tbody>{ranked_rows}</tbody></table>
 <h2>Chord fabrication groups</h2>

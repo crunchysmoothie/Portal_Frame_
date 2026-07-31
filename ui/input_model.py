@@ -10,6 +10,9 @@ from typing import Any, Mapping
 import member_database as portal_members
 from foundation_design import DEFAULT_FOUNDATION_VALUES
 from haunch_geometry import (
+    HAUNCH_DEPTH_CUT,
+    HAUNCH_DEPTH_MODES,
+    HAUNCH_DEPTH_SPECIFIED,
     haunch_cut_depth_check,
     haunch_cut_error,
     maximum_haunch_cut_depth_mm,
@@ -57,6 +60,7 @@ TRUSS_MEMBER_SECTION_ORDERS = (
     "Back-to-back angles first",
 )
 GABLE_SECTION_ORDERS = TRUSS_STEEL_SECTION_ORDERS
+HAUNCH_DEPTH_OPTIONS = HAUNCH_DEPTH_MODES
 
 
 def load_lipped_channel_sections() -> tuple[str, ...]:
@@ -169,6 +173,7 @@ DEFAULT_VALUES: dict[str, Any] = {
     "wind_design_mode": "Prelim",
     "roof_accessibility": "Inaccessible",
     "load_combination_standard": "SANS 10160-1:2019",
+    "use_permanent_deflection_baseline": True,
     "ignore_1_1_dl_1_0_ll_vertical_deflection_limit": False,
     "steel_grade": "Steel_S355",
     "rafter_section_type": "I-Sections",
@@ -177,9 +182,11 @@ DEFAULT_VALUES: dict[str, Any] = {
     "column_section": AUTOMATIC_SECTION,
     "use_eaves_haunch": False,
     "eaves_haunch_length_m": "1.5",
+    "eaves_haunch_depth_mode": HAUNCH_DEPTH_SPECIFIED,
     "eaves_haunch_depth_mm": "100",
     "use_apex_haunch": False,
     "apex_haunch_length_m": "1.0",
+    "apex_haunch_depth_mode": HAUNCH_DEPTH_SPECIFIED,
     "apex_haunch_depth_mm": "100",
     "base_support_condition": "Spring",
     "base_rotational_stiffness_knm_per_rad": "10000",
@@ -574,20 +581,40 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
     eaves_haunch_depth_mm = 0.0
     apex_haunch_length_m = 0.0
     apex_haunch_depth_mm = 0.0
+    eaves_haunch_depth_mode = str(
+        raw.get("eaves_haunch_depth_mode", HAUNCH_DEPTH_SPECIFIED)
+    )
+    apex_haunch_depth_mode = str(
+        raw.get("apex_haunch_depth_mode", HAUNCH_DEPTH_SPECIFIED)
+    )
+    if eaves_haunch_depth_mode not in HAUNCH_DEPTH_MODES:
+        errors["eaves_haunch_depth_mode"] = (
+            "Choose Specified Depth or Cut-Depth."
+        )
+    if apex_haunch_depth_mode not in HAUNCH_DEPTH_MODES:
+        errors["apex_haunch_depth_mode"] = (
+            "Choose Specified Depth or Cut-Depth."
+        )
     if use_eaves_haunch:
         eaves_haunch_length_m = number(
             "eaves_haunch_length_m", strictly_positive=True
         )
-        eaves_haunch_depth_mm = number(
-            "eaves_haunch_depth_mm", strictly_positive=True, maximum=2000
-        )
+        if eaves_haunch_depth_mode == HAUNCH_DEPTH_SPECIFIED:
+            eaves_haunch_depth_mm = number(
+                "eaves_haunch_depth_mm",
+                strictly_positive=True,
+                maximum=2000,
+            )
     if use_apex_haunch:
         apex_haunch_length_m = number(
             "apex_haunch_length_m", strictly_positive=True
         )
-        apex_haunch_depth_mm = number(
-            "apex_haunch_depth_mm", strictly_positive=True, maximum=2000
-        )
+        if apex_haunch_depth_mode == HAUNCH_DEPTH_SPECIFIED:
+            apex_haunch_depth_mm = number(
+                "apex_haunch_depth_mm",
+                strictly_positive=True,
+                maximum=2000,
+            )
 
     cut_limit = rafter_haunch_cut_limit(
         rafter_section_type,
@@ -613,12 +640,12 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
                 check,
             )
 
-    if use_eaves_haunch:
+    if use_eaves_haunch and eaves_haunch_depth_mode == HAUNCH_DEPTH_SPECIFIED:
         validate_cut_depth(
             "eaves_haunch_depth_mm",
             eaves_haunch_depth_mm,
         )
-    if use_apex_haunch:
+    if use_apex_haunch and apex_haunch_depth_mode == HAUNCH_DEPTH_SPECIFIED:
         validate_cut_depth(
             "apex_haunch_depth_mm",
             apex_haunch_depth_mm,
@@ -811,6 +838,19 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
             "wind_design_mode": wind_mode,
             "roof_accessibility": roof_accessibility,
             "load_combination_standard": combination_standard,
+            "use_permanent_deflection_baseline": (
+                "Yes"
+                if (
+                    structural_system == "Portal frame"
+                    and bool(
+                        raw.get(
+                            "use_permanent_deflection_baseline",
+                            True,
+                        )
+                    )
+                )
+                else "No"
+            ),
             "ignore_1_1_dl_1_0_ll_vertical_deflection_limit": (
                 "Yes"
                 if (
@@ -856,9 +896,11 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
             "column_section": column_section,
             "use_eaves_haunch": "Yes" if use_eaves_haunch else "No",
             "eaves_haunch_length": eaves_haunch_length_m * 1000,
+            "eaves_haunch_depth_mode": eaves_haunch_depth_mode,
             "eaves_haunch_depth": eaves_haunch_depth_mm,
             "use_apex_haunch": "Yes" if use_apex_haunch else "No",
             "apex_haunch_length": apex_haunch_length_m * 1000,
+            "apex_haunch_depth_mode": apex_haunch_depth_mode,
             "apex_haunch_depth": apex_haunch_depth_mm,
             "base_support_condition": base_support,
             "base_rotational_stiffness_knm_per_rad": base_stiffness,

@@ -58,6 +58,31 @@ class CanonicalConnectionSheetTests(unittest.TestCase):
         eaves = next(sheet for sheet in sheets if sheet.sheet_id == "HC-EAVES")
         self.assertIn("COLUMN 305x165x40", _sheet_text(eaves))
 
+    def test_cut_depth_uses_resolved_analysis_value_not_input_placeholder(self):
+        snapshot = _snapshot()
+        frame = snapshot["input_data"]["frame_data"][0]
+        frame.update(
+            {
+                "eaves_haunch_depth_mode": "Cut-Depth",
+                "eaves_haunch_depth": 0.0,
+            }
+        )
+        snapshot["results"]["project"].update(
+            {
+                "eaves_haunch_depth_mode": "Cut-Depth",
+                "eaves_haunch_depth_mm": 105.4,
+            }
+        )
+        result = design_portal_connections(snapshot)
+        location = result["haunch_connections"]["locations"][0]
+        self.assertEqual(location["depth_mode"], "Cut-Depth")
+        self.assertAlmostEqual(location["added_depth_mm"], 105.4)
+        sheets = cad.build_connection_sheets(result)
+        self.assertIn(
+            "HC-EAVES",
+            [sheet.sheet_id for sheet in sheets],
+        )
+
     def test_no_utilisation_or_design_status_and_collision_validation_passes(self):
         sheets = cad.build_connection_sheets(self.result)
         for sheet in sheets:

@@ -2,6 +2,7 @@ import math
 import time
 import multiprocessing
 import warnings
+from dataclasses import replace
 from concurrent.futures import ProcessPoolExecutor
 from scipy.sparse.linalg import MatrixRankWarning
 from Pynite import FEModel3D
@@ -21,13 +22,16 @@ from haunch_design import (
     haunch_extra_mass_kg,
 )
 from haunch_geometry import (
+    governing_specified_haunch_cut_depth_mm,
     governing_requested_haunch_cut_depth_mm,
     haunch_cut_depth_check,
     haunch_cut_error,
+    resolve_haunch_cut_depths,
 )
 from serviceability_deflection import (
     add_permanent_baseline_combinations,
     serviceability_deflection_rows,
+    uses_permanent_deflection_baseline,
 )
 
 # Weight-ordered batches retain the lightest-pair guarantee while limiting the
@@ -308,6 +312,19 @@ def build_model(r_mem, c_mem, data: PortalFrame):
 
     return frame
 
+
+def resolve_candidate_haunch_data(
+    data: PortalFrame,
+    r_mem,
+) -> PortalFrame:
+    """Return analysis input with Cut-Depth resolved for ``r_mem``."""
+
+    resolved_frame = resolve_haunch_cut_depths(data.frame_data[0], r_mem)
+    return replace(
+        data,
+        frame_data=[resolved_frame, *data.frame_data[1:]],
+    )
+
 def analyze_combination(args):
     """
     Analyse ONE rafter/column pair for all serviceability load-combinations
@@ -327,6 +344,8 @@ def analyze_combination(args):
     # ❶ Reject combos where the rafter flange is wider than the column flange
     if r_mem['b'] > c_mem['b'] + 3.5 and not allow_failed_checks:
         return None
+
+    data = resolve_candidate_haunch_data(data, r_mem)
 
     # --- build and analyse FE model ----------------------------------------
     frame = build_model(r_mem, c_mem, data)
@@ -502,7 +521,8 @@ def directional_search(primary, r_list, c_list, r_section_type, c_section_type,
     # --- rebuild the FE model for the best pair ------------------------
     r_mem = mdb.member_properties(r_section_type, r_name, member_db)
     c_mem = mdb.member_properties(c_section_type, c_name, member_db)
-    best_frame = build_model(r_mem, c_mem, data)
+    resolved_data = resolve_candidate_haunch_data(data, r_mem)
+    best_frame = build_model(r_mem, c_mem, resolved_data)
 
     for combo in data.serviceability_load_combinations:
         best_frame.add_load_combo(combo['name'], combo['factors'])
@@ -516,6 +536,9 @@ def directional_search(primary, r_list, c_list, r_section_type, c_section_type,
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=MatrixRankWarning)
         best_frame.analyze(check_statics=False)
+    best_frame._portal_resolved_frame_data = dict(
+        resolved_data.frame_data[0]
+    )
 
     return {
         'weight': wt,
@@ -579,7 +602,7 @@ def sls_check(
         raise ValueError(f"No sections flagged as Preferred='{preferred_section}' found.")
 
     data = import_data(str(input_path))
-    requested_cut = governing_requested_haunch_cut_depth_mm(
+    requested_cut = governing_specified_haunch_cut_depth_mm(
         data.frame_data[0]
     )
     if requested_cut > 0.0:
@@ -657,6 +680,14 @@ def sls_check(
     print(f"   dx Load Combination: {best['dx_comb']}")
     print(f"   Search time: {time.time() - start:.3f} s")
 
+    resolved_frame_data = getattr(
+        best["frame"],
+        "_portal_resolved_frame_data",
+        None,
+    )
+    if resolved_frame_data is not None:
+        data.frame_data[0] = dict(resolved_frame_data)
+
     # --- Output the worst deflections for each SLS load case ---------------------
     table_data = [
         [
@@ -673,7 +704,11 @@ def sls_check(
 
     print(tabulate(table_data,
                    headers=['Load Case', 'Deflection in X', 'Node',
-                            'Variable Deflection in Y', 'Node',
+                            (
+                                'Variable Deflection in Y'
+                                if uses_permanent_deflection_baseline(data)
+                                else 'Total Deflection in Y'
+                            ), 'Node',
                             'Permanent baseline', 'Roof drainage'],
                    tablefmt='pretty'))
 
@@ -1020,6 +1055,13 @@ def main(
 
 
     if frame is not None:
+        resolved_frame_data = getattr(
+            frame,
+            "_portal_resolved_frame_data",
+            None,
+        )
+        if resolved_frame_data is not None:
+            data.frame_data[0] = dict(resolved_frame_data)
         r_mem = mdb.member_properties(r_section_typ, best_section[0], member_db)
         c_mem = mdb.member_properties(c_section_typ, best_section[1], member_db)
         actions_by_combination = {

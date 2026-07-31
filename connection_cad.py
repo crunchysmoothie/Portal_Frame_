@@ -711,7 +711,7 @@ def _validate_haunch_location(location: Mapping[str, Any]) -> dict[str, Any]:
             f"{name} bolt end/pitch chain does not equal plate height."
         )
     length = _number(location.get("length_mm"), f"{name} haunch length")
-    depth = _number(location.get("added_depth_mm"), f"{name} haunch depth")
+    depth = _number(location.get("added_depth_mm"), f"{name} depth")
     rafter_name = str(location.get("rafter_section", "")).strip()
     stored_rafter = location.get("source_rafter_geometry")
     if isinstance(stored_rafter, Mapping) and all(

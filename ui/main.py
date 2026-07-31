@@ -25,6 +25,7 @@ from ui.input_model import (
     COLUMN_BRACING_TYPES,
     CRAWL_APPLICATIONS,
     GABLE_SECTION_ORDERS,
+    HAUNCH_DEPTH_OPTIONS,
     HOIST_CLASSES,
     DEFAULT_VALUES,
     LIPPED_CHANNEL_SECTIONS,
@@ -392,6 +393,18 @@ def main(page: ft.Page) -> None:
         "Load-combination standard",
         LOAD_COMBINATION_STANDARDS,
     )
+    use_permanent_deflection_baseline = ft.Switch(
+        key="use_permanent_deflection_baseline",
+        label="Use permanent-load deflection as the vertical baseline",
+        value=bool(
+            DEFAULT_VALUES["use_permanent_deflection_baseline"]
+        ),
+        active_color=ACCENT,
+        col=12,
+    )
+    controls[
+        "use_permanent_deflection_baseline"
+    ] = use_permanent_deflection_baseline
     ignore_dead_live_vertical_limit = ft.Switch(
         key="ignore_1_1_dl_1_0_ll_vertical_deflection_limit",
         label="Ignore vertical span/deflection limit for 1.1 DL + 1.0 LL",
@@ -471,6 +484,12 @@ def main(page: ft.Page) -> None:
         unit="m",
         helper="Length along each roof slope from the eaves.",
     )
+    eaves_haunch_depth_mode = dropdown(
+        "eaves_haunch_depth_mode",
+        "Eaves haunch depth basis",
+        HAUNCH_DEPTH_OPTIONS,
+        helper="Cut-Depth uses the trial rafter maximum: section depth h minus flange width b.",
+    )
     eaves_haunch_depth = number_field(
         "eaves_haunch_depth_mm",
         "Maximum eaves haunch depth",
@@ -478,7 +497,11 @@ def main(page: ft.Page) -> None:
         helper="Additional depth below the selected rafter at the eaves.",
     )
     eaves_haunch_fields = ft.ResponsiveRow(
-        controls=[eaves_haunch_length, eaves_haunch_depth],
+        controls=[
+            eaves_haunch_length,
+            eaves_haunch_depth_mode,
+            eaves_haunch_depth,
+        ],
         visible=bool(DEFAULT_VALUES["use_eaves_haunch"]),
     )
     use_apex_haunch = ft.Switch(
@@ -495,6 +518,12 @@ def main(page: ft.Page) -> None:
         unit="m",
         helper="Length from the apex along each adjoining roof slope.",
     )
+    apex_haunch_depth_mode = dropdown(
+        "apex_haunch_depth_mode",
+        "Apex haunch depth basis",
+        HAUNCH_DEPTH_OPTIONS,
+        helper="Cut-Depth uses the trial rafter maximum: section depth h minus flange width b.",
+    )
     apex_haunch_depth = number_field(
         "apex_haunch_depth_mm",
         "Maximum apex haunch depth",
@@ -502,7 +531,11 @@ def main(page: ft.Page) -> None:
         helper="Additional depth below the selected rafter at the apex.",
     )
     apex_haunch_fields = ft.ResponsiveRow(
-        controls=[apex_haunch_length, apex_haunch_depth],
+        controls=[
+            apex_haunch_length,
+            apex_haunch_depth_mode,
+            apex_haunch_depth,
+        ],
         visible=bool(DEFAULT_VALUES["use_apex_haunch"]),
     )
     haunch_cut_guidance = ft.Text(
@@ -2351,13 +2384,23 @@ def main(page: ft.Page) -> None:
                 " | ".join([
                     (
                         f"Eaves {building['eaves_haunch_length'] / 1000:g} m x "
-                        f"{building['eaves_haunch_depth']:.0f} mm"
+                        + (
+                            "Cut-Depth (h - b)"
+                            if building.get("eaves_haunch_depth_mode")
+                            == "Cut-Depth"
+                            else f"{building['eaves_haunch_depth']:.0f} mm"
+                        )
                         if building["use_eaves_haunch"] == "Yes"
                         else "Eaves none"
                     ),
                     (
                         f"Apex {building['apex_haunch_length'] / 1000:g} m/slope x "
-                        f"{building['apex_haunch_depth']:.0f} mm"
+                        + (
+                            "Cut-Depth (h - b)"
+                            if building.get("apex_haunch_depth_mode")
+                            == "Cut-Depth"
+                            else f"{building['apex_haunch_depth']:.0f} mm"
+                        )
                         if building["use_apex_haunch"] == "Yes"
                         else "Apex none"
                     ),
@@ -2832,8 +2875,17 @@ def main(page: ft.Page) -> None:
             analysis_summary_line(
                 "Serviceability results",
                 f"Horizontal {deflection_text(serviceability['max_horizontal_deflection_mm'], serviceability.get('horizontal_deflection_ratio'), 'Eaves')} | "
-                f"Variable vertical {deflection_text(serviceability['max_vertical_deflection_mm'], serviceability.get('vertical_deflection_ratio'), 'Span')} "
-                f"from permanent baseline {float(serviceability.get('permanent_baseline_deflection_mm', 0)):.2f} mm; "
+                + (
+                    f"Variable vertical {deflection_text(serviceability['max_vertical_deflection_mm'], serviceability.get('vertical_deflection_ratio'), 'Span')} "
+                    f"from permanent baseline {float(serviceability.get('permanent_baseline_deflection_mm', 0)):.2f} mm; "
+                    if serviceability.get(
+                        "uses_permanent_deflection_baseline",
+                        True,
+                    )
+                    else
+                    f"Total vertical {deflection_text(serviceability['max_vertical_deflection_mm'], serviceability.get('vertical_deflection_ratio'), 'Span')}; "
+                )
+                +
                 f"total at that node {float(serviceability.get('total_vertical_deflection_mm', 0)):.2f} mm | "
                 f"roof drainage {serviceability.get('roof_drainage_status', 'PASS')}"
                 + (
@@ -3158,13 +3210,23 @@ def main(page: ft.Page) -> None:
                 " | ".join([
                     (
                         f"Eaves {building['eaves_haunch_length'] / 1000:g} m x "
-                        f"{building['eaves_haunch_depth']:.0f} mm"
+                        + (
+                            "Cut-Depth (h - b)"
+                            if building.get("eaves_haunch_depth_mode")
+                            == "Cut-Depth"
+                            else f"{building['eaves_haunch_depth']:.0f} mm"
+                        )
                         if building["use_eaves_haunch"] == "Yes"
                         else "Eaves none"
                     ),
                     (
                         f"Apex {building['apex_haunch_length'] / 1000:g} m/slope x "
-                        f"{building['apex_haunch_depth']:.0f} mm"
+                        + (
+                            "Cut-Depth (h - b)"
+                            if building.get("apex_haunch_depth_mode")
+                            == "Cut-Depth"
+                            else f"{building['apex_haunch_depth']:.0f} mm"
+                        )
                         if building["use_apex_haunch"] == "Yes"
                         else "Apex none"
                     ),
@@ -3301,11 +3363,18 @@ def main(page: ft.Page) -> None:
         use_eaves_haunch.disabled = is_truss
         use_apex_haunch.disabled = is_truss
         ignore_dead_live_vertical_limit.disabled = is_truss
+        use_permanent_deflection_baseline.disabled = is_truss
         eaves_haunch_fields.visible = (
             not is_truss and bool(use_eaves_haunch.value)
         )
         apex_haunch_fields.visible = (
             not is_truss and bool(use_apex_haunch.value)
+        )
+        eaves_haunch_depth.disabled = (
+            eaves_haunch_depth_mode.value == "Cut-Depth"
+        )
+        apex_haunch_depth.disabled = (
+            apex_haunch_depth_mode.value == "Cut-Depth"
         )
         cut_limit = rafter_haunch_cut_limit(
             str(rafter_section_type.value),
@@ -3317,7 +3386,25 @@ def main(page: ft.Page) -> None:
             f"{float(cut_properties.get('b', 0)):.1f} = "
             f"{float(cut_limit.get('maximum_cut_depth_mm', 0)):.1f} mm"
         )
-        if cut_limit.get("mode") == "automatic":
+        uses_cut_depth = (
+            bool(use_eaves_haunch.value)
+            and eaves_haunch_depth_mode.value == "Cut-Depth"
+        ) or (
+            bool(use_apex_haunch.value)
+            and apex_haunch_depth_mode.value == "Cut-Depth"
+        )
+        if uses_cut_depth and cut_limit.get("mode") == "automatic":
+            haunch_cut_guidance.value = (
+                "Cut-Depth is resolved for every trial rafter as h - b, so "
+                "it does not impose a fixed-depth section filter. The selected "
+                "value is reported after analysis."
+            )
+        elif uses_cut_depth and cut_limit.get("mode") == "manual":
+            haunch_cut_guidance.value = (
+                f"Cut-Depth for selected donor "
+                f"{cut_limit.get('section', '-')}: {cut_formula}."
+            )
+        elif cut_limit.get("mode") == "automatic":
             haunch_cut_guidance.value = (
                 "Automatic sizing excludes rafters that cannot supply the "
                 "entered cut. Current family ceiling: "
@@ -3366,7 +3453,10 @@ def main(page: ft.Page) -> None:
     rafter_section.on_select = update_conditionals
     use_eaves_haunch.on_change = update_conditionals
     use_apex_haunch.on_change = update_conditionals
+    eaves_haunch_depth_mode.on_select = update_conditionals
+    apex_haunch_depth_mode.on_select = update_conditionals
     ignore_dead_live_vertical_limit.on_change = update_conditionals
+    use_permanent_deflection_baseline.on_change = update_conditionals
     use_crawl_beams.on_change = update_conditionals
     truss_internal_support.on_select = update_conditionals
     truss_design_centre_columns.on_change = update_conditionals
@@ -3682,6 +3772,16 @@ def main(page: ft.Page) -> None:
                                     load_standard,
                                     steel_grade,
                                 ]
+                            ),
+                            use_permanent_deflection_baseline,
+                            ft.Text(
+                                "When enabled, vertical section sizing uses the "
+                                "variable-action displacement relative to the "
+                                "matching dead/permanent baseline. Roof fall is "
+                                "always checked under total SLS loading to reject "
+                                "contraflexure and ponding risk.",
+                                size=12,
+                                color=TEXT_MUTED,
                             ),
                             ignore_dead_live_vertical_limit,
                             ft.Text(

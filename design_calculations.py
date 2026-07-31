@@ -770,29 +770,54 @@ def build_frame_summary(data, member_db, rafter_section_type, column_section_typ
             else ""
         ),
         "permanent_baseline_deflection_mm": (
-            abs(float(governing_dy.get("permanent_dy_at_variable_node", 0.0)))
+            abs(float(governing_dy.get(
+                "permanent_dy_at_checked_node",
+                governing_dy.get("permanent_dy_at_variable_node", 0.0),
+            )))
             if governing_dy
             else 0.0
         ),
         "total_vertical_deflection_mm": (
-            abs(float(governing_dy.get("total_dy_at_variable_node", 0.0)))
+            abs(float(governing_dy.get(
+                "total_dy_at_checked_node",
+                governing_dy.get("total_dy_at_variable_node", 0.0),
+            )))
             if governing_dy
             else 0.0
         ),
         "signed_permanent_baseline_deflection_mm": (
-            governing_dy.get("permanent_dy_at_variable_node", 0.0)
+            governing_dy.get(
+                "permanent_dy_at_checked_node",
+                governing_dy.get("permanent_dy_at_variable_node", 0.0),
+            )
             if governing_dy
             else 0.0
         ),
         "signed_total_vertical_deflection_mm": (
-            governing_dy.get("total_dy_at_variable_node", 0.0)
+            governing_dy.get(
+                "total_dy_at_checked_node",
+                governing_dy.get("total_dy_at_variable_node", 0.0),
+            )
             if governing_dy
             else 0.0
         ),
         "signed_variable_vertical_deflection_mm": (
-            governing_dy.get("variable_dy_at_variable_node", 0.0)
+            governing_dy.get(
+                "variable_dy_at_checked_node",
+                governing_dy.get("variable_dy_at_variable_node", 0.0),
+            )
             if governing_dy
             else 0.0
+        ),
+        "uses_permanent_deflection_baseline": (
+            bool(
+                governing_dy.get(
+                    "uses_permanent_deflection_baseline",
+                    True,
+                )
+            )
+            if governing_dy
+            else True
         ),
         "roof_drainage_status": (
             "FAIL" if roof_drainage_failures else "PASS"
@@ -1023,6 +1048,15 @@ def build_calculation_sheet_data_from_frame(
         "roof_type": frame_data.get("building_roof", ""),
         "roof_accessibility": frame_data.get("roof_accessibility", ""),
         "load_combination_standard": frame_data.get("load_combination_standard", ""),
+        "use_permanent_deflection_baseline": (
+            str(
+                frame_data.get(
+                    "use_permanent_deflection_baseline",
+                    "Yes",
+                )
+            ).lower()
+            == "yes"
+        ),
         "ignore_1_1_dl_1_0_ll_vertical_deflection_limit": (
             str(
                 frame_data.get(
@@ -1081,9 +1115,15 @@ def build_calculation_sheet_data_from_frame(
         "girt_max_spacing_mm": frame_data.get("girt_max_spacing_mm", 0),
         "use_eaves_haunch": frame_data.get("use_eaves_haunch", "No"),
         "eaves_haunch_length_mm": frame_data.get("eaves_haunch_length", 0),
+        "eaves_haunch_depth_mode": frame_data.get(
+            "eaves_haunch_depth_mode", "Specified Depth"
+        ),
         "eaves_haunch_depth_mm": frame_data.get("eaves_haunch_depth", 0),
         "use_apex_haunch": frame_data.get("use_apex_haunch", "No"),
         "apex_haunch_length_mm": frame_data.get("apex_haunch_length", 0),
+        "apex_haunch_depth_mode": frame_data.get(
+            "apex_haunch_depth_mode", "Specified Depth"
+        ),
         "apex_haunch_depth_mm": frame_data.get("apex_haunch_depth", 0),
     }
     if project_metadata:
@@ -1098,8 +1138,6 @@ def build_calculation_sheet_data_from_frame(
         "Two-dimensional transverse portal-frame analysis.",
         "Member self-weight is applied in load case D.",
         "Roof permanent actions are represented by D_MIN and D_MAX.",
-        "Vertical serviceability acceptance uses the algebraic incremental displacement from variable actions after subtracting the matching permanent-action baseline at each node.",
-        "The permanent baseline uses the same D, D_MIN and D_CRAWL factors as each serviceability combination; total deflection remains reported.",
         "Every total-load serviceability roof profile is checked so each generated rafter segment retains its original drainage direction. A reversed or zero fall is rejected as a ponding risk.",
         "Project-specific services, ceiling, solar, fire-services and HVAC area loads are added to D_MAX; D_MIN excludes services and solar.",
         "Utilisation ratios are calculated using the existing strength_checks.py design model.",
@@ -1110,6 +1148,15 @@ def build_calculation_sheet_data_from_frame(
         "For tension-bending, both clause 13.9 checks are retained. The additive Tu/Tr term prevents axial tension from reducing the governing utilisation.",
         "Results must be independently reviewed by the responsible competent engineer.",
     ]
+    if project["use_permanent_deflection_baseline"]:
+        assumptions.extend([
+            "Vertical serviceability acceptance uses the algebraic incremental displacement from variable actions after subtracting the matching permanent-action baseline at each node.",
+            "The permanent baseline uses the same D, D_MIN and D_CRAWL factors as each serviceability combination; total deflection remains reported.",
+        ])
+    else:
+        assumptions.append(
+            "Vertical serviceability acceptance uses total SLS displacement; permanent and variable components remain reported separately."
+        )
     if (
         str(frame_data.get("use_eaves_haunch", "No")).lower() == "yes"
         or str(frame_data.get("use_apex_haunch", "No")).lower() == "yes"
@@ -1245,6 +1292,14 @@ def _deflection_display(value, ratio, reference_label):
         else ""
     )
     return f"{_fmt(value)} mm{suffix}"
+
+
+def _checked_vertical_label(summary: Mapping[str, Any]) -> str:
+    return (
+        "Variable-action vertical deflection"
+        if summary.get("uses_permanent_deflection_baseline", True)
+        else "Total vertical deflection"
+    )
 
 
 def _html_units(units):
@@ -1762,7 +1817,7 @@ def write_html_report(data, output_path):
          f"[{escape(summary['overall_status'])}]"),
         ("Maximum horizontal deflection", f"{_deflection_display(summary['max_horizontal_deflection_mm'], summary.get('horizontal_deflection_ratio'), 'Eaves')} at "
          f"{escape(summary['horizontal_deflection_node'])} - {escape(summary['horizontal_deflection_combination'])}"),
-        ("Maximum variable-action vertical deflection", f"{_deflection_display(summary['max_vertical_deflection_mm'], summary.get('vertical_deflection_ratio'), 'Span')} at "
+        (f"Maximum {_checked_vertical_label(summary).lower()}", f"{_deflection_display(summary['max_vertical_deflection_mm'], summary.get('vertical_deflection_ratio'), 'Span')} at "
          f"{escape(summary['vertical_deflection_node'])} - {escape(summary['vertical_deflection_combination'])}; "
          f"matching permanent baseline {_fmt(summary.get('permanent_baseline_deflection_mm', 0))} mm; "
          f"total {_fmt(summary.get('total_vertical_deflection_mm', 0))} mm"),
@@ -1944,7 +1999,7 @@ footer {{ margin-top:28px; border-top:1px solid var(--line); padding-top:8px; co
 <h2>4. Ultimate load combinations</h2>
 {_html_table(("Combination", "Factors"), combination_rows)}
 <h2>5. Serviceability results</h2>
-{_html_table(("Combination", "Max dx (mm)", "Node", "Variable dy (mm)", "Node", "Permanent baseline dy (mm)", "Total dy (mm)", "Roof drainage"), deflection_rows)}
+{_html_table(("Combination", "Max dx (mm)", "Node", f"{_checked_vertical_label(summary)} (mm)", "Node", "Permanent baseline dy (mm)", "Total dy (mm)", "Roof drainage"), deflection_rows)}
 <h2>6. Support reactions</h2>
 <p class="subtitle">Forces in kN; moments in kNm. Critical scope retains combinations governing at least one component.</p>
 {_html_table(("Node", "Combination", "Fx", "Fy", "Fz", "Mx", "My", "Mz"), reaction_rows)}
@@ -2124,7 +2179,7 @@ def write_pdf_from_json(json_path, output_path):
          f"{frame_summary['governing_check']} = {_fmt(frame_summary['governing_utilisation'])} [{frame_summary['overall_status']}]"],
         ["Maximum horizontal deflection", f"{_deflection_display(frame_summary['max_horizontal_deflection_mm'], frame_summary.get('horizontal_deflection_ratio'), 'Eaves')} at "
          f"{frame_summary['horizontal_deflection_node']} - {frame_summary['horizontal_deflection_combination']}"],
-        ["Maximum variable-action vertical deflection", f"{_deflection_display(frame_summary['max_vertical_deflection_mm'], frame_summary.get('vertical_deflection_ratio'), 'Span')} at "
+        [f"Maximum {_checked_vertical_label(frame_summary).lower()}", f"{_deflection_display(frame_summary['max_vertical_deflection_mm'], frame_summary.get('vertical_deflection_ratio'), 'Span')} at "
          f"{frame_summary['vertical_deflection_node']} - {frame_summary['vertical_deflection_combination']}; "
          f"permanent baseline {_fmt(frame_summary.get('permanent_baseline_deflection_mm', 0))} mm; "
          f"total {_fmt(frame_summary.get('total_vertical_deflection_mm', 0))} mm"],
@@ -2149,7 +2204,9 @@ def write_pdf_from_json(json_path, output_path):
     story += [Paragraph("4. Ultimate load combinations", styles["CalcH2"]), combo_table]
 
     deflection_rows = [[
-        "Combination", "Max dx", "Variable dy", "Permanent dy", "Total dy",
+        "Combination", "Max dx",
+        _checked_vertical_label(frame_summary),
+        "Permanent dy", "Total dy",
         "Drainage",
     ]] + [
         [

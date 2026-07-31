@@ -777,6 +777,7 @@ def _design_haunch_end_plate(
 def _haunch_connection_start(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     input_frame = snapshot["input_data"].get("frame_data", [{}])[0]
     results = snapshot["results"]
+    project = results.get("project", {})
     uls_names = _uls_names(snapshot)
     rafter_rows = [
         item
@@ -797,16 +798,43 @@ def _haunch_connection_start(snapshot: Mapping[str, Any]) -> dict[str, Any]:
             "location": "Eaves haunch",
             "connection_type": "eaves_end_plate",
             "length_mm": float(input_frame.get("eaves_haunch_length", 0.0)),
-            "added_depth_mm": float(input_frame.get("eaves_haunch_depth", 0.0)),
+            "depth_mode": str(
+                project.get(
+                    "eaves_haunch_depth_mode",
+                    input_frame.get(
+                        "eaves_haunch_depth_mode",
+                        "Specified Depth",
+                    ),
+                )
+            ),
+            "added_depth_mm": float(
+                project.get(
+                    "eaves_haunch_depth_mm",
+                    input_frame.get("eaves_haunch_depth", 0.0),
+                )
+            ),
         })
     if str(input_frame.get("use_apex_haunch", "No")).lower() == "yes":
         locations.append({
             "location": "Apex haunch",
             "connection_type": "apex_splice",
             "length_mm": float(input_frame.get("apex_haunch_length", 0.0)),
-            "added_depth_mm": float(input_frame.get("apex_haunch_depth", 0.0)),
+            "depth_mode": str(
+                project.get(
+                    "apex_haunch_depth_mode",
+                    input_frame.get(
+                        "apex_haunch_depth_mode",
+                        "Specified Depth",
+                    ),
+                )
+            ),
+            "added_depth_mm": float(
+                project.get(
+                    "apex_haunch_depth_mm",
+                    input_frame.get("apex_haunch_depth", 0.0),
+                )
+            ),
         })
-    project = results.get("project", {})
     rafter_section = str(project.get("rafter_section", "")).strip()
     column_section = str(project.get("column_section", "")).strip()
     rafter_family, rafter_properties = _section_properties(

@@ -451,7 +451,10 @@ def _generate_classic_warren_members(
     """
 
     top_indices: set[int] = set(support_indices)
-    bottom_indices: set[int] = set()
+    # The bottom chord physically terminates at every bearing line.  These
+    # nodes lie on the supporting column/girder line and are connected to the
+    # top bearing node by a dedicated support vertical.
+    bottom_indices: set[int] = set(support_indices)
     members: list[TrussMember] = []
     tc_index = bc_index = vertical_index = diagonal_index = 1
     start = 0
@@ -477,7 +480,8 @@ def _generate_classic_warren_members(
                 ))
                 tc_index += 1
 
-        for left, right in zip(odd_indices, odd_indices[1:]):
+        bottom_sequence = [start, *odd_indices, start + count]
+        for left, right in zip(bottom_sequence, bottom_sequence[1:]):
             members.append(TrussMember(
                 f"BC{bc_index}", f"B{left}", f"B{right}", "bottom_chord"
             ))
@@ -499,6 +503,14 @@ def _generate_classic_warren_members(
                 ))
                 vertical_index += 1
         start += count
+
+    for support_number, index in enumerate(support_indices, 1):
+        members.append(TrussMember(
+            f"SV{support_number}",
+            f"B{index}",
+            f"T{index}",
+            "support_vertical",
+        ))
 
     support_set = set(support_indices)
     top_nodes = [

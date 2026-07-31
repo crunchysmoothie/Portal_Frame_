@@ -13,6 +13,11 @@ from typing import Any, Mapping
 
 import user_input
 from truss_model import PrattTrussGeometry
+from wind_loads import (
+    calculate_basic_wind_speed,
+    calculate_peak_wind_pressure,
+    calculate_terrain_roughness,
+)
 
 
 EXTRA_PERMANENT_LOAD_KEYS = (
@@ -26,6 +31,13 @@ MINIMUM_PERMANENT_LOAD_KEYS = (
     "ceiling_load_kpa",
     "fire_load_kpa",
     "hvac_load_kpa",
+)
+WIND_ZONE_TABLES = (
+    ("wind_zones_0U", "Wind 0 degrees - upward"),
+    ("wind_zones_0D", "Wind 0 degrees - downward"),
+    ("wind_zones_0M1", "Wind 0 degrees - arrangement M1"),
+    ("wind_zones_0M2", "Wind 0 degrees - arrangement M2"),
+    ("wind_zones_90", "Wind 90 degrees"),
 )
 
 
@@ -165,18 +177,26 @@ def _eave_column_wall_actions(source: Mapping[str, Any]) -> dict[str, Any]:
     """Integrate source-portal wall loads for provisional eave-column design."""
 
     nodes = {node["name"]: node for node in source["nodes"]}
-    columns = [
+    column_members = [
         member for member in source["members"]
         if str(member.get("type", "")).lower() == "column"
     ]
-    columns.sort(
-        key=lambda member: (
+    columns_by_x: dict[float, list[dict[str, Any]]] = {}
+    for member in column_members:
+        centre_x = round(
+            (
             float(nodes[member["i_node"]]["x"])
             + float(nodes[member["j_node"]]["x"])
-        ) / 2.0
-    )
-    if len(columns) != 2:
-        raise ValueError("The source portal must contain two eave columns.")
+            )
+            / 2.0,
+            6,
+        )
+        columns_by_x.setdefault(centre_x, []).append(member)
+    column_lines = sorted(columns_by_x.items())
+    if len(column_lines) != 2:
+        raise ValueError(
+            "The source portal must contain two eave column lines."
+        )
 
     by_member: dict[str, list[dict]] = {}
     for load in source.get("member_loads", []):
@@ -184,56 +204,89 @@ def _eave_column_wall_actions(source: Mapping[str, Any]) -> dict[str, Any]:
             by_member.setdefault(load["member"], []).append(load)
 
     result = {}
-    for side, member in zip(("left", "right"), columns):
-        i_node = nodes[member["i_node"]]
-        j_node = nodes[member["j_node"]]
-        dx = float(j_node["x"]) - float(i_node["x"])
-        dy = float(j_node["y"]) - float(i_node["y"])
-        length_mm = math.hypot(dx, dy)
-        i_is_base = float(i_node["y"]) <= float(j_node["y"])
+    for side, (_, members) in zip(("left", "right"), column_lines):
+        member_nodes = [
+            nodes[node_name]
+            for member in members
+            for node_name in (member["i_node"], member["j_node"])
+        ]
+        base_y = min(float(node["y"]) for node in member_nodes)
+        top_y = max(float(node["y"]) for node in member_nodes)
+        height_mm = top_y - base_y
+        if height_mm <= 0.0:
+            raise ValueError(f"The source portal {side} eave column has no height.")
         cases: dict[str, dict[str, float]] = {}
-        for load in by_member.get(member["name"], []):
-            start = float(load.get("x1", 0.0) or 0.0)
-            end = float(load.get("x2", length_mm) or length_mm)
-            start = max(0.0, min(length_mm, start))
-            end = max(0.0, min(length_mm, end))
-            if end < start:
-                start, end = end, start
-            if end - start <= 1e-9:
-                continue
-            w1 = float(load["w1"])
-            w2 = float(load["w2"])
-
-            def integrands(local_mm: float) -> tuple[float, float, float]:
-                fraction = (local_mm - start) / (end - start)
-                intensity = w1 + (w2 - w1) * fraction
-                height = local_mm if i_is_base else length_mm - local_mm
-                base_moment = intensity * height
-                tip_numerator = (
-                    intensity * height ** 2 * (3.0 * length_mm - height) / 6.0
+        for member in members:
+            i_node = nodes[member["i_node"]]
+            j_node = nodes[member["j_node"]]
+            dx = float(j_node["x"]) - float(i_node["x"])
+            dy = float(j_node["y"]) - float(i_node["y"])
+            member_length_mm = math.hypot(dx, dy)
+            if member_length_mm <= 0.0:
+                raise ValueError(
+                    f"Source column member {member['name']} has no length."
                 )
-                return intensity, base_moment, tip_numerator
+            vertical_direction = dy / member_length_mm
+            for load in by_member.get(member["name"], []):
+                start = float(load.get("x1", 0.0) or 0.0)
+                end = float(
+                    load.get("x2", member_length_mm) or member_length_mm
+                )
+                start = max(0.0, min(member_length_mm, start))
+                end = max(0.0, min(member_length_mm, end))
+                if end < start:
+                    start, end = end, start
+                if end - start <= 1e-9:
+                    continue
+                w1 = float(load["w1"])
+                w2 = float(load["w2"])
 
-            midpoint = (start + end) / 2.0
-            first = integrands(start)
-            middle = integrands(midpoint)
-            last = integrands(end)
-            width = end - start
-            integrated = [
-                width / 6.0 * (first[index] + 4.0 * middle[index] + last[index])
-                for index in range(3)
-            ]
-            case = cases.setdefault(load["case"], {
-                "resultant_kn": 0.0,
-                "base_moment_knm": 0.0,
-                "tip_deflection_numerator_kn_mm3": 0.0,
-            })
-            case["resultant_kn"] += integrated[0]
-            case["base_moment_knm"] += integrated[1] / 1000.0
-            case["tip_deflection_numerator_kn_mm3"] += integrated[2]
+                def integrands(
+                    local_mm: float,
+                ) -> tuple[float, float, float]:
+                    fraction = (local_mm - start) / (end - start)
+                    intensity = w1 + (w2 - w1) * fraction
+                    load_height = (
+                        float(i_node["y"])
+                        + vertical_direction * local_mm
+                        - base_y
+                    )
+                    base_moment = intensity * load_height
+                    tip_numerator = (
+                        intensity
+                        * load_height ** 2
+                        * (3.0 * height_mm - load_height)
+                        / 6.0
+                    )
+                    return intensity, base_moment, tip_numerator
+
+                midpoint = (start + end) / 2.0
+                first = integrands(start)
+                middle = integrands(midpoint)
+                last = integrands(end)
+                width = end - start
+                integrated = [
+                    width
+                    / 6.0
+                    * (first[index] + 4.0 * middle[index] + last[index])
+                    for index in range(3)
+                ]
+                case = cases.setdefault(load["case"], {
+                    "resultant_kn": 0.0,
+                    "base_moment_knm": 0.0,
+                    "tip_deflection_numerator_kn_mm3": 0.0,
+                })
+                case["resultant_kn"] += integrated[0]
+                case["base_moment_knm"] += integrated[1] / 1000.0
+                case["tip_deflection_numerator_kn_mm3"] += integrated[2]
         result[side] = {
-            "source_member": member["name"],
-            "height_mm": length_mm,
+            "source_member": ", ".join(
+                str(member["name"]) for member in members
+            ),
+            "source_members": [
+                str(member["name"]) for member in members
+            ],
+            "height_mm": height_mm,
             "cases": cases,
         }
     return result
@@ -266,6 +319,7 @@ def build_panel_point_loads(
         for member in source["members"]
         if str(member.get("type", "")).lower() == "rafter"
     ]
+    applied_wind_segments: list[dict[str, Any]] = []
     for member in top_members:
         i_node = nodes[member.i_node]
         j_node = nodes[member.j_node]
@@ -325,6 +379,68 @@ def build_panel_point_loads(
                         j_fy_kn = j_force_kn * normal_y
                     _add_node_load(cases, case, member.i_node, i_fx_kn, i_fy_kn)
                     _add_node_load(cases, case, member.j_node, j_fx_kn, j_fy_kn)
+                    if str(case).upper().startswith("W"):
+                        load_start = float(load.get("x1", 0.0) or 0.0)
+                        load_end = float(
+                            load.get("x2", source_length_mm)
+                            or source_length_mm
+                        )
+                        if load_end < load_start:
+                            load_start, load_end = load_end, load_start
+                        segment_start, segment_end = sorted(
+                            (local_start, local_end)
+                        )
+                        applied_start = max(segment_start, load_start)
+                        applied_end = min(segment_end, load_end)
+
+                        def intensity_at(position_mm: float) -> float:
+                            if load_end - load_start <= 1e-9:
+                                return float(load["w1"])
+                            fraction = (
+                                (position_mm - load_start)
+                                / (load_end - load_start)
+                            )
+                            return float(load["w1"]) + (
+                                float(load["w2"]) - float(load["w1"])
+                            ) * fraction
+
+                        source_fraction_start = applied_start / source_length_mm
+                        source_fraction_end = applied_end / source_length_mm
+                        global_x_start = (
+                            float(source_i["x"])
+                            + source_fraction_start * source_dx
+                        )
+                        global_x_end = (
+                            float(source_i["x"])
+                            + source_fraction_end * source_dx
+                        )
+                        applied_wind_segments.append({
+                            "case": str(case),
+                            "truss_member": member.name,
+                            "i_node": member.i_node,
+                            "j_node": member.j_node,
+                            "source_member": str(source_member["name"]),
+                            "global_x_start_m": global_x_start / 1000.0,
+                            "global_x_end_m": global_x_end / 1000.0,
+                            "loaded_length_m": (
+                                applied_end - applied_start
+                            ) / 1000.0,
+                            "direction": (
+                                "Global Y"
+                                if str(load["direction"]) == "FY"
+                                else "Normal to roof"
+                            ),
+                            "line_load_start_kn_m": (
+                                intensity_at(applied_start) * 1000.0
+                            ),
+                            "line_load_end_kn_m": (
+                                intensity_at(applied_end) * 1000.0
+                            ),
+                            "equivalent_i_fx_kn": i_fx_kn,
+                            "equivalent_i_fy_kn": i_fy_kn,
+                            "equivalent_j_fx_kn": j_fx_kn,
+                            "equivalent_j_fy_kn": j_fy_kn,
+                        })
 
     extra_kpa = sum(
         float(shared_building_data.get(key, 0.0) or 0.0)
@@ -334,6 +450,61 @@ def build_panel_point_loads(
         float(shared_building_data.get(key, 0.0) or 0.0)
         for key in MINIMUM_PERMANENT_LOAD_KEYS
     )
+    source_wind = dict(source.get("wind_data", [{}])[0])
+    tributary_width_m = float(
+        source_wind.get("rafter_spacing", 0.0) or 0.0
+    )
+    wind_zone_tables = []
+    for source_key, label in WIND_ZONE_TABLES:
+        rows = []
+        for zone in source.get(source_key, []):
+            row = {
+                "zone": str(zone.get("Zone", "")),
+                "cpe": float(zone.get("cpe", 0.0) or 0.0),
+                "zone_length_m": float(zone.get("Length", 0.0) or 0.0),
+            }
+            for pressure_key in ("cpi=0.2", "cpi=-0.3"):
+                line_load_kn_m = (
+                    float(zone.get(pressure_key, 0.0) or 0.0) * 1000.0
+                )
+                row[f"{pressure_key}_line_load_kn_m"] = line_load_kn_m
+                row[f"{pressure_key}_pressure_kpa"] = (
+                    line_load_kn_m / tributary_width_m
+                    if tributary_width_m > 0.0
+                    else 0.0
+                )
+            rows.append(row)
+        if rows:
+            wind_zone_tables.append({
+                "source": source_key,
+                "label": label,
+                "rows": rows,
+            })
+
+    basic_wind_speed = calculate_basic_wind_speed(
+        source_wind["fundamental_basic_wind_speed"],
+        source_wind["return_period"],
+    )
+    terrain_roughness = calculate_terrain_roughness(
+        source_wind["apex_height"],
+        source_wind["terrain_category"],
+    )
+    peak_pressure_kpa = calculate_peak_wind_pressure(
+        source_wind["topographic_factor"],
+        basic_wind_speed,
+        terrain_roughness,
+        source_wind["altitude"],
+    )
+    case_resultants = []
+    for case, node_loads in sorted(cases.items()):
+        if not str(case).upper().startswith("W"):
+            continue
+        case_resultants.append({
+            "case": case,
+            "sum_fx_kn": sum(value[0] for value in node_loads.values()),
+            "sum_fy_kn": sum(value[1] for value in node_loads.values()),
+            "loaded_node_count": len(node_loads),
+        })
 
     return {
         "cases": {
@@ -353,6 +524,37 @@ def build_panel_point_loads(
             "minimum_extra_permanent_load_kpa": minimum_extra_kpa,
             "d_min_excluded_extra_loads": ["services_load_kpa", "solar_load_kpa"],
             "purlins_at_panel_points": True,
+        },
+        "load_audit": {
+            "wind_calculation": {
+                "fundamental_basic_wind_speed_m_s": float(
+                    source_wind["fundamental_basic_wind_speed"]
+                ),
+                "return_period_years": float(source_wind["return_period"]),
+                "design_basic_wind_speed_m_s": float(basic_wind_speed),
+                "terrain_category": str(source_wind["terrain_category"]),
+                "terrain_roughness_factor": float(terrain_roughness),
+                "topographic_factor": float(source_wind["topographic_factor"]),
+                "altitude_m": float(source_wind["altitude"]),
+                "peak_velocity_pressure_kpa": float(peak_pressure_kpa),
+                "roof_pitch_deg": float(
+                    source["frame_data"][0]["roof_pitch"]
+                ),
+                "tributary_width_m": tributary_width_m,
+                "internal_pressure": source_wind.get("internal_pressure", {}),
+            },
+            "wind_zone_tables": wind_zone_tables,
+            "applied_wind_segments": applied_wind_segments,
+            "wind_case_resultants": case_resultants,
+            "uls_combinations": list(source["load_combinations"]),
+            "sls_combinations": list(
+                source["serviceability_load_combinations"]
+            ),
+            "sign_convention": (
+                "Line loads follow the generated portal source model. "
+                "Positive global Y is upward; local roof loads are resolved "
+                "normal to the roof into equivalent truss-node Fx and Fy."
+            ),
         },
         "eave_column_wall_actions": _eave_column_wall_actions(source),
     }

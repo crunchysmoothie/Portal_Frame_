@@ -1453,6 +1453,7 @@ def _design_candidate(
         "eave_column_design": eave_column_design,
         "girder_design": girder_design,
         "load_source": load_bundle["source"],
+        "load_audit": load_bundle["load_audit"],
     }
 
 

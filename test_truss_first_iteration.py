@@ -15,7 +15,11 @@ from truss_design import (
     load_angle_candidates,
     ordered_angle_candidates,
 )
-from truss_loading import _consistent_segment_loads
+from truss_loading import (
+    _consistent_segment_loads,
+    _eave_column_wall_actions,
+    build_panel_point_loads,
+)
 from truss_model import (
     WARREN_ALL_VERTICALS,
     WARREN_INTERMEDIATE_VERTICALS,
@@ -57,6 +61,49 @@ class TrussGeometryTests(unittest.TestCase):
             sum(i_force + j_force for _, i_force, j_force in integrated), -1.6
         )
 
+    def test_segmented_eave_columns_are_grouped_into_two_column_lines(self):
+        source = {
+            "nodes": [
+                {"name": "L0", "x": 0.0, "y": 0.0},
+                {"name": "L1", "x": 0.0, "y": 3_000.0},
+                {"name": "L2", "x": 0.0, "y": 6_000.0},
+                {"name": "R0", "x": 35_000.0, "y": 6_000.0},
+                {"name": "R1", "x": 35_000.0, "y": 3_000.0},
+                {"name": "R2", "x": 35_000.0, "y": 0.0},
+            ],
+            "members": [
+                {"name": "CL1", "i_node": "L0", "j_node": "L1", "type": "column"},
+                {"name": "CL2", "i_node": "L1", "j_node": "L2", "type": "column"},
+                {"name": "CR1", "i_node": "R0", "j_node": "R1", "type": "column"},
+                {"name": "CR2", "i_node": "R1", "j_node": "R2", "type": "column"},
+            ],
+            "member_loads": [
+                {
+                    "member": member,
+                    "direction": "FY",
+                    "case": "W",
+                    "w1": 0.001,
+                    "w2": 0.001,
+                    "x1": 0.0,
+                    "x2": 3_000.0,
+                }
+                for member in ("CL1", "CL2", "CR1", "CR2")
+            ],
+        }
+        actions = _eave_column_wall_actions(source)
+        self.assertEqual(set(actions), {"left", "right"})
+        for side in ("left", "right"):
+            self.assertEqual(actions[side]["height_mm"], 6_000.0)
+            self.assertEqual(len(actions[side]["source_members"]), 2)
+            self.assertAlmostEqual(
+                actions[side]["cases"]["W"]["resultant_kn"],
+                6.0,
+            )
+            self.assertAlmostEqual(
+                actions[side]["cases"]["W"]["base_moment_knm"],
+                18.0,
+            )
+
     def test_single_span_supports_and_full_length_nth_purlin_restraint(self):
         geometry = generate_truss_geometry(
             (40_000,), "Duo Pitched", 3_500, 2_400, 1_800,
@@ -73,6 +120,84 @@ class TrussGeometryTests(unittest.TestCase):
             interval["panel_spaces"] <= 2
             for interval in restraints["top_chord"]["intervals"]
         ))
+
+    def test_classic_warren_bottom_chord_reaches_both_column_lines(self):
+        for topology in (
+            WARREN_NO_VERTICALS,
+            WARREN_INTERMEDIATE_VERTICALS,
+        ):
+            geometry = generate_truss_geometry(
+                (35_000,),
+                "Duo Pitched",
+                2_700,
+                1_900,
+                1_600,
+                topology=topology,
+                chord_form="Parallel chords",
+            )
+            nodes = {node.name: node for node in geometry.nodes}
+            end_index = geometry.panel_count
+            self.assertIn("B0", nodes)
+            self.assertIn(f"B{end_index}", nodes)
+            self.assertEqual(nodes["B0"].x_mm, 0.0)
+            self.assertEqual(nodes[f"B{end_index}"].x_mm, 35_000.0)
+            bottom_members = [
+                member for member in geometry.members
+                if member.role == "bottom_chord"
+            ]
+            self.assertTrue(any(
+                "B0" in (member.i_node, member.j_node)
+                for member in bottom_members
+            ))
+            self.assertTrue(any(
+                f"B{end_index}" in (member.i_node, member.j_node)
+                for member in bottom_members
+            ))
+            support_vertical_pairs = {
+                frozenset((member.i_node, member.j_node))
+                for member in geometry.members
+                if member.role == "support_vertical"
+            }
+            self.assertEqual(
+                support_vertical_pairs,
+                {
+                    frozenset(("B0", "T0")),
+                    frozenset((f"B{end_index}", f"T{end_index}")),
+                },
+            )
+            self.assertEqual(
+                len(geometry.members),
+                2 * len(geometry.nodes) - 3,
+            )
+
+    def test_classic_warren_bottom_chord_is_continuous_at_internal_support(self):
+        geometry = generate_truss_geometry(
+            (20_000, 20_000),
+            "Duo Pitched",
+            3_000,
+            2_000,
+            1_600,
+            topology=WARREN_INTERMEDIATE_VERTICALS,
+            chord_form="Parallel chords",
+        )
+        internal_top = geometry.support_nodes[1]
+        internal_index = internal_top.removeprefix("T")
+        internal_bottom = f"B{internal_index}"
+        incident_bottom_members = [
+            member
+            for member in geometry.members
+            if member.role == "bottom_chord"
+            and internal_bottom in (member.i_node, member.j_node)
+        ]
+        self.assertEqual(len(incident_bottom_members), 2)
+        self.assertIn(
+            frozenset((internal_bottom, internal_top)),
+            {
+                frozenset((member.i_node, member.j_node))
+                for member in geometry.members
+                if member.role == "support_vertical"
+            },
+        )
 
     def test_mono_pratt_horizontal_bottom_chord_geometry(self):
         geometry = generate_truss_geometry(
@@ -198,6 +323,70 @@ class TrussWorkflowTests(unittest.TestCase):
         self.assertEqual(singles[0].configuration, "Single equal angle")
         self.assertEqual(
             pairs[0].configuration, "Back-to-back equal angles"
+        )
+
+    def test_segmented_eave_columns_do_not_reject_warren_depth_search(self):
+        payload = self.payload(
+            truss_transverse_bay_spans_m="35",
+            truss_building_length_m="18",
+            truss_spacing_m="6",
+            col_bracing_spacing="2",
+            truss_type=WARREN_INTERMEDIATE_VERTICALS,
+            truss_minimum_depth_m="2.2",
+            truss_maximum_depth_m="2.2",
+        )
+        result = design_truss(payload)
+        best = result["ranked_solutions"][0]
+        self.assertEqual(best["geometry"]["depth_mm"], 2_200.0)
+        self.assertEqual(
+            best["geometry"]["support_vertical_members"],
+            ["SV1", "SV2"],
+        )
+        self.assertEqual(
+            [item["source"] for item in best["bearing_support_verticals"]],
+            ["Main eave column", "Main eave column"],
+        )
+
+    def test_truss_loading_records_reviewable_wind_pressures_and_segments(self):
+        payload = self.payload(
+            truss_transverse_bay_spans_m="35",
+            truss_spacing_m="6",
+            truss_minimum_depth_m="2.2",
+            truss_maximum_depth_m="2.2",
+        )
+        preview_result = preview(payload)
+        geometry = generate_truss_geometry(
+            tuple(payload["truss_data"]["transverse_bay_spans_mm"]),
+            payload["building_data"]["building_roof"],
+            payload["truss_data"]["roof_rise_mm"],
+            preview_result["geometry"]["depth_mm"],
+            payload["truss_data"]["maximum_panel_width_mm"],
+            topology=payload["truss_data"]["topology"],
+            chord_form=payload["truss_data"]["chord_form"],
+        )
+        bundle = build_panel_point_loads(
+            payload["building_data"],
+            payload["wind_data"],
+            payload["truss_data"],
+            geometry,
+        )
+        audit = bundle["load_audit"]
+        self.assertGreater(
+            audit["wind_calculation"]["peak_velocity_pressure_kpa"], 0.0
+        )
+        self.assertEqual(
+            audit["wind_calculation"]["tributary_width_m"], 6.0
+        )
+        self.assertTrue(audit["wind_zone_tables"])
+        self.assertTrue(audit["applied_wind_segments"])
+        for item in audit["applied_wind_segments"]:
+            self.assertGreater(item["loaded_length_m"], 0.0)
+            self.assertTrue(item["case"].startswith("W"))
+            self.assertEqual(item["direction"], "Normal to roof")
+        first_zone = audit["wind_zone_tables"][0]["rows"][0]
+        self.assertAlmostEqual(
+            first_zone["cpi=0.2_line_load_kn_m"],
+            first_zone["cpi=0.2_pressure_kpa"] * 6.0,
         )
 
     def test_single_span_payload_preview_and_visual_references(self):
@@ -457,6 +646,11 @@ class TrussWorkflowTests(unittest.TestCase):
             self.assertIn("below 75%", report)
             self.assertIn("slenderness", report)
             self.assertIn("Exact truss section search order", report)
+            self.assertIn(
+                "Wind loading calculation and truss application audit", report
+            )
+            self.assertIn("Applied wind line loads", report)
+            self.assertIn("Peak velocity pressure", report)
             markup_text = markup.read_text(encoding="utf-8")
             self.assertIn("member markup", markup_text)
             self.assertIn("Member-by-member review schedule", markup_text)

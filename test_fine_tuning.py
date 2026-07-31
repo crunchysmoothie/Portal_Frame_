@@ -322,9 +322,37 @@ class PermanentBaselineDeflectionTests(unittest.TestCase):
         )
         self.assertEqual(row["roof_drainage"]["status"], "PASS")
 
+    def test_toggle_off_uses_total_vertical_deflection(self):
+        frame, data = self.model()
+        data.frame_data = [{
+            "use_permanent_deflection_baseline": "No",
+        }]
+        row = serviceability_deflection_rows(frame, data)[0]
+        self.assertEqual(row["max_dy"], 20.0)
+        self.assertEqual(row["dy_node"], "N2")
+        self.assertFalse(row["uses_permanent_deflection_baseline"])
+        self.assertIn("Total serviceability", row["vertical_deflection_basis"])
+        self.assertEqual(row["total_dy_at_checked_node"], -20.0)
+        self.assertEqual(row["permanent_dy_at_checked_node"], -12.0)
+        self.assertEqual(row["variable_dy_at_checked_node"], -8.0)
+        self.assertEqual(row["roof_drainage"]["status"], "PASS")
+
+    def test_toggle_is_saved_in_the_analysis_payload(self):
+        values = dict(DEFAULT_VALUES)
+        values["use_permanent_deflection_baseline"] = False
+        payload = build_analysis_payload(values)
+        self.assertEqual(
+            payload["building_data"]["use_permanent_deflection_baseline"],
+            "No",
+        )
+
     def test_reversed_roof_fall_is_a_ponding_failure(self):
         frame, data = self.model(reversed_fall=True)
+        data.frame_data = [{
+            "use_permanent_deflection_baseline": "No",
+        }]
         row = serviceability_deflection_rows(frame, data)[0]
+        self.assertEqual(row["max_dy"], 120.0)
         self.assertEqual(row["roof_drainage"]["status"], "FAIL")
         self.assertEqual(
             row["roof_drainage"]["reversed_segments"][0]["member"], "R1"

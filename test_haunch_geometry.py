@@ -3,8 +3,11 @@ import unittest
 import member_database as mdb
 from haunch_design import composite_haunch_properties
 from haunch_geometry import (
+    HAUNCH_DEPTH_CUT,
+    governing_specified_haunch_cut_depth_mm,
     haunch_cut_depth_check,
     maximum_haunch_cut_depth_mm,
+    resolve_haunch_cut_depths,
 )
 from ui.input_model import (
     AUTOMATIC_SECTION,
@@ -79,6 +82,41 @@ class HaunchGeometryRuleTests(unittest.TestCase):
         self.assertIn(
             "Family maximum",
             context.exception.errors["eaves_haunch_depth_mm"],
+        )
+
+    def test_cut_depth_input_does_not_require_a_fixed_numeric_depth(self):
+        values = dict(DEFAULT_VALUES)
+        values.update(
+            {
+                "use_eaves_haunch": True,
+                "eaves_haunch_depth_mode": HAUNCH_DEPTH_CUT,
+                "eaves_haunch_depth_mm": "",
+            }
+        )
+        payload = build_analysis_payload(values)
+        frame = payload["building_data"]
+        self.assertEqual(frame["eaves_haunch_depth_mode"], HAUNCH_DEPTH_CUT)
+        self.assertEqual(frame["eaves_haunch_depth"], 0.0)
+        self.assertEqual(
+            governing_specified_haunch_cut_depth_mm(frame),
+            0.0,
+        )
+
+    def test_cut_depth_resolves_to_each_trial_rafter_limit(self):
+        frame = {
+            "use_eaves_haunch": "Yes",
+            "eaves_haunch_depth_mode": HAUNCH_DEPTH_CUT,
+            "eaves_haunch_depth": 999.0,
+            "use_apex_haunch": "No",
+        }
+        resolved = resolve_haunch_cut_depths(frame, self.section)
+        self.assertAlmostEqual(
+            resolved["eaves_haunch_depth"],
+            maximum_haunch_cut_depth_mm(self.section),
+        )
+        self.assertEqual(
+            resolved["resolved_haunch_source_section"],
+            self.section_name,
         )
 
 

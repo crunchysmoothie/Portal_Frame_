@@ -56,6 +56,22 @@ def add_permanent_baseline_combinations(
     return mapping
 
 
+def uses_permanent_deflection_baseline(data: Any) -> bool:
+    """Return whether vertical acceptance uses the variable-action increment."""
+
+    frame_data = getattr(data, "frame_data", [{}])
+    settings = frame_data[0] if frame_data else {}
+    return (
+        str(
+            settings.get(
+                "use_permanent_deflection_baseline",
+                "Yes",
+            )
+        ).lower()
+        == "yes"
+    )
+
+
 def _result_value(result_map: Any, combination: str | None) -> float:
     if combination is None:
         return 0.0
@@ -185,6 +201,7 @@ def serviceability_deflection_rows(
     """Return total, permanent, and incremental-variable SLS deflections."""
 
     rows = []
+    use_baseline = uses_permanent_deflection_baseline(data)
     for combination in data.serviceability_load_combinations:
         name = str(combination["name"])
         baseline = permanent_baseline_name(combination)
@@ -192,6 +209,7 @@ def serviceability_deflection_rows(
         dx_node = total_dy_node = permanent_dy_node = variable_dy_node = ""
         governing_total_dy = governing_permanent_dy = 0.0
         governing_variable_dy = 0.0
+        total_node_values = (0.0, 0.0, 0.0)
         for node_name, node in frame.nodes.items():
             dx = abs(_result_value(node.DX, name))
             total_dy_value = _result_value(node.DY, name)
@@ -209,6 +227,11 @@ def serviceability_deflection_rows(
                 max_dx, dx_node = dx, str(node_name)
             if total_dy > max_total_dy:
                 max_total_dy, total_dy_node = total_dy, str(node_name)
+                total_node_values = (
+                    total_dy_value,
+                    permanent_dy_value,
+                    variable_dy_value,
+                )
             if permanent_dy > max_permanent_dy:
                 max_permanent_dy = permanent_dy
                 permanent_dy_node = str(node_name)
@@ -218,13 +241,33 @@ def serviceability_deflection_rows(
                 governing_total_dy = total_dy_value
                 governing_permanent_dy = permanent_dy_value
                 governing_variable_dy = variable_dy_value
+        if use_baseline:
+            checked_max_dy = max_variable_dy
+            checked_dy_node = variable_dy_node
+            checked_values = (
+                governing_total_dy,
+                governing_permanent_dy,
+                governing_variable_dy,
+            )
+            basis = (
+                "Incremental variable-action deflection relative to the "
+                "matching permanent-action baseline."
+            )
+        else:
+            checked_max_dy = max_total_dy
+            checked_dy_node = total_dy_node
+            checked_values = total_node_values
+            basis = (
+                "Total serviceability deflection including permanent and "
+                "variable actions."
+            )
         rows.append({
             "load_combination": name,
             "permanent_baseline_combination": baseline or "Zero permanent action",
             "max_dx": max_dx,
             "dx_node": dx_node,
-            "max_dy": max_variable_dy,
-            "dy_node": variable_dy_node,
+            "max_dy": checked_max_dy,
+            "dy_node": checked_dy_node,
             "total_max_dy": max_total_dy,
             "total_dy_node": total_dy_node,
             "permanent_max_dy": max_permanent_dy,
@@ -232,10 +275,11 @@ def serviceability_deflection_rows(
             "total_dy_at_variable_node": governing_total_dy,
             "permanent_dy_at_variable_node": governing_permanent_dy,
             "variable_dy_at_variable_node": governing_variable_dy,
-            "vertical_deflection_basis": (
-                "Incremental variable-action deflection relative to the "
-                "matching permanent-action baseline."
-            ),
+            "total_dy_at_checked_node": checked_values[0],
+            "permanent_dy_at_checked_node": checked_values[1],
+            "variable_dy_at_checked_node": checked_values[2],
+            "uses_permanent_deflection_baseline": use_baseline,
+            "vertical_deflection_basis": basis,
             "roof_drainage": roof_drainage_check(frame, data, name),
         })
     return rows

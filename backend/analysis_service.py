@@ -176,11 +176,17 @@ def _design_summary(
             "eaves": {
                 "used": project.get("use_eaves_haunch", "No") == "Yes",
                 "length_mm": project.get("eaves_haunch_length_mm", 0),
+                "depth_mode": project.get(
+                    "eaves_haunch_depth_mode", "Specified Depth"
+                ),
                 "depth_mm": project.get("eaves_haunch_depth_mm", 0),
             },
             "apex": {
                 "used": project.get("use_apex_haunch", "No") == "Yes",
                 "length_mm": project.get("apex_haunch_length_mm", 0),
+                "depth_mode": project.get(
+                    "apex_haunch_depth_mode", "Specified Depth"
+                ),
                 "depth_mm": project.get("apex_haunch_depth_mm", 0),
             },
         },
@@ -193,6 +199,9 @@ def _design_summary(
             "utilisation": frame.get("governing_utilisation", 0),
         },
         "serviceability": {
+            "uses_permanent_deflection_baseline": project.get(
+                "use_permanent_deflection_baseline", True
+            ),
             "ignored_vertical_limit_combinations": (
                 ["1.1 DL + 1.0 LL"]
                 if project.get(

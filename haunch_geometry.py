@@ -18,6 +18,9 @@ _TOLERANCE_MM = 1e-6
 # renderers from substituting nominal designation dimensions.
 HAUNCH_CUT_DEDUCTION_PROPERTY = "b"
 HAUNCH_CUT_DEDUCTION_LABEL = "flange width"
+HAUNCH_DEPTH_SPECIFIED = "Specified Depth"
+HAUNCH_DEPTH_CUT = "Cut-Depth"
+HAUNCH_DEPTH_MODES = (HAUNCH_DEPTH_SPECIFIED, HAUNCH_DEPTH_CUT)
 
 
 @dataclass(frozen=True)
@@ -89,6 +92,59 @@ def governing_requested_haunch_cut_depth_mm(
     if str(frame_data.get("use_apex_haunch", "No")).lower() == "yes":
         requested.append(float(frame_data.get("apex_haunch_depth", 0.0)))
     return max(requested, default=0.0)
+
+
+def governing_specified_haunch_cut_depth_mm(
+    frame_data: Mapping[str, Any],
+) -> float:
+    """Return only fixed cuts that must filter automatic section candidates."""
+
+    requested: list[float] = []
+    for location in ("eaves", "apex"):
+        if (
+            str(frame_data.get(f"use_{location}_haunch", "No")).lower()
+            != "yes"
+        ):
+            continue
+        mode = str(
+            frame_data.get(
+                f"{location}_haunch_depth_mode",
+                HAUNCH_DEPTH_SPECIFIED,
+            )
+        )
+        if mode == HAUNCH_DEPTH_CUT:
+            continue
+        requested.append(
+            float(frame_data.get(f"{location}_haunch_depth", 0.0))
+        )
+    return max(requested, default=0.0)
+
+
+def resolve_haunch_cut_depths(
+    frame_data: Mapping[str, Any],
+    rafter_section: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Resolve candidate-dependent Cut-Depth inputs for one rafter section."""
+
+    resolved = dict(frame_data)
+    maximum = maximum_haunch_cut_depth_mm(rafter_section)
+    for location in ("eaves", "apex"):
+        mode_key = f"{location}_haunch_depth_mode"
+        depth_key = f"{location}_haunch_depth"
+        mode = str(resolved.get(mode_key, HAUNCH_DEPTH_SPECIFIED))
+        if mode not in HAUNCH_DEPTH_MODES:
+            mode = HAUNCH_DEPTH_SPECIFIED
+        resolved[mode_key] = mode
+        if (
+            str(resolved.get(f"use_{location}_haunch", "No")).lower()
+            == "yes"
+            and mode == HAUNCH_DEPTH_CUT
+        ):
+            resolved[depth_key] = maximum
+    resolved["resolved_haunch_source_section"] = str(
+        rafter_section.get("Designation", "")
+    )
+    return resolved
 
 
 def haunch_cut_error(
