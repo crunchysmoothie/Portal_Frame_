@@ -10,6 +10,7 @@ from foundation_design import (
 )
 from frame_model import Member, Node, PortalFrame
 from haunch_design import composite_haunch_properties
+from haunch_geometry import HAUNCH_DEPTH_SPECIFIED
 from portal_frame_analysis import (
     _vertical_deflection_limit_applies,
     build_model,
@@ -139,8 +140,10 @@ class HaunchDesignTests(unittest.TestCase):
         values = dict(DEFAULT_VALUES)
         values.update({
             "use_eaves_haunch": True,
+            "eaves_haunch_depth_mode": HAUNCH_DEPTH_SPECIFIED,
             "eaves_haunch_length_m": "5",
             "use_apex_haunch": True,
+            "apex_haunch_depth_mode": HAUNCH_DEPTH_SPECIFIED,
             "apex_haunch_length_m": "4",
         })
         with self.assertRaises(InputValidationError) as context:

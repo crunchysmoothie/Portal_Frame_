@@ -10,6 +10,7 @@ from typing import Any, Mapping
 import member_database as portal_members
 from foundation_design import DEFAULT_FOUNDATION_VALUES
 from haunch_geometry import (
+    HAUNCH_DEPTH_AUTO,
     HAUNCH_DEPTH_CUT,
     HAUNCH_DEPTH_MODES,
     HAUNCH_DEPTH_SPECIFIED,
@@ -181,13 +182,13 @@ DEFAULT_VALUES: dict[str, Any] = {
     "column_section_type": "I-Sections",
     "column_section": AUTOMATIC_SECTION,
     "use_eaves_haunch": False,
-    "eaves_haunch_length_m": "1.5",
-    "eaves_haunch_depth_mode": HAUNCH_DEPTH_SPECIFIED,
-    "eaves_haunch_depth_mm": "100",
+    "eaves_haunch_length_m": "",
+    "eaves_haunch_depth_mode": HAUNCH_DEPTH_AUTO,
+    "eaves_haunch_depth_mm": "",
     "use_apex_haunch": False,
-    "apex_haunch_length_m": "1.0",
-    "apex_haunch_depth_mode": HAUNCH_DEPTH_SPECIFIED,
-    "apex_haunch_depth_mm": "100",
+    "apex_haunch_length_m": "",
+    "apex_haunch_depth_mode": HAUNCH_DEPTH_AUTO,
+    "apex_haunch_depth_mm": "",
     "base_support_condition": "Spring",
     "base_rotational_stiffness_knm_per_rad": "10000",
     "fundamental_basic_wind_speed": "32",
@@ -582,22 +583,24 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
     apex_haunch_length_m = 0.0
     apex_haunch_depth_mm = 0.0
     eaves_haunch_depth_mode = str(
-        raw.get("eaves_haunch_depth_mode", HAUNCH_DEPTH_SPECIFIED)
+        raw.get("eaves_haunch_depth_mode", HAUNCH_DEPTH_AUTO)
     )
     apex_haunch_depth_mode = str(
-        raw.get("apex_haunch_depth_mode", HAUNCH_DEPTH_SPECIFIED)
+        raw.get("apex_haunch_depth_mode", HAUNCH_DEPTH_AUTO)
     )
     if eaves_haunch_depth_mode not in HAUNCH_DEPTH_MODES:
         errors["eaves_haunch_depth_mode"] = (
-            "Choose Specified Depth or Cut-Depth."
+            "Choose Specified Depth, Cut-Depth or Auto Size."
         )
     if apex_haunch_depth_mode not in HAUNCH_DEPTH_MODES:
         errors["apex_haunch_depth_mode"] = (
-            "Choose Specified Depth or Cut-Depth."
+            "Choose Specified Depth, Cut-Depth or Auto Size."
         )
     if use_eaves_haunch:
-        eaves_haunch_length_m = number(
-            "eaves_haunch_length_m", strictly_positive=True
+        eaves_haunch_length_m = (
+            width_m / 15.0
+            if eaves_haunch_depth_mode == HAUNCH_DEPTH_AUTO
+            else number("eaves_haunch_length_m", strictly_positive=True)
         )
         if eaves_haunch_depth_mode == HAUNCH_DEPTH_SPECIFIED:
             eaves_haunch_depth_mm = number(
@@ -606,8 +609,10 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
                 maximum=2000,
             )
     if use_apex_haunch:
-        apex_haunch_length_m = number(
-            "apex_haunch_length_m", strictly_positive=True
+        apex_haunch_length_m = (
+            width_m / 15.0
+            if apex_haunch_depth_mode == HAUNCH_DEPTH_AUTO
+            else number("apex_haunch_length_m", strictly_positive=True)
         )
         if apex_haunch_depth_mode == HAUNCH_DEPTH_SPECIFIED:
             apex_haunch_depth_mm = number(

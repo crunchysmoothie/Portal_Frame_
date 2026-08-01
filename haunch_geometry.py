@@ -13,14 +13,19 @@ from typing import Any, Mapping
 
 _TOLERANCE_MM = 1e-6
 
-# The user-specified fabrication rule uses the database flange width ``b``.
-# Keeping the property and label explicit makes the rule auditable and prevents
-# renderers from substituting nominal designation dimensions.
-HAUNCH_CUT_DEDUCTION_PROPERTY = "b"
-HAUNCH_CUT_DEDUCTION_LABEL = "flange width"
+# A rolled-section donor has its top flange removed and retains its bottom
+# flange.  The usable deep-end cut is therefore the clear web depth plus one
+# retained flange thickness.  ``h - tf - 2r1`` is the equivalent fallback when
+# a database row does not explicitly contain ``hw``.
+HAUNCH_CUT_BASIS = "hw + tf"
 HAUNCH_DEPTH_SPECIFIED = "Specified Depth"
 HAUNCH_DEPTH_CUT = "Cut-Depth"
-HAUNCH_DEPTH_MODES = (HAUNCH_DEPTH_SPECIFIED, HAUNCH_DEPTH_CUT)
+HAUNCH_DEPTH_AUTO = "Auto Size"
+HAUNCH_DEPTH_MODES = (
+    HAUNCH_DEPTH_SPECIFIED,
+    HAUNCH_DEPTH_CUT,
+    HAUNCH_DEPTH_AUTO,
+)
 
 
 @dataclass(frozen=True)
@@ -32,6 +37,8 @@ class HaunchCutDepthCheck:
     maximum_cut_depth_mm: float
     source_section_depth_mm: float
     source_flange_width_mm: float
+    source_clear_web_depth_mm: float
+    source_flange_thickness_mm: float
     deduction_property: str
     equation: str
 
@@ -46,13 +53,21 @@ class HaunchCutDepthCheck:
 def maximum_haunch_cut_depth_mm(section: Mapping[str, Any]) -> float:
     """Return the physical cut limit from actual database dimensions.
 
-    The result is never rounded upward.  A section whose flange width equals or
-    exceeds its depth cannot supply a positive haunch cut.
+    The result is never rounded upward.  The legacy ``h - b`` fallback is kept
+    only for partial synthetic/legacy mappings that lack web and flange data.
     """
 
     depth = float(section["h"])
-    deduction = float(section[HAUNCH_CUT_DEDUCTION_PROPERTY])
-    return max(depth - deduction, 0.0)
+    if "hw" in section and "tf" in section:
+        return max(float(section["hw"]) + float(section["tf"]), 0.0)
+    if "tf" in section:
+        return max(
+            depth
+            - float(section["tf"])
+            - 2.0 * float(section.get("r1", 0.0)),
+            0.0,
+        )
+    return max(depth - float(section.get("b", depth)), 0.0)
 
 
 def haunch_cut_depth_check(
@@ -63,7 +78,19 @@ def haunch_cut_depth_check(
 
     provided = float(provided_cut_depth_mm)
     depth = float(section["h"])
-    flange_width = float(section["b"])
+    flange_width = float(section.get("b", 0.0))
+    flange_thickness = float(section.get("tf", 0.0))
+    clear_web_depth = float(
+        section.get(
+            "hw",
+            max(
+                depth
+                - 2.0 * flange_thickness
+                - 2.0 * float(section.get("r1", 0.0)),
+                0.0,
+            ),
+        )
+    )
     maximum = maximum_haunch_cut_depth_mm(section)
     status = (
         "PASS"
@@ -76,8 +103,18 @@ def haunch_cut_depth_check(
         maximum_cut_depth_mm=maximum,
         source_section_depth_mm=depth,
         source_flange_width_mm=flange_width,
-        deduction_property=HAUNCH_CUT_DEDUCTION_PROPERTY,
-        equation=f"h - b = {depth:.1f} - {flange_width:.1f} = {maximum:.1f} mm",
+        source_clear_web_depth_mm=clear_web_depth,
+        source_flange_thickness_mm=flange_thickness,
+        deduction_property=HAUNCH_CUT_BASIS,
+        equation=(
+            f"hw + tf = {clear_web_depth:.1f} + "
+            f"{flange_thickness:.1f} = {maximum:.1f} mm"
+            if "tf" in section
+            else (
+                f"legacy h - b = {depth:.1f} - "
+                f"{flange_width:.1f} = {maximum:.1f} mm"
+            )
+        ),
     )
 
 
@@ -112,7 +149,7 @@ def governing_specified_haunch_cut_depth_mm(
                 HAUNCH_DEPTH_SPECIFIED,
             )
         )
-        if mode == HAUNCH_DEPTH_CUT:
+        if mode in (HAUNCH_DEPTH_CUT, HAUNCH_DEPTH_AUTO):
             continue
         requested.append(
             float(frame_data.get(f"{location}_haunch_depth", 0.0))
@@ -124,7 +161,7 @@ def resolve_haunch_cut_depths(
     frame_data: Mapping[str, Any],
     rafter_section: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Resolve candidate-dependent Cut-Depth inputs for one rafter section."""
+    """Resolve candidate-dependent maximum-cut inputs for one rafter section."""
 
     resolved = dict(frame_data)
     maximum = maximum_haunch_cut_depth_mm(rafter_section)
@@ -138,7 +175,7 @@ def resolve_haunch_cut_depths(
         if (
             str(resolved.get(f"use_{location}_haunch", "No")).lower()
             == "yes"
-            and mode == HAUNCH_DEPTH_CUT
+            and mode in (HAUNCH_DEPTH_CUT, HAUNCH_DEPTH_AUTO)
         ):
             resolved[depth_key] = maximum
     resolved["resolved_haunch_source_section"] = str(

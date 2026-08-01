@@ -114,6 +114,10 @@ def _composite_properties_cached(key: tuple) -> dict[str, Any]:
         "Designation": designation,
         "h": h,
         "b": b,
+        "tw": tw,
+        "tf": tf,
+        "r1": float(r1),
+        "hw": float(_hw),
     }
     cut_check = haunch_cut_depth_check(donor, depth)
     if not cut_check.is_valid:

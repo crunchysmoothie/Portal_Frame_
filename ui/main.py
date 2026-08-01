@@ -13,7 +13,12 @@ import flet_webview as fwv
 import httpx
 
 from connection_viewer import list_connection_views
-from foundation_design import FOUNDATION_STANDARDS
+from foundation_design import (
+    FOUNDATION_PASSIVE_RESISTANCE_OPTIONS,
+    FOUNDATION_SLIDING_OPTIONS,
+    FOUNDATION_STANDARDS,
+)
+from haunch_geometry import HAUNCH_DEPTH_AUTO, HAUNCH_DEPTH_CUT
 from preview_geometry import build_preview_geometry
 from truss_design import preview_truss
 from ui.analysis_render import combination_names, load_case_svg
@@ -486,15 +491,21 @@ def main(page: ft.Page) -> None:
     )
     eaves_haunch_depth_mode = dropdown(
         "eaves_haunch_depth_mode",
-        "Eaves haunch depth basis",
+        "Eaves haunch sizing basis",
         HAUNCH_DEPTH_OPTIONS,
-        helper="Cut-Depth uses the trial rafter maximum: section depth h minus flange width b.",
+        helper="Auto Size uses span/15 and the donor maximum cut depth (hw + tf).",
     )
     eaves_haunch_depth = number_field(
         "eaves_haunch_depth_mm",
         "Maximum eaves haunch depth",
         unit="mm",
         helper="Additional depth below the selected rafter at the eaves.",
+    )
+    eaves_haunch_length.disabled = (
+        DEFAULT_VALUES["eaves_haunch_depth_mode"] == HAUNCH_DEPTH_AUTO
+    )
+    eaves_haunch_depth.disabled = (
+        DEFAULT_VALUES["eaves_haunch_depth_mode"] == HAUNCH_DEPTH_AUTO
     )
     eaves_haunch_fields = ft.ResponsiveRow(
         controls=[
@@ -520,15 +531,21 @@ def main(page: ft.Page) -> None:
     )
     apex_haunch_depth_mode = dropdown(
         "apex_haunch_depth_mode",
-        "Apex haunch depth basis",
+        "Apex haunch sizing basis",
         HAUNCH_DEPTH_OPTIONS,
-        helper="Cut-Depth uses the trial rafter maximum: section depth h minus flange width b.",
+        helper="Auto Size uses span/15 and the donor maximum cut depth (hw + tf).",
     )
     apex_haunch_depth = number_field(
         "apex_haunch_depth_mm",
         "Maximum apex haunch depth",
         unit="mm",
         helper="Additional depth below the selected rafter at the apex.",
+    )
+    apex_haunch_length.disabled = (
+        DEFAULT_VALUES["apex_haunch_depth_mode"] == HAUNCH_DEPTH_AUTO
+    )
+    apex_haunch_depth.disabled = (
+        DEFAULT_VALUES["apex_haunch_depth_mode"] == HAUNCH_DEPTH_AUTO
     )
     apex_haunch_fields = ft.ResponsiveRow(
         controls=[
@@ -1092,8 +1109,9 @@ def main(page: ft.Page) -> None:
         "foundation_concrete_strength_mpa",
         "Concrete strength",
         unit="MPa",
-        helper="Cylinder strength for EC2; cube strength for SANS 10100.",
+        helper="Fixed design assumption: 25 MPa for all foundation designs.",
     )
+    foundation_concrete.disabled = True
     foundation_rebar = number_field(
         "foundation_rebar_strength_mpa",
         "Reinforcement yield strength",
@@ -1127,11 +1145,56 @@ def main(page: ft.Page) -> None:
     foundation_friction = number_field(
         "foundation_friction_coefficient",
         "Base friction coefficient",
-        helper="Passive soil resistance is omitted.",
+        helper="Interface coefficient used for base friction: Rf = mu x normal force.",
+    )
+    foundation_soil_cover = number_field(
+        "foundation_soil_cover_depth_m",
+        "Soil cover above footing",
+        unit="m",
+        helper="Depth of soil cover contributing to stabilising weight.",
+    )
+    foundation_sliding = dropdown(
+        "foundation_sliding_resistance",
+        "Sliding resistance",
+        FOUNDATION_SLIDING_OPTIONS,
+        helper=(
+            "Sliding Resisted means a separate restraint is provided, so pad sliding "
+            "does not govern sizing. Sliding Not Resisted designs the pad using base "
+            "friction and optional passive resistance."
+        ),
+    )
+    foundation_soil_friction_angle = number_field(
+        "foundation_soil_friction_angle_deg",
+        "Soil friction angle",
+        unit="degrees",
+        helper="Used to calculate Rankine Kp when passive resistance is included.",
+    )
+    foundation_passive_resistance = dropdown(
+        "foundation_passive_resistance",
+        "Passive soil resistance",
+        FOUNDATION_PASSIVE_RESISTANCE_OPTIONS,
+        helper="Include only where retained, compacted soil can be relied upon.",
+    )
+    foundation_passive_mobilisation = number_field(
+        "foundation_passive_mobilisation_factor",
+        "Passive mobilisation factor",
+        helper="Fraction from 0 to 1 applied to characteristic passive resistance.",
+    )
+    foundation_uls_sliding_required_sf = number_field(
+        "foundation_uls_sliding_required_sf",
+        "Required ULS sliding SF",
+        helper="Use 1.0 with factored ULS actions unless the project basis requires more.",
     )
     foundation_control_keys = {
         "foundation_permissible_bearing_kpa",
         "foundation_soil_unit_weight_kn_m3",
+        "foundation_soil_cover_depth_m",
+        "foundation_friction_coefficient",
+        "foundation_sliding_resistance",
+        "foundation_soil_friction_angle_deg",
+        "foundation_passive_resistance",
+        "foundation_passive_mobilisation_factor",
+        "foundation_uls_sliding_required_sf",
     }
 
     api_status_text = ft.Text(
@@ -1334,12 +1397,24 @@ def main(page: ft.Page) -> None:
                 f"soil cover {float(derived['soil_cover_weight_kN']):.1f} kN",
                 ft.Icons.SCALE_OUTLINED,
             ),
+            analysis_summary_line(
+                "Sliding basis",
+                f"{result['inputs'].get('sliding_resistance', 'Sliding Not Resisted')} | "
+                f"soil cover {float(result['inputs'].get('soil_cover_depth_m', 0.0)):.2f} m | "
+                f"friction coefficient {float(result['inputs'].get('friction_coefficient', 0.0)):.2f} | "
+                f"{result['inputs'].get('passive_resistance', 'Passive Resistance Excluded')} | "
+                f"phi {float(result['inputs'].get('soil_friction_angle_deg', 0.0)):.1f} degrees | "
+                f"mobilisation {float(result['inputs'].get('passive_mobilisation_factor', 0.0)):.2f}",
+                ft.Icons.SWAP_HORIZ,
+            ),
         ]
         for support in result.get("supports", []):
             bearing = support["serviceability"]["bearing"]
+            service_sliding = support["serviceability"]["sliding"]
             uplift = support["serviceability"]["uplift"]
             structural = support["structural"]
             stability = support["uls_stability"]
+            sliding = stability["sliding"]
             governing_check = max(
                 structural["checks"],
                 key=lambda item: float(item["utilisation"]),
@@ -1349,10 +1424,35 @@ def main(page: ft.Page) -> None:
                     f"Support {support['node']} - {support['status']}",
                     f"Bearing {bearing['status']} {float(bearing['q_max_kpa']):.1f} kPa "
                     f"(util {float(bearing['utilisation']):.3f}, {bearing['contact']} contact) | "
-                    f"ULS sliding SF {float(stability['sliding']['safety_factor']):.2f} | "
+                    f"ULS sliding {sliding.get('status', 'PASS')} "
+                    + (
+                        f"SF {float(sliding['safety_factor']):.2f} "
+                        f"(required {float(stability.get('required_sliding_safety_factor', 1.0)):.2f})"
+                        if sliding.get('status') not in {'NOT_CHECKED', 'RESISTED_EXTERNALLY'}
+                        else "(separate external restraint)"
+                    ) + " | "
                     f"ULS overturning SF {float(stability['overturning']['safety_factor']):.2f} | "
                     f"uplift {uplift['status']} ({float(uplift['net_vertical_kN']):.1f} kN net)",
                     ft.Icons.FOUNDATION,
+                ),
+                analysis_summary_line(
+                    f"Support {support['node']} - sliding resistance",
+                    f"ULS normal {float(sliding.get('normal_force_kN', 0.0)):.1f} kN | "
+                    f"friction {float(sliding.get('friction_resistance_kN', 0.0)):.1f} kN | "
+                    f"passive {float(sliding.get('passive_resistance_kN', 0.0)):.1f} kN | "
+                    f"total {float(sliding.get('total_resistance_kN', 0.0)):.1f} kN | "
+                    f"{sliding.get('combination', '-')}",
+                    ft.Icons.SWAP_HORIZ,
+                ),
+                analysis_summary_line(
+                    f"Support {support['node']} - SLS sliding",
+                    f"{service_sliding.get('status', 'NOT_CHECKED')} | "
+                    f"SF {float(service_sliding.get('safety_factor', 0.0)):.2f} | "
+                    f"demand {float(service_sliding.get('horizontal_demand_kN', 0.0)):.1f} kN | "
+                    f"friction {float(service_sliding.get('friction_resistance_kN', 0.0)):.1f} kN | "
+                    f"passive {float(service_sliding.get('passive_resistance_kN', 0.0)):.1f} kN | "
+                    f"{service_sliding.get('combination', '-')}",
+                    ft.Icons.SWAP_HORIZ,
                 ),
                 analysis_summary_line(
                     f"Support {support['node']} - governing RC check",
@@ -1887,8 +1987,9 @@ def main(page: ft.Page) -> None:
             analysis_summary_line(
                 "Calculation boundary",
                 "Steel plates, bolts, prying, weld groups, stiffeners and local "
-                "member effects are calculated. Concrete anchor breakout, pull-out "
-                "and embedment remain INPUT_REQUIRED.",
+                "member effects are calculated. HD-bolt anchorage is estimated "
+                "from Red Book Table 4.6 for 25 MPa concrete; pedestal geometry, "
+                "7d edge distance and reinforcement require confirmation.",
                 ft.Icons.INFO_OUTLINE,
             )
         )
@@ -1918,6 +2019,26 @@ def main(page: ft.Page) -> None:
         "View calculation report",
         icon=ft.Icons.DESCRIPTION_OUTLINED,
         disabled=True,
+    )
+    connection_outputs_card = card(
+        "Connection outputs",
+        "Open the calculation report or export the same checked, "
+        "dimensioned 2D connection sheets as PDF, DXF or DWG.",
+        ft.Column(
+            spacing=10,
+            controls=[
+                connection_export_status_text,
+                ft.Row(
+                    wrap=True,
+                    controls=[
+                        connection_report_button,
+                        connection_markup_button,
+                        connection_dxf_button,
+                        connection_dwg_button,
+                    ],
+                ),
+            ],
+        ),
     )
     open_connections_button = ft.OutlinedButton(
         "Open connection design",
@@ -2385,9 +2506,14 @@ def main(page: ft.Page) -> None:
                     (
                         f"Eaves {building['eaves_haunch_length'] / 1000:g} m x "
                         + (
-                            "Cut-Depth (h - b)"
+                            (
+                                "Auto Size (span/15 x max cut)"
+                                if building.get("eaves_haunch_depth_mode")
+                                == HAUNCH_DEPTH_AUTO
+                                else "Cut-Depth (hw + tf)"
+                            )
                             if building.get("eaves_haunch_depth_mode")
-                            == "Cut-Depth"
+                            in (HAUNCH_DEPTH_CUT, HAUNCH_DEPTH_AUTO)
                             else f"{building['eaves_haunch_depth']:.0f} mm"
                         )
                         if building["use_eaves_haunch"] == "Yes"
@@ -2396,9 +2522,14 @@ def main(page: ft.Page) -> None:
                     (
                         f"Apex {building['apex_haunch_length'] / 1000:g} m/slope x "
                         + (
-                            "Cut-Depth (h - b)"
+                            (
+                                "Auto Size (span/15 x max cut)"
+                                if building.get("apex_haunch_depth_mode")
+                                == HAUNCH_DEPTH_AUTO
+                                else "Cut-Depth (hw + tf)"
+                            )
                             if building.get("apex_haunch_depth_mode")
-                            == "Cut-Depth"
+                            in (HAUNCH_DEPTH_CUT, HAUNCH_DEPTH_AUTO)
                             else f"{building['apex_haunch_depth']:.0f} mm"
                         )
                         if building["use_apex_haunch"] == "Yes"
@@ -2841,9 +2972,9 @@ def main(page: ft.Page) -> None:
                 "Selected rafter haunch-cut limit",
                 (
                     f"{haunches.get('source_rafter_section', sections['rafter'])}: "
-                    f"h - b = "
-                    f"{float(haunches.get('source_section_depth_mm', 0)):.1f} - "
-                    f"{float(haunches.get('source_flange_width_mm', 0)):.1f} = "
+                    f"hw + tf = "
+                    f"{float(haunches.get('source_clear_web_depth_mm', 0)):.1f} + "
+                    f"{float(haunches.get('source_flange_thickness_mm', 0)):.1f} = "
                     f"{float(haunches.get('maximum_cut_depth_mm', 0)):.1f} mm"
                 ),
                 ft.Icons.STRAIGHTEN,
@@ -2949,7 +3080,7 @@ def main(page: ft.Page) -> None:
         if connection_markup:
             connection_markup_button.url = ft.Url(
                 url=f"{API_URL}{connection_markup['download_url']}",
-                target=ft.UrlTarget.SELF,
+                target=ft.UrlTarget.BLANK,
             )
             connection_markup_button.disabled = False
         if connection_dxf:
@@ -2977,7 +3108,7 @@ def main(page: ft.Page) -> None:
         if connection_report:
             connection_report_button.url = ft.Url(
                 url=f"{API_URL}{connection_report['download_url']}",
-                target=ft.UrlTarget.SELF,
+                target=ft.UrlTarget.BLANK,
             )
             connection_report_button.disabled = False
         show_connection_results(connections)
@@ -3211,9 +3342,14 @@ def main(page: ft.Page) -> None:
                     (
                         f"Eaves {building['eaves_haunch_length'] / 1000:g} m x "
                         + (
-                            "Cut-Depth (h - b)"
+                            (
+                                "Auto Size (span/15 x max cut)"
+                                if building.get("eaves_haunch_depth_mode")
+                                == HAUNCH_DEPTH_AUTO
+                                else "Cut-Depth (hw + tf)"
+                            )
                             if building.get("eaves_haunch_depth_mode")
-                            == "Cut-Depth"
+                            in (HAUNCH_DEPTH_CUT, HAUNCH_DEPTH_AUTO)
                             else f"{building['eaves_haunch_depth']:.0f} mm"
                         )
                         if building["use_eaves_haunch"] == "Yes"
@@ -3222,9 +3358,14 @@ def main(page: ft.Page) -> None:
                     (
                         f"Apex {building['apex_haunch_length'] / 1000:g} m/slope x "
                         + (
-                            "Cut-Depth (h - b)"
+                            (
+                                "Auto Size (span/15 x max cut)"
+                                if building.get("apex_haunch_depth_mode")
+                                == HAUNCH_DEPTH_AUTO
+                                else "Cut-Depth (hw + tf)"
+                            )
                             if building.get("apex_haunch_depth_mode")
-                            == "Cut-Depth"
+                            in (HAUNCH_DEPTH_CUT, HAUNCH_DEPTH_AUTO)
                             else f"{building['apex_haunch_depth']:.0f} mm"
                         )
                         if building["use_apex_haunch"] == "Yes"
@@ -3296,9 +3437,24 @@ def main(page: ft.Page) -> None:
             if value.strip()
         ])
 
+    def sync_auto_haunch_values() -> None:
+        """Keep disabled Auto Size fields visibly tied to the current span."""
+
+        try:
+            auto_length = float(gable_width.value) / 15.0
+        except (TypeError, ValueError):
+            return
+        if eaves_haunch_depth_mode.value == HAUNCH_DEPTH_AUTO:
+            eaves_haunch_length.value = f"{auto_length:g}"
+            eaves_haunch_depth.value = ""
+        if apex_haunch_depth_mode.value == HAUNCH_DEPTH_AUTO:
+            apex_haunch_length.value = f"{auto_length:g}"
+            apex_haunch_depth.value = ""
+
     def update_conditionals(_=None) -> None:
         sync_portal_section_options()
         sync_gable_section_options()
+        sync_auto_haunch_values()
         is_truss = structural_system.value == "Truss"
         if is_truss:
             building_type.value = "Normal"
@@ -3370,11 +3526,17 @@ def main(page: ft.Page) -> None:
         apex_haunch_fields.visible = (
             not is_truss and bool(use_apex_haunch.value)
         )
-        eaves_haunch_depth.disabled = (
-            eaves_haunch_depth_mode.value == "Cut-Depth"
+        eaves_auto_size = eaves_haunch_depth_mode.value == HAUNCH_DEPTH_AUTO
+        apex_auto_size = apex_haunch_depth_mode.value == HAUNCH_DEPTH_AUTO
+        eaves_haunch_length.disabled = eaves_auto_size
+        apex_haunch_length.disabled = apex_auto_size
+        eaves_haunch_depth.disabled = eaves_haunch_depth_mode.value in (
+            HAUNCH_DEPTH_CUT,
+            HAUNCH_DEPTH_AUTO,
         )
-        apex_haunch_depth.disabled = (
-            apex_haunch_depth_mode.value == "Cut-Depth"
+        apex_haunch_depth.disabled = apex_haunch_depth_mode.value in (
+            HAUNCH_DEPTH_CUT,
+            HAUNCH_DEPTH_AUTO,
         )
         cut_limit = rafter_haunch_cut_limit(
             str(rafter_section_type.value),
@@ -3382,20 +3544,44 @@ def main(page: ft.Page) -> None:
         )
         cut_properties = cut_limit.get("properties", {})
         cut_formula = (
-            f"h - b = {float(cut_properties.get('h', 0)):.1f} - "
-            f"{float(cut_properties.get('b', 0)):.1f} = "
+            f"hw + tf = {float(cut_properties.get('hw', 0)):.1f} + "
+            f"{float(cut_properties.get('tf', 0)):.1f} = "
             f"{float(cut_limit.get('maximum_cut_depth_mm', 0)):.1f} mm"
+        )
+        uses_auto_size = (
+            bool(use_eaves_haunch.value)
+            and eaves_haunch_depth_mode.value == HAUNCH_DEPTH_AUTO
+        ) or (
+            bool(use_apex_haunch.value)
+            and apex_haunch_depth_mode.value == HAUNCH_DEPTH_AUTO
         )
         uses_cut_depth = (
             bool(use_eaves_haunch.value)
-            and eaves_haunch_depth_mode.value == "Cut-Depth"
+            and eaves_haunch_depth_mode.value == HAUNCH_DEPTH_CUT
         ) or (
             bool(use_apex_haunch.value)
-            and apex_haunch_depth_mode.value == "Cut-Depth"
+            and apex_haunch_depth_mode.value == HAUNCH_DEPTH_CUT
         )
-        if uses_cut_depth and cut_limit.get("mode") == "automatic":
+        try:
+            auto_length_m = float(gable_width.value) / 15.0
+            auto_length_text = f"{auto_length_m:.3f} m"
+        except (TypeError, ValueError):
+            auto_length_text = "span/15"
+        if uses_auto_size and cut_limit.get("mode") == "automatic":
             haunch_cut_guidance.value = (
-                "Cut-Depth is resolved for every trial rafter as h - b, so "
+                f"Auto Size sets each haunch length to {auto_length_text} "
+                "and resolves the maximum cut depth (hw + tf) for every "
+                "trial rafter. The selected values are reported after analysis."
+            )
+        elif uses_auto_size and cut_limit.get("mode") == "manual":
+            haunch_cut_guidance.value = (
+                f"Auto Size sets each haunch length to {auto_length_text}. "
+                f"Maximum cut depth for {cut_limit.get('section', '-')}: "
+                f"{cut_formula}."
+            )
+        elif uses_cut_depth and cut_limit.get("mode") == "automatic":
+            haunch_cut_guidance.value = (
+                "Cut-Depth is resolved for every trial rafter as hw + tf, so "
                 "it does not impose a fixed-depth section filter. The selected "
                 "value is reported after analysis."
             )
@@ -3406,10 +3592,10 @@ def main(page: ft.Page) -> None:
             )
         elif cut_limit.get("mode") == "automatic":
             haunch_cut_guidance.value = (
-                "Automatic sizing excludes rafters that cannot supply the "
-                "entered cut. Current family ceiling: "
-                f"{cut_limit.get('section', '-')} ({cut_formula}). The "
-                "selected-section limit is reported after analysis."
+                "Automatic sizing treats the entered haunch depth as a "
+                "section filter and excludes every trial rafter whose usable "
+                "donor depth (hw + tf) is too small. The selected rafter and "
+                "its actual cut limit are reported after analysis."
             )
         elif cut_limit.get("mode") == "manual":
             haunch_cut_guidance.value = (
@@ -3465,6 +3651,7 @@ def main(page: ft.Page) -> None:
     gable_section.on_select = update_conditionals
 
     def update_live_input(_=None) -> None:
+        sync_auto_haunch_values()
         if structural_system.value == "Truss":
             span_count = entered_truss_span_count()
             truss_internal_support.disabled = span_count <= 1
@@ -3978,6 +4165,7 @@ def main(page: ft.Page) -> None:
                     "and haunch connection, including failed checks.",
                     connection_result_summary,
                 ),
+                connection_outputs_card,
                 card(
                     "Interactive 3D connection model",
                     "Inspect the calculated members, plates, bolts and flat "
@@ -3991,35 +4179,16 @@ def main(page: ft.Page) -> None:
                         ],
                     ),
                 ),
-                card(
-                    "Connection outputs",
-                    "Open the calculation report or export the same checked, "
-                    "dimensioned 2D connection sheets as PDF, DXF or DWG.",
-                    ft.Column(
-                        spacing=10,
-                        controls=[
-                            connection_export_status_text,
-                            ft.Row(
-                                wrap=True,
-                                controls=[
-                                    connection_report_button,
-                                    connection_markup_button,
-                                    connection_dxf_button,
-                                    connection_dwg_button,
-                                ],
-                            ),
-                        ],
-                    ),
-                ),
                 ft.Container(
                     bgcolor=WARNING_BG,
                     border_radius=10,
                     padding=14,
                     content=ft.Text(
-                        "INPUT REQUIRED: concrete anchor breakout, pull-out and "
-                        "embedment cannot be accepted until the project anchor "
-                        "standard, anchor type, embedment and pedestal geometry are "
-                        "provided. All outputs require competent-engineer review.",
+                        "DETAIL CONFIRMATION REQUIRED: Red Book HD-bolt anchorage "
+                        "is estimated for 25 MPa concrete. Confirm the specified "
+                        "embedment, anchor plate, 7d concrete edge distance, "
+                        "pedestal geometry and reinforcement. All outputs require "
+                        "competent-engineer review.",
                         color="#745B2B",
                         weight=ft.FontWeight.BOLD,
                     ),
@@ -4053,8 +4222,8 @@ def main(page: ft.Page) -> None:
                 foundation_status_card,
                 card(
                     "Required soil inputs",
-                    "Enter only the project-specific soil unit weight and permissible "
-                    "bearing pressure. The program calculates pad length, width and height.",
+                    "Enter the project-specific soil parameters. The program calculates "
+                    "pad length, width and height while reporting the selected sliding basis.",
                     ft.Column(
                         spacing=10,
                         controls=[
@@ -4062,6 +4231,13 @@ def main(page: ft.Page) -> None:
                                 controls=[
                                     foundation_bearing,
                                     foundation_soil_weight,
+                                    foundation_soil_cover,
+                                    foundation_friction,
+                                    foundation_sliding,
+                                    foundation_soil_friction_angle,
+                                    foundation_passive_resistance,
+                                    foundation_passive_mobilisation,
+                                    foundation_uls_sliding_required_sf,
                                 ]
                             ),
                         ],
@@ -4069,12 +4245,15 @@ def main(page: ft.Page) -> None:
                 ),
                 card(
                     "Automatic design assumptions",
-                    "These fixed preliminary values keep the user input to the two "
-                    "soil parameters and are repeated in the result for audit.",
+                    "Concrete, reinforcement and loaded-area assumptions remain fixed. "
+                    "When the pad must resist sliding, the calculation uses the entered "
+                    "base-friction and optional passive-pressure inputs. A selected "
+                    "external restraint is excluded from pad sizing and remains a design hold point.",
                     ft.Text(
-                        "SANS 10100-1 | 30 MPa concrete | 500 MPa reinforcement | "
+                        "SANS 10100-1 | 25 MPa concrete | 500 MPa reinforcement | "
                         "T16@150 bottom mesh | 75 mm cover | 400 Ã— 400 mm loaded area | "
-                        "0.50 m soil cover | base friction coefficient 0.35 | "
+                        "ULS reactions are already factored | required sliding SF is user-entered | "
+                        "ULS overturning SF remains 1.5." if True else ""
                         "ULS sliding and overturning safety factors â‰¥ 1.5.",
                         size=12,
                         color=TEXT_MUTED,

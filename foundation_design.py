@@ -16,7 +16,16 @@ FOUNDATION_STANDARDS = (
     "EN 1992-1-1 (EC2)",
     "SANS 10100-1",
 )
+FOUNDATION_SLIDING_OPTIONS = (
+    "Sliding Resisted",
+    "Sliding Not Resisted",
+)
+FOUNDATION_PASSIVE_RESISTANCE_OPTIONS = (
+    "Passive Resistance Excluded",
+    "Passive Resistance Included",
+)
 FAILED_NUMERIC = 1e12
+DESIGN_CONCRETE_STRENGTH_MPA = 25.0
 
 DEFAULT_FOUNDATION_VALUES: dict[str, Any] = {
     "foundation_standard": "SANS 10100-1",
@@ -25,29 +34,39 @@ DEFAULT_FOUNDATION_VALUES: dict[str, Any] = {
     "foundation_thickness_mm": "500",
     "foundation_loaded_length_mm": "400",
     "foundation_loaded_width_mm": "400",
-    "foundation_concrete_strength_mpa": "30",
+    "foundation_concrete_strength_mpa": "25",
     "foundation_rebar_strength_mpa": "500",
     "foundation_bar_diameter_mm": "16",
     "foundation_bar_spacing_mm": "200",
     "foundation_cover_mm": "75",
     "foundation_permissible_bearing_kpa": "150",
     "foundation_base_depth_m": "0.8",
+    "foundation_soil_cover_depth_m": "0.3",
     "foundation_soil_unit_weight_kn_m3": "18",
     "foundation_friction_coefficient": "0.45",
+    "foundation_sliding_resistance": "Sliding Not Resisted",
+    "foundation_soil_friction_angle_deg": "25",
+    "foundation_passive_resistance": "Passive Resistance Excluded",
+    "foundation_passive_mobilisation_factor": "0.5",
+    "foundation_uls_sliding_required_sf": "1.0",
 }
 
 AUTOMATIC_FOUNDATION_ASSUMPTIONS: dict[str, float | str] = {
     "foundation_standard": "SANS 10100-1",
     "foundation_loaded_length_mm": 400.0,
     "foundation_loaded_width_mm": 400.0,
-    "foundation_concrete_strength_mpa": 30.0,
+    "foundation_concrete_strength_mpa": DESIGN_CONCRETE_STRENGTH_MPA,
     "foundation_rebar_strength_mpa": 500.0,
     "foundation_bar_diameter_mm": 16.0,
     "foundation_bar_spacing_mm": 150.0,
     "foundation_cover_mm": 75.0,
     "soil_cover_above_footing_m": 0.5,
     "foundation_friction_coefficient": 0.35,
-    "minimum_stability_safety_factor": 1.5,
+    "foundation_soil_friction_angle_deg": 25.0,
+    "foundation_passive_resistance": "Passive Resistance Excluded",
+    "foundation_passive_mobilisation_factor": 0.5,
+    "uls_sliding_required_sf": 1.0,
+    "minimum_overturning_safety_factor": 1.5,
 }
 
 
@@ -68,9 +87,10 @@ def _validated_inputs(raw: Mapping[str, Any]) -> dict[str, float | str]:
         minimum: float = 0.0,
         maximum: float | None = None,
         strictly_positive: bool = True,
+        default: Any = "",
     ) -> float:
         try:
-            value = float(raw.get(key, ""))
+            value = float(raw.get(key, default))
         except (TypeError, ValueError):
             errors[key] = "Enter a number."
             return 0.0
@@ -94,9 +114,7 @@ def _validated_inputs(raw: Mapping[str, Any]) -> dict[str, float | str]:
     thickness = number("foundation_thickness_mm")
     loaded_length = number("foundation_loaded_length_mm")
     loaded_width = number("foundation_loaded_width_mm")
-    concrete = number(
-        "foundation_concrete_strength_mpa", minimum=15, maximum=100
-    )
+    concrete = DESIGN_CONCRETE_STRENGTH_MPA
     rebar = number("foundation_rebar_strength_mpa", minimum=250)
     diameter = number("foundation_bar_diameter_mm", minimum=6)
     spacing = number("foundation_bar_spacing_mm", minimum=50)
@@ -105,6 +123,13 @@ def _validated_inputs(raw: Mapping[str, Any]) -> dict[str, float | str]:
     base_depth = number(
         "foundation_base_depth_m", minimum=0, strictly_positive=False
     )
+    soil_cover_depth = (
+        number(
+            "foundation_soil_cover_depth_m", minimum=0, strictly_positive=False
+        )
+        if "foundation_soil_cover_depth_m" in raw
+        else 0.0
+    )
     soil_weight = number("foundation_soil_unit_weight_kn_m3")
     friction = number(
         "foundation_friction_coefficient",
@@ -112,6 +137,46 @@ def _validated_inputs(raw: Mapping[str, Any]) -> dict[str, float | str]:
         maximum=1.5,
         strictly_positive=False,
     )
+    soil_friction_angle = number(
+        "foundation_soil_friction_angle_deg",
+        minimum=0,
+        maximum=60,
+        strictly_positive=False,
+        default=25.0,
+    )
+    passive_mobilisation = number(
+        "foundation_passive_mobilisation_factor",
+        minimum=0,
+        maximum=1,
+        strictly_positive=False,
+        default=0.5,
+    )
+    uls_sliding_required_sf = number(
+        "foundation_uls_sliding_required_sf",
+        minimum=0,
+        default=1.0,
+    )
+    passive_resistance = str(
+        raw.get(
+            "foundation_passive_resistance",
+            "Passive Resistance Excluded",
+        )
+    ).strip()
+    if passive_resistance not in FOUNDATION_PASSIVE_RESISTANCE_OPTIONS:
+        errors["foundation_passive_resistance"] = (
+            f"Choose one of: {', '.join(FOUNDATION_PASSIVE_RESISTANCE_OPTIONS)}."
+        )
+    sliding_resistance = str(
+        raw.get("foundation_sliding_resistance", "Sliding Not Resisted")
+    ).strip()
+    if sliding_resistance in {"Yes", "True", "true"}:
+        sliding_resistance = "Sliding Resisted"
+    elif sliding_resistance in {"No", "False", "false"}:
+        sliding_resistance = "Sliding Not Resisted"
+    if sliding_resistance not in FOUNDATION_SLIDING_OPTIONS:
+        errors["foundation_sliding_resistance"] = (
+            f"Choose one of: {', '.join(FOUNDATION_SLIDING_OPTIONS)}."
+        )
 
     if loaded_length >= length * 1000:
         errors["foundation_loaded_length_mm"] = (
@@ -126,7 +191,7 @@ def _validated_inputs(raw: Mapping[str, Any]) -> dict[str, float | str]:
         errors["foundation_thickness_mm"] = (
             "Thickness must exceed cover plus half the bar diameter."
         )
-    if base_depth * 1000 < thickness:
+    if "foundation_soil_cover_depth_m" not in raw and base_depth * 1000 < thickness:
         errors["foundation_base_depth_m"] = (
             "Depth to the footing base must be at least the footing thickness."
         )
@@ -147,8 +212,18 @@ def _validated_inputs(raw: Mapping[str, Any]) -> dict[str, float | str]:
         "effective_depth_mm": effective_depth,
         "permissible_bearing_kpa": bearing,
         "base_depth_m": base_depth,
+        "soil_cover_depth_m": (
+            soil_cover_depth
+            if "foundation_soil_cover_depth_m" in raw
+            else max(base_depth - thickness / 1000.0, 0.0)
+        ),
         "soil_unit_weight_kn_m3": soil_weight,
         "friction_coefficient": friction,
+        "sliding_resistance": sliding_resistance,
+        "soil_friction_angle_deg": soil_friction_angle,
+        "passive_resistance": passive_resistance,
+        "passive_mobilisation_factor": passive_mobilisation,
+        "uls_sliding_required_sf": uls_sliding_required_sf,
     }
 
 
@@ -324,11 +399,29 @@ def _check_pad_foundations(
     d_mm = float(values["effective_depth_mm"])
     footprint = length * width
     footing_weight = footprint * thickness_m * 24.0
-    cover_depth = max(float(values["base_depth_m"]) - thickness_m, 0.0)
+    cover_depth = max(float(values["soil_cover_depth_m"]), 0.0)
     soil_cover_weight = max(
         footprint - loaded_length * loaded_width, 0.0
     ) * cover_depth * float(values["soil_unit_weight_kn_m3"])
     stabilising_weight = footing_weight + soil_cover_weight
+    passive_included = (
+        values["passive_resistance"] == "Passive Resistance Included"
+    )
+    sliding_check_required = (
+        values["sliding_resistance"] == "Sliding Not Resisted"
+    )
+    passive = passive_sliding_resistance(
+        float(values["soil_unit_weight_kn_m3"]),
+        float(values["soil_friction_angle_deg"]),
+        float(values["base_depth_m"]),
+        width,
+        float(values["passive_mobilisation_factor"]),
+    )
+    passive_resistance = (
+        float(passive["mobilised_resistance_kN"])
+        if passive_included and sliding_check_required
+        else 0.0
+    )
     provided_steel = (
         math.pi * float(values["bar_diameter_mm"]) ** 2 / 4
         * 1000
@@ -354,8 +447,18 @@ def _check_pad_foundations(
                 vertical, float(reaction["mz"]), length, width
             )
             horizontal = abs(float(reaction["fx"]))
-            sliding_capacity = (
+            friction_resistance = (
                 float(values["friction_coefficient"]) * max(vertical, 0.0)
+                if sliding_check_required else 0.0
+            )
+            sliding_capacity = (
+                friction_resistance + passive_resistance
+                if sliding_check_required else 0.0
+            )
+            sliding_safety_factor = (
+                sliding_capacity / horizontal
+                if sliding_check_required and horizontal > 1e-9
+                else math.inf
             )
             service_rows.append({
                 "combination": reaction["load_combination"],
@@ -369,7 +472,22 @@ def _check_pad_foundations(
                 ),
                 "sliding_utilisation": (
                     horizontal / sliding_capacity
-                    if sliding_capacity > 0 else FAILED_NUMERIC
+                    if sliding_check_required and sliding_capacity > 0
+                    else 0.0
+                ),
+                "sliding_safety_factor": sliding_safety_factor,
+                "sliding_normal_force_kN": max(vertical, 0.0),
+                "sliding_friction_resistance_kN": friction_resistance,
+                "sliding_passive_resistance_kN": passive_resistance,
+                "sliding_total_resistance_kN": sliding_capacity,
+                "sliding_status": (
+                    "RESISTED_EXTERNALLY"
+                    if not sliding_check_required
+                    else (
+                        "PASS"
+                        if sliding_safety_factor >= 1.0
+                        else "FAIL"
+                    )
                 ),
                 "uplift_status": "PASS" if vertical > 0 else "FAIL",
             })
@@ -404,17 +522,24 @@ def _check_pad_foundations(
                 abs(float(reaction["mz"]))
                 + horizontal_uls * thickness_m
             )
-            sliding_resistance = (
+            friction_resistance = (
                 float(values["friction_coefficient"])
                 * max(foundation_vertical, 0.0)
+                if sliding_check_required else 0.0
+            )
+            sliding_resistance = (
+                friction_resistance + passive_resistance
+                if sliding_check_required else 0.0
             )
             stabilising_moment = (
                 max(foundation_vertical, 0.0) * length / 2.0
             )
-            stability_factor = 1.5
+            sliding_required_sf = float(values["uls_sliding_required_sf"])
+            overturning_required_sf = 1.5
             sliding_safety_factor = (
                 sliding_resistance / horizontal_uls
-                if horizontal_uls > 1e-9 else math.inf
+                if sliding_check_required and horizontal_uls > 1e-9
+                else math.inf
             )
             overturning_safety_factor = (
                 stabilising_moment / overturning_moment
@@ -508,6 +633,23 @@ def _check_pad_foundations(
             else:
                 face_capacity = min(0.75 * math.sqrt(fck), 4.75)
 
+            sliding_check = (
+                _check(
+                    f"ULS sliding stability (SF >= {sliding_required_sf:.2f})",
+                    sliding_required_sf * horizontal_uls,
+                    sliding_resistance,
+                    "kN",
+                )
+                if sliding_check_required
+                else {
+                    "name": "ULS sliding stability (external restraint)",
+                    "demand": 0.0,
+                    "capacity": 0.0,
+                    "units": "",
+                    "utilisation": 0.0,
+                    "status": "RESISTED_EXTERNALLY",
+                }
+            )
             checks = [
                 {
                     "name": "ULS soil contact equilibrium",
@@ -523,15 +665,10 @@ def _check_pad_foundations(
                         "PASS" if contact_equilibrium else "FAIL"
                     ),
                 },
-                _check(
-                    "ULS sliding stability (SF >= 1.5)",
-                    stability_factor * horizontal_uls,
-                    sliding_resistance,
-                    "kN",
-                ),
+                sliding_check,
                 _check(
                     "ULS overturning stability (SF >= 1.5)",
-                    stability_factor * overturning_moment,
+                    overturning_required_sf * overturning_moment,
                     stabilising_moment,
                     "kNm",
                 ),
@@ -550,6 +687,11 @@ def _check_pad_foundations(
                 "base_moment_kNm": float(reaction["mz"]),
                 "horizontal_reaction_kN": float(reaction["fx"]),
                 "sliding_safety_factor": sliding_safety_factor,
+                "sliding_required_safety_factor": sliding_required_sf,
+                "sliding_normal_force_kN": max(foundation_vertical, 0.0),
+                "sliding_friction_resistance_kN": friction_resistance,
+                "sliding_passive_resistance_kN": passive_resistance,
+                "sliding_total_resistance_kN": sliding_resistance,
                 "overturning_safety_factor": overturning_safety_factor,
                 "contact": pressures["contact"],
                 "q_min_kpa": q_min,
@@ -587,12 +729,16 @@ def _check_pad_foundations(
             else "FAIL"
         )
         sliding_status = (
-            "PASS"
-            if (
-                math.isfinite(governing_sliding["sliding_utilisation"])
-                and governing_sliding["sliding_utilisation"] <= 1
+            "RESISTED_EXTERNALLY"
+            if not sliding_check_required
+            else (
+                "PASS"
+                if (
+                    math.isfinite(governing_sliding["sliding_utilisation"])
+                    and governing_sliding["sliding_utilisation"] <= 1
+                )
+                else "FAIL"
             )
-            else "FAIL"
         )
         structural_status = (
             "PASS"
@@ -603,6 +749,11 @@ def _check_pad_foundations(
             bearing_status,
             governing_uplift["uplift_status"],
             structural_status,
+            *(
+                (sliding_status,)
+                if sliding_check_required
+                else ()
+            ),
         )
         support_results.append({
             "node": node,
@@ -621,6 +772,24 @@ def _check_pad_foundations(
                     "status": sliding_status,
                     "combination": governing_sliding["combination"],
                     "utilisation": governing_sliding["sliding_utilisation"],
+                    "safety_factor": governing_sliding[
+                        "sliding_safety_factor"
+                    ],
+                    "normal_force_kN": governing_sliding[
+                        "sliding_normal_force_kN"
+                    ],
+                    "horizontal_demand_kN": abs(
+                        float(governing_sliding["horizontal_reaction_kN"])
+                    ),
+                    "friction_resistance_kN": governing_sliding[
+                        "sliding_friction_resistance_kN"
+                    ],
+                    "passive_resistance_kN": governing_sliding[
+                        "sliding_passive_resistance_kN"
+                    ],
+                    "total_resistance_kN": governing_sliding[
+                        "sliding_total_resistance_kN"
+                    ],
                 },
                 "uplift": {
                     "status": governing_uplift["uplift_status"],
@@ -645,8 +814,11 @@ def _check_pad_foundations(
                 "status": (
                     "PASS"
                     if (
-                        governing_sliding_uls["sliding_safety_factor"]
-                        >= 1.5
+                        (
+                            not sliding_check_required
+                            or governing_sliding_uls["sliding_safety_factor"]
+                            >= float(values["uls_sliding_required_sf"])
+                        )
                         and governing_overturning_uls[
                             "overturning_safety_factor"
                         ]
@@ -654,11 +826,40 @@ def _check_pad_foundations(
                     )
                     else "FAIL"
                 ),
-                "required_safety_factor": 1.5,
+                "required_sliding_safety_factor": float(
+                    values["uls_sliding_required_sf"]
+                ),
+                "required_overturning_safety_factor": 1.5,
                 "sliding": {
+                    "status": (
+                        "RESISTED_EXTERNALLY"
+                        if not sliding_check_required
+                        else (
+                            "PASS"
+                            if governing_sliding_uls[
+                                "sliding_safety_factor"
+                            ] >= float(values["uls_sliding_required_sf"])
+                            else "FAIL"
+                        )
+                    ),
                     "combination": governing_sliding_uls["combination"],
                     "safety_factor": governing_sliding_uls[
                         "sliding_safety_factor"
+                    ],
+                    "normal_force_kN": governing_sliding_uls[
+                        "sliding_normal_force_kN"
+                    ],
+                    "horizontal_demand_kN": abs(
+                        float(governing_sliding_uls["horizontal_reaction_kN"])
+                    ),
+                    "friction_resistance_kN": governing_sliding_uls[
+                        "sliding_friction_resistance_kN"
+                    ],
+                    "passive_resistance_kN": governing_sliding_uls[
+                        "sliding_passive_resistance_kN"
+                    ],
+                    "total_resistance_kN": governing_sliding_uls[
+                        "sliding_total_resistance_kN"
                     ],
                 },
                 "overturning": {
@@ -687,6 +888,11 @@ def _check_pad_foundations(
             "stabilising_weight_kN": stabilising_weight,
             "provided_steel_mm2_per_m": provided_steel,
             "effective_depth_mm": d_mm,
+            "passive_coefficient_kp": passive["coefficient_kp"],
+            "passive_characteristic_resistance_kN": passive[
+                "characteristic_resistance_kN"
+            ],
+            "passive_mobilised_resistance_kN": passive_resistance,
         },
         "supports": support_results,
         "references": (
@@ -705,22 +911,75 @@ def _check_pad_foundations(
             "One isolated rectangular pad is centred below each portal support.",
             "Only in-plane portal reaction Fx, Fy and Mz are applied; out-of-plane actions require a separate model.",
             "Service bearing uses footing self-weight and soil cover above the pad.",
-            "Passive soil resistance is omitted from sliding resistance; base friction only is included.",
-            "ULS sliding and overturning each require a minimum safety factor of 1.5.",
+            (
+                "Pad sliding is excluded from automatic sizing because a separate "
+                "external sliding restraint is specified; that restraint requires "
+                "an independent design and load path."
+                if not sliding_check_required
+                else (
+                    "Sliding resistance includes base friction plus mobilised "
+                    "Rankine passive pressure against one footing face."
+                    if passive_included
+                    else "Passive soil resistance is excluded; base friction only is included."
+                )
+            ),
+            (
+                "ULS reactions are already factored; the entered sliding safety "
+                f"factor is {float(values['uls_sliding_required_sf']):.2f}. "
+                "ULS overturning requires a minimum safety factor of 1.5."
+            ),
             "ULS footing bending and shear exclude footing self-weight, following the pad-footing design procedure in the supplied RC manual.",
             "A single bottom reinforcement mesh is used in both directions at the entered bar diameter and spacing.",
         ],
         "warnings": [
             "Permissible bearing pressure and settlement require project-specific geotechnical confirmation.",
+            (
+                "Credited passive resistance requires confirmation that the soil "
+                "will remain in place, is adequately compacted and drained, and "
+                "can mobilise the entered resistance for the design life."
+                if passive_included and sliding_check_required
+                else "Passive soil resistance is not credited."
+            ),
             "Anchor bolts, base plate, pedestal, dowels, development length, crack width, durability exposure and construction joints are outside this calculation.",
             "Overall building overturning and interaction between adjacent foundations are not checked by an isolated-pad calculation.",
         ],
     }
 
 
+def passive_sliding_resistance(
+    soil_unit_weight_kn_m3: float,
+    soil_friction_angle_deg: float,
+    embedment_depth_m: float,
+    footing_face_width_m: float,
+    mobilisation_factor: float,
+) -> dict[str, float]:
+    """Return Rankine passive resistance mobilised against one footing face.
+
+    The in-plane portal reaction acts along the footing length, so the resisting
+    face is the footing width. The passive wedge is calculated from ground level
+    to the footing base. Cohesion and surcharge are excluded.
+    """
+
+    angle_rad = math.radians(soil_friction_angle_deg)
+    coefficient = math.tan(math.pi / 4 + angle_rad / 2) ** 2
+    characteristic = (
+        0.5
+        * soil_unit_weight_kn_m3
+        * coefficient
+        * embedment_depth_m**2
+        * footing_face_width_m
+    )
+    return {
+        "coefficient_kp": coefficient,
+        "characteristic_resistance_kN": characteristic,
+        "mobilisation_factor": mobilisation_factor,
+        "mobilised_resistance_kN": mobilisation_factor * characteristic,
+    }
+
+
 def _automatic_user_inputs(
     raw_inputs: Mapping[str, Any],
-) -> tuple[float, float]:
+) -> tuple[float, float, float, float, str, float, str, float, float]:
     errors: dict[str, str] = {}
 
     def positive(key: str) -> float:
@@ -735,9 +994,81 @@ def _automatic_user_inputs(
 
     soil_weight = positive("foundation_soil_unit_weight_kn_m3")
     bearing = positive("foundation_permissible_bearing_kpa")
+    try:
+        soil_cover = float(raw_inputs.get("foundation_soil_cover_depth_m", 0.5))
+        friction = float(raw_inputs.get("foundation_friction_coefficient", 0.35))
+        soil_friction_angle = float(
+            raw_inputs.get("foundation_soil_friction_angle_deg", 25.0)
+        )
+        passive_mobilisation = float(
+            raw_inputs.get("foundation_passive_mobilisation_factor", 0.5)
+        )
+        uls_sliding_required_sf = float(
+            raw_inputs.get("foundation_uls_sliding_required_sf", 1.0)
+        )
+    except (TypeError, ValueError):
+        soil_cover = friction = soil_friction_angle = 0.0
+        passive_mobilisation = uls_sliding_required_sf = 0.0
+        errors["foundation_sliding_inputs"] = (
+            "Enter numbers for soil cover, friction angle, mobilisation and safety factor."
+        )
+    sliding = str(
+        raw_inputs.get("foundation_sliding_resistance", "Sliding Not Resisted")
+    ).strip()
+    if sliding not in FOUNDATION_SLIDING_OPTIONS:
+        errors["foundation_sliding_resistance"] = (
+            f"Choose one of: {', '.join(FOUNDATION_SLIDING_OPTIONS)}."
+        )
+    passive = str(
+        raw_inputs.get(
+            "foundation_passive_resistance",
+            "Passive Resistance Excluded",
+        )
+    ).strip()
+    if passive not in FOUNDATION_PASSIVE_RESISTANCE_OPTIONS:
+        errors["foundation_passive_resistance"] = (
+            f"Choose one of: {', '.join(FOUNDATION_PASSIVE_RESISTANCE_OPTIONS)}."
+        )
+    if not math.isfinite(soil_cover) or soil_cover < 0:
+        errors["foundation_soil_cover_depth_m"] = "Enter a value of at least 0."
+    if not math.isfinite(friction) or friction < 0 or friction > 1.5:
+        errors["foundation_friction_coefficient"] = "Enter a value from 0 to 1.5."
+    if (
+        not math.isfinite(soil_friction_angle)
+        or soil_friction_angle < 0
+        or soil_friction_angle > 60
+    ):
+        errors["foundation_soil_friction_angle_deg"] = (
+            "Enter a value from 0 to 60 degrees."
+        )
+    if (
+        not math.isfinite(passive_mobilisation)
+        or passive_mobilisation < 0
+        or passive_mobilisation > 1
+    ):
+        errors["foundation_passive_mobilisation_factor"] = (
+            "Enter a value from 0 to 1."
+        )
+    if (
+        not math.isfinite(uls_sliding_required_sf)
+        or uls_sliding_required_sf <= 0
+    ):
+        errors["foundation_uls_sliding_required_sf"] = (
+            "Enter a finite value greater than zero."
+        )
     if errors:
         raise FoundationInputError(errors)
-    return soil_weight, bearing
+    return (
+        soil_weight,
+        bearing,
+        soil_cover,
+        friction,
+        sliding,
+        soil_friction_angle,
+        passive,
+        passive_mobilisation,
+        uls_sliding_required_sf,
+    )
 
 
 def _round_up(value: float, increment: float) -> float:
@@ -749,19 +1080,29 @@ def design_pad_foundations(
 ) -> dict[str, Any]:
     """Automatically size one common isolated pad for all portal supports.
 
-    The user supplies only soil unit weight and permissible bearing pressure.
-    Plan dimensions and thickness are searched in practical increments using
-    fixed, reported concrete, reinforcement, cover, embedment and friction
-    assumptions.
+    The user supplies soil unit weight, permissible bearing pressure, soil cover,
+    friction and the sliding-resistance basis. Plan dimensions and thickness are
+    searched in practical increments using fixed, reported concrete,
+    reinforcement, cover and loaded-area assumptions.
     """
 
     # Preserve the existing explicit-input calculation contract for saved API
-    # clients and regression comparisons. The product UI intentionally sends
-    # only the two soil inputs and therefore always uses automatic sizing.
+    # clients and regression comparisons. The product UI omits explicit footing
+    # dimensions and therefore always uses automatic sizing.
     if "foundation_length_m" in raw_inputs:
         return _check_pad_foundations(snapshot, raw_inputs)
 
-    soil_weight, bearing = _automatic_user_inputs(raw_inputs)
+    (
+        soil_weight,
+        bearing,
+        soil_cover,
+        friction,
+        sliding,
+        soil_friction_angle,
+        passive,
+        passive_mobilisation,
+        uls_sliding_required_sf,
+    ) = _automatic_user_inputs(raw_inputs)
     _, sls_reactions = _reaction_sets(snapshot)
     downward = max(
         (
@@ -825,13 +1166,16 @@ def design_pad_foundations(
             "foundation_cover_mm": assumptions["foundation_cover_mm"],
             "foundation_permissible_bearing_kpa": bearing,
             "foundation_base_depth_m": (
-                thickness_mm / 1000.0
-                + float(assumptions["soil_cover_above_footing_m"])
+                thickness_mm / 1000.0 + soil_cover
             ),
+            "foundation_soil_cover_depth_m": soil_cover,
             "foundation_soil_unit_weight_kn_m3": soil_weight,
-            "foundation_friction_coefficient": assumptions[
-                "foundation_friction_coefficient"
-            ],
+            "foundation_friction_coefficient": friction,
+            "foundation_sliding_resistance": sliding,
+            "foundation_soil_friction_angle_deg": soil_friction_angle,
+            "foundation_passive_resistance": passive,
+            "foundation_passive_mobilisation_factor": passive_mobilisation,
+            "foundation_uls_sliding_required_sf": uls_sliding_required_sf,
         }
         result = _check_pad_foundations(snapshot, internal_inputs)
         if result["status"] == "PASS":
@@ -850,6 +1194,13 @@ def design_pad_foundations(
     selected["user_inputs"] = {
         "soil_unit_weight_kn_m3": soil_weight,
         "permissible_bearing_kpa": bearing,
+        "soil_cover_depth_m": soil_cover,
+        "friction_coefficient": friction,
+        "sliding_resistance": sliding,
+        "soil_friction_angle_deg": soil_friction_angle,
+        "passive_resistance": passive,
+        "passive_mobilisation_factor": passive_mobilisation,
+        "uls_sliding_required_sf": uls_sliding_required_sf,
     }
     selected["automatic_design"] = {
         "length_m": float(selected["inputs"]["length_m"]),
@@ -866,9 +1217,9 @@ def design_pad_foundations(
     selected["assumptions"] = [
         *selected.get("assumptions", []),
         (
-            "Only soil unit weight and permissible bearing pressure are "
-            "project inputs; all other values below are automatic-design "
-            "assumptions."
+            "Soil unit weight, permissible bearing pressure, soil cover depth, "
+            "base friction, soil friction angle, passive mobilisation and the "
+            "ULS sliding safety factor are project inputs."
         ),
         (
             f"Automatic basis: {assumptions['foundation_standard']}, "
@@ -877,9 +1228,10 @@ def design_pad_foundations(
             f"reinforcement, T{assumptions['foundation_bar_diameter_mm']:.0f}"
             f"@{assumptions['foundation_bar_spacing_mm']:.0f}, "
             f"{assumptions['foundation_cover_mm']:.0f} mm cover, "
-            f"{assumptions['soil_cover_above_footing_m']:.2f} m soil cover "
-            f"and base friction coefficient "
-            f"{assumptions['foundation_friction_coefficient']:.2f}."
+            f"{soil_cover:.2f} m soil cover, base friction coefficient "
+            f"{friction:.2f}, soil friction angle {soil_friction_angle:.1f} degrees, "
+            f"{passive} at mobilisation factor {passive_mobilisation:.2f}, "
+            f"ULS sliding SF {uls_sliding_required_sf:.2f}."
         ),
     ]
     return selected

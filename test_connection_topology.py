@@ -127,7 +127,9 @@ class ConnectionTopologyTests(unittest.TestCase):
         for location in self.geometry:
             with self.subTest(connection_type=location["connection_type"]):
                 source = location["source_rafter_geometry"]
-                self.assertEqual(set(source), {"h", "b", "tw", "tf"})
+                self.assertEqual(
+                    set(source), {"h", "b", "tw", "tf", "r1", "hw"}
+                )
                 self.assertTrue(all(float(value) > 0 for value in source.values()))
                 note = location["donor_fabrication_note"].lower()
                 self.assertIn("top flange removed", note)
