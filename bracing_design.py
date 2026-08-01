@@ -27,6 +27,11 @@ COMPRESSION_SLENDERNESS_LIMIT = 200.0
 MIN_ANGLE_LEG_MM = 50.0
 MIN_ANGLE_THICKNESS_MM = 5.0
 COLUMN_BRACING_TYPES = {"X", "K", "A"}
+GABLE_SECTION_ORDERS = {
+    "Automatic - lightest passing",
+    "Preferred sections first",
+}
+AUTOMATIC_GABLE_SECTION = "Automatic - use section order"
 
 
 @dataclass(frozen=True)
@@ -133,8 +138,8 @@ def select_gable_nodes(data, count: int) -> list[dict[str, Any]]:
     point later in the design workflow.
     """
 
-    if count < 1 or count % 2 == 0:
-        raise ValueError("gable_column_count must be a positive odd number (1, 3, 5, ...).")
+    if count < 1:
+        raise ValueError("gable_column_count must be a positive whole number.")
     frame = data.frame_data[0]
     width = _float(frame["gable_width"])
     eaves = _float(frame["eaves_height"])
@@ -208,11 +213,21 @@ def _wind_uls_factor(data) -> float:
     return max(factors)
 
 
-def _ordered_gable_sections(member_db: Mapping[str, Mapping[str, Mapping[str, Any]]]):
+def _ordered_gable_sections(
+    member_db: Mapping[str, Mapping[str, Mapping[str, Any]]],
+    section_order: str = "Preferred sections first",
+):
+    if section_order not in GABLE_SECTION_ORDERS:
+        raise ValueError(
+            "gable_column_section_order must be Automatic - lightest passing "
+            "or Preferred sections first."
+        )
     sections = []
     for family in ("I-Sections", "H-Sections"):
         for name, props in member_db.get(family, {}).items():
             sections.append((family, name, props))
+    if section_order == "Automatic - lightest passing":
+        return sorted(sections, key=lambda item: _float(item[2].get("m"), math.inf))
     return sorted(
         sections,
         key=lambda item: (
@@ -247,8 +262,24 @@ def _column_check(props, height_mm, brace_intervals, moment_knm, material):
     return max(float(value) for value in ratios), sec
 
 
-def _select_gable_section(member_db, demands, brace_intervals, material):
-    for family, name, props in _ordered_gable_sections(member_db):
+def _select_gable_section(
+    member_db,
+    demands,
+    brace_intervals,
+    material,
+    section_order,
+    selected_family,
+    selected_section,
+):
+    if selected_section != AUTOMATIC_GABLE_SECTION:
+        props = member_db.get(selected_family, {}).get(selected_section)
+        if props is None:
+            raise ValueError(
+                f"Gable-column section {selected_section!r} was not found in "
+                f"{selected_family!r}."
+            )
+        return selected_family, selected_section, props
+    for family, name, props in _ordered_gable_sections(member_db, section_order):
         checks = [
             _column_check(props, item["height_mm"], brace_intervals, item["moment_knm"], material)
             for item in demands
@@ -547,6 +578,22 @@ def design_bracing_system(data, member_db, database_path="bracing_member_databas
     brace_intervals = int(frame.get("gable_column_brace_intervals", 1))
     if brace_intervals < 1:
         raise ValueError("gable_column_brace_intervals must be at least 1.")
+    section_order = str(
+        frame.get("gable_column_section_order", "Preferred sections first")
+    ).strip()
+    if section_order not in GABLE_SECTION_ORDERS:
+        raise ValueError(
+            "gable_column_section_order must be Automatic - lightest passing "
+            "or Preferred sections first."
+        )
+    selected_family = str(
+        frame.get("gable_column_section_type", "I-Sections")
+    ).strip()
+    selected_section = str(
+        frame.get("gable_column_section", AUTOMATIC_GABLE_SECTION)
+    ).strip()
+    if selected_family not in {"I-Sections", "H-Sections"}:
+        raise ValueError("gable_column_section_type must be I-Sections or H-Sections.")
     nodes = select_gable_nodes(data, count)
     widths = tributary_widths((item["x"] for item in nodes), frame["gable_width"])
     pressure_cases = gable_wall_pressure_cases(data)
@@ -567,7 +614,15 @@ def design_bracing_system(data, member_db, database_path="bracing_member_databas
         })
     material = data.steel_grade[0]
     selections = [
-        _select_gable_section(member_db, [demand], brace_intervals, material)
+        _select_gable_section(
+            member_db,
+            [demand],
+            brace_intervals,
+            material,
+            section_order,
+            selected_family,
+            selected_section,
+        )
         for demand in demands
     ]
     _, fe_actions = _analyse_gable_columns_pynite(demands, selections, material)
@@ -757,6 +812,9 @@ def design_bracing_system(data, member_db, database_path="bracing_member_databas
         "inputs": {
             "gable_column_count": count,
             "gable_column_brace_intervals": brace_intervals,
+            "gable_column_section_order": section_order,
+            "gable_column_section_type": selected_family,
+            "gable_column_section": selected_section,
             "rafter_bracing_spacing_count": int(frame["rafter_bracing_spacing"]),
             "purlin_section": purlin["Designation"],
             "purlin_max_spacing_mm": _float(frame.get("purlin_max_spacing_mm")),

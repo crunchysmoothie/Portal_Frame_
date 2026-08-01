@@ -135,10 +135,16 @@ def build_analysis_visualisation(
 ) -> dict[str, Any]:
     """Build serialisable geometry, factored loads, utilisation and deflection."""
 
-    result_lookup = {
-        (result.load_combination, result.member): result
-        for result in member_results
-    }
+    result_lookup = {}
+    for result in member_results:
+        parent_name = str(result.member).split("[", 1)[0]
+        key = (result.load_combination, parent_name)
+        current = result_lookup.get(key)
+        if (
+            current is None
+            or float(result.governing_ratio) > float(current.governing_ratio)
+        ):
+            result_lookup[key] = result
     member_types = {item.name: item.type for item in data.members}
     combinations: list[tuple[str, str, dict[str, float]]] = []
     seen = set()

@@ -75,6 +75,30 @@ def _roof_points(
     ]
 
 
+def _crawl_point(
+    span_mm: float,
+    eaves_mm: float,
+    apex_mm: float,
+    roof_type: str,
+    slope: str,
+    position_from_eaves_mm: float,
+) -> tuple[float, float]:
+    """Return a crawl-beam marker position in the portal-frame elevation."""
+
+    run = span_mm / 2 if roof_type == "Duo Pitched" else span_mm
+    slope_length = math.hypot(run, apex_mm - eaves_mm)
+    if position_from_eaves_mm < 0 or position_from_eaves_mm > slope_length + 1e-6:
+        raise ValueError(
+            f"Crawl position {position_from_eaves_mm:.1f} mm is outside the roof slope."
+        )
+    ratio = 0.0 if slope_length <= 0 else position_from_eaves_mm / slope_length
+    distance_x = run * ratio
+    distance_y = (apex_mm - eaves_mm) * ratio
+    if roof_type == "Duo Pitched" and str(slope).strip().lower() == "right":
+        return span_mm - distance_x, eaves_mm + distance_y
+    return distance_x, eaves_mm + distance_y
+
+
 def _line(
     member_id: str,
     kind: str,
@@ -86,6 +110,41 @@ def _line(
         "kind": kind,
         "start": {"x_mm": float(start[0]), "y_mm": float(start[1])},
         "end": {"x_mm": float(end[0]), "y_mm": float(end[1])},
+    }
+
+
+def _haunch_triangle(
+    haunch_id: str,
+    zone: str,
+    root: tuple[float, float],
+    toward: tuple[float, float],
+    length_mm: float,
+    depth_mm: float,
+) -> dict[str, Any]:
+    dx = toward[0] - root[0]
+    dy = toward[1] - root[1]
+    full_length = math.hypot(dx, dy)
+    unit_x, unit_y = dx / full_length, dy / full_length
+    normal_options = ((unit_y, -unit_x), (-unit_y, unit_x))
+    normal_x, normal_y = min(normal_options, key=lambda item: item[1])
+    toe = (
+        root[0] + unit_x * length_mm,
+        root[1] + unit_y * length_mm,
+    )
+    root_bottom = (
+        root[0] + normal_x * depth_mm,
+        root[1] + normal_y * depth_mm,
+    )
+    return {
+        "id": haunch_id,
+        "zone": zone,
+        "length_mm": length_mm,
+        "depth_mm": depth_mm,
+        "points": [
+            {"x_mm": root[0], "y_mm": root[1]},
+            {"x_mm": root_bottom[0], "y_mm": root_bottom[1]},
+            {"x_mm": toe[0], "y_mm": toe[1]},
+        ],
     }
 
 
@@ -201,11 +260,54 @@ def build_preview_geometry(payload: Mapping[str, Any]) -> dict[str, Any]:
     else:
         portal_members.append(_line("C2", "column", (span, apex), (span, 0)))
 
+    haunches: list[dict[str, Any]] = []
+    left_eave = (0.0, eaves)
+    apex_point = (
+        (span / 2, apex)
+        if roof_type == "Duo Pitched"
+        else (span, apex)
+    )
+    right_eave = (span, eaves)
+    if str(building.get("use_eaves_haunch", "No")).lower() == "yes":
+        haunches.append(_haunch_triangle(
+            "HE1",
+            "eaves",
+            left_eave,
+            apex_point,
+            float(building.get("eaves_haunch_length", 0.0)),
+            float(building.get("eaves_haunch_depth", 0.0)),
+        ))
+        if roof_type == "Duo Pitched":
+            haunches.append(_haunch_triangle(
+                "HE2",
+                "eaves",
+                right_eave,
+                apex_point,
+                float(building.get("eaves_haunch_length", 0.0)),
+                float(building.get("eaves_haunch_depth", 0.0)),
+            ))
+    if str(building.get("use_apex_haunch", "No")).lower() == "yes":
+        haunches.append(_haunch_triangle(
+            "HA1",
+            "apex",
+            apex_point,
+            left_eave,
+            float(building.get("apex_haunch_length", 0.0)),
+            float(building.get("apex_haunch_depth", 0.0)),
+        ))
+        if roof_type == "Duo Pitched":
+            haunches.append(_haunch_triangle(
+                "HA2",
+                "apex",
+                apex_point,
+                right_eave,
+                float(building.get("apex_haunch_length", 0.0)),
+                float(building.get("apex_haunch_depth", 0.0)),
+            ))
+
     gable_columns: list[dict[str, Any]] = []
     if str(building.get("building_type")) != "Canopy":
         gable_count = _positive_integer(building, "gable_column_count")
-        if gable_count % 2 == 0:
-            raise ValueError("gable_column_count must be a positive odd number.")
         for index in range(1, gable_count + 1):
             x = span * index / (gable_count + 1)
             if roof_type == "Mono Pitched":
@@ -244,8 +346,30 @@ def build_preview_geometry(payload: Mapping[str, Any]) -> dict[str, Any]:
         frame_positions, eaves, bracing_type, wall_panels
     )
 
+    crawl_markers: list[dict[str, Any]] = []
+    for index, crawl in enumerate(building.get("crawl_beams", []) or [], 1):
+        slope = str(crawl.get("slope", "")).strip().lower()
+        position = float(crawl.get("position_from_eaves_mm", 0.0))
+        point_x, point_y = _crawl_point(
+            span,
+            eaves,
+            apex,
+            roof_type,
+            slope,
+            position,
+        )
+        crawl_markers.append(
+            {
+                "id": f"CR{index}",
+                "name": str(crawl.get("name", f"Crawl {index}")),
+                "slope": slope,
+                "position_from_eaves_mm": position,
+                "point": {"x_mm": point_x, "y_mm": point_y},
+            }
+        )
+
     return {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "status": "layout_preview_only",
         "units": "mm",
         "dimensions": {
@@ -264,12 +388,22 @@ def build_preview_geometry(payload: Mapping[str, Any]) -> dict[str, Any]:
         "roof_layout": layout,
         "frame_elevation": {
             "members": portal_members,
+            "haunches": haunches,
             "purlin_points": roof_points,
             "gable_columns": gable_columns,
+            "crawl_beams": crawl_markers,
         },
         "roof_plan": {
             "frame_positions_mm": frame_positions,
             "purlin_rows_mm": [float(point["x_mm"]) for point in roof_points],
+            "crawl_rows": [
+                {
+                    "name": marker["name"],
+                    "slope": marker["slope"],
+                    "x_mm": marker["point"]["x_mm"],
+                }
+                for marker in crawl_markers
+            ],
             "braces": roof_braces,
         },
         "wall_elevation": {

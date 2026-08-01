@@ -11,25 +11,31 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 
 from analysis_snapshot import load_analysis_snapshot
 from backend.analysis_service import (
+    design_foundations,
     get_analysis_artifact,
     get_analysis_job,
     public_analysis_job,
     submit_analysis_job,
 )
 from preview_geometry import build_preview_geometry
+from connection_viewer import (
+    build_connection_viewer_html,
+    list_connection_views,
+)
+from truss_design import preview_truss
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_SNAPSHOT_PATH = PROJECT_ROOT / "output" / "analysis" / "analysis_results.json"
 
 app = FastAPI(
-    title="PortalFrame API",
-    description="Local application API for PortalFrame analysis and reporting.",
-    version="0.1.0",
+    title="PortalFrame and Truss API",
+    description="Local application API for portal-frame and preliminary truss analysis.",
+    version="0.5.0",
 )
 
 
@@ -37,7 +43,7 @@ app = FastAPI(
 def health() -> dict[str, str]:
     """Return a small liveness response for the UI and local tooling."""
 
-    return {"status": "ok", "service": "portalframe-api"}
+    return {"status": "ok", "service": "structural-designer-api"}
 
 
 @app.get("/api/project", tags=["system"])
@@ -45,14 +51,19 @@ def project_info() -> dict[str, Any]:
     """Describe the capabilities currently exposed by the application API."""
 
     return {
-        "name": "PortalFrame",
+        "name": "PortalFrame and Truss Designer",
         "api_version": app.version,
         "analysis_engine": "portal_frame_analysis",
+        "analysis_engines": ["portal_frame_analysis", "preliminary_generic_truss_v0.4"],
         "capabilities": {
             "latest_analysis": DEFAULT_SNAPSHOT_PATH.exists(),
             "layout_preview": True,
             "submit_analysis": True,
             "generate_reports": True,
+            "rafter_haunches": True,
+            "post_analysis_pad_foundations": True,
+            "structural_systems": ["Portal frame", "Truss"],
+            "truss_validation_status": "Calculation draft; connections and independent project verification outstanding",
         },
     }
 
@@ -62,6 +73,8 @@ def preview(payload: dict[str, Any]) -> dict[str, Any]:
     """Return analysis-independent frame, purlin, girt and bracing geometry."""
 
     try:
+        if payload.get("structural_system") == "Truss":
+            return preview_truss(payload)
         return build_preview_geometry(payload)
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -100,6 +113,65 @@ def analysis_results(analysis_id: str) -> dict[str, Any]:
     return public_analysis_job(job)
 
 
+@app.post(
+    "/api/analysis/{analysis_id}/foundation",
+    tags=["foundation"],
+)
+def foundation_design(
+    analysis_id: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Design isolated pad foundations from stored support reactions."""
+
+    try:
+        return design_foundations(analysis_id, payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (TypeError, ValueError) as exc:
+        errors = getattr(exc, "errors", None)
+        detail = {"message": str(exc), "errors": errors} if errors else str(exc)
+        raise HTTPException(status_code=422, detail=detail) from exc
+
+
+@app.get(
+    "/api/analysis/{analysis_id}/connection-viewer",
+    response_class=HTMLResponse,
+    tags=["analysis"],
+)
+def connection_viewer(analysis_id: str, view: str) -> HTMLResponse:
+    """Serve one interactive, in-app-only 3D connection view."""
+
+    try:
+        job = get_analysis_job(analysis_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if job.get("status") != "complete":
+        raise HTTPException(status_code=409, detail="Analysis is not complete.")
+    summary = job.get("design_summary", {})
+    connection_design = summary.get("connection_design", {})
+    valid_views = {
+        str(item["key"]) for item in list_connection_views(connection_design)
+    }
+    if view not in valid_views:
+        raise HTTPException(status_code=404, detail="Unknown connection view.")
+    try:
+        html = build_connection_viewer_html(connection_design, view)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Connection viewer geometry is invalid: {exc}",
+        ) from exc
+    return HTMLResponse(
+        content=html,
+        headers={
+            "Cache-Control": "no-store",
+            "Cross-Origin-Embedder-Policy": "require-corp",
+            "Cross-Origin-Resource-Policy": "cross-origin",
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "no-referrer",
+        },
+    )
+
+
 @app.get("/api/analysis/{analysis_id}/artifacts/{artifact}", tags=["analysis"])
 def analysis_artifact(analysis_id: str, artifact: str):
     """Download a generated design report or markup drawing artifact."""
@@ -110,6 +182,8 @@ def analysis_artifact(analysis_id: str, artifact: str):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     media_type = {
         ".pdf": "application/pdf",
+        ".dxf": "application/dxf",
+        ".dwg": "application/acad",
         ".html": "text/html; charset=utf-8",
         ".json": "application/json",
     }.get(path.suffix.lower(), "application/octet-stream")
@@ -118,7 +192,9 @@ def analysis_artifact(analysis_id: str, artifact: str):
         media_type=media_type,
         filename=path.name,
         content_disposition_type=(
-            "inline" if path.suffix.lower() == ".html" else "attachment"
+            "inline"
+            if path.suffix.lower() in {".html", ".pdf"}
+            else "attachment"
         ),
     )
 
