@@ -70,9 +70,10 @@ display-only and is not an artifact. The post-analysis module checks Mahachi-bas
 base-plate bearing/bending, bolt geometry and steel interaction, T-stub prying,
 end plates, elastic weld groups, supporting flange/web effects, and stiffener
 yielding, buckling and welds. Failed checks remain reported and supporting
-member overstress triggers calculated transverse stiffeners. Concrete anchor
-breakout, pull-out and embedment remain `INPUT_REQUIRED` until the project
-anchor standard and geometry are provided. Portal automatic sizing measures vertical variable-action
+member overstress triggers calculated transverse stiffeners. Red Book Table 4.6
+provides a preliminary HD-bolt anchor-plate estimate for 25 MPa concrete;
+pedestal geometry, `7d` edge distance and reinforcement remain project
+confirmation items. Portal automatic sizing measures vertical variable-action
 deflection from a matching permanent-action baseline and independently rejects
 total-load roof-fall reversal as a ponding risk. The post-analysis foundation endpoint accepts soil unit weight and
 permissible bearing pressure and returns an automatically searched common pad

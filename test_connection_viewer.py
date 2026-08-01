@@ -18,7 +18,7 @@ from test_foundation_connections import _snapshot
 
 def _result():
     result = design_portal_connections(_snapshot())
-    result["haunch_connections"]["locations"][0]["added_depth_mm"] = 110.0
+    result["haunch_connections"]["locations"][0]["added_depth_mm"] = 230.0
     return result
 
 
@@ -108,6 +108,101 @@ class ConnectionViewerTests(unittest.TestCase):
         self.assertEqual(roles.count("haunch_bottom_flange"), 1)
         self.assertNotIn("haunch_top_flange", roles)
         self.assertNotIn("haunch_solid", roles)
+
+    def test_eaves_rafter_and_plate_are_flush_with_column_flange(self):
+        result = _valid_eaves_result()
+        figure = build_connection_figure(result, "haunch:eaves-haunch")
+        plate = next(
+            trace
+            for trace in _mesh_traces(figure)
+            if (trace.meta or {}).get("role") == "end_plate"
+        )
+        rafter = next(
+            trace
+            for trace in _mesh_traces(figure)
+            if (trace.meta or {}).get("member") == "rafter"
+            and (trace.meta or {}).get("role") == "section_web"
+        )
+        plate_thickness = float(
+            result["haunch_connections"]["locations"][0]["connection"][
+                "plate"
+            ]["provided_thickness_mm"]
+        )
+        plate_spans = _trace_spans(plate)
+        self.assertAlmostEqual(plate_spans[0], plate_thickness)
+        self.assertAlmostEqual(
+            min(float(value) for value in rafter.x),
+            max(float(value) for value in plate.x),
+        )
+        column = [
+            trace
+            for trace in _mesh_traces(figure)
+            if (trace.meta or {}).get("member") == "column"
+        ]
+        self.assertAlmostEqual(
+            max(float(value) for trace in column for value in trace.x),
+            min(float(value) for value in plate.x),
+        )
+        self.assertLess(_trace_centre(plate)[2], _trace_centre(rafter)[2])
+
+    def test_eaves_column_projects_50_mm_above_end_plate(self):
+        figure = build_connection_figure(
+            _valid_eaves_result(),
+            "haunch:eaves-haunch",
+        )
+        plate = next(
+            trace
+            for trace in _mesh_traces(figure)
+            if (trace.meta or {}).get("role") == "end_plate"
+        )
+        column = [
+            trace
+            for trace in _mesh_traces(figure)
+            if (trace.meta or {}).get("member") == "column"
+        ]
+        self.assertAlmostEqual(
+            max(float(value) for trace in column for value in trace.z)
+            - max(float(value) for value in plate.z),
+            50.0,
+        )
+
+    def test_eaves_stiffeners_span_between_column_flanges(self):
+        result = _valid_eaves_result()
+        location = result["haunch_connections"]["locations"][0]
+        location["connection"]["stiffeners"].update(
+            {
+                "required": True,
+                "count": 2,
+                "height_mm": 100.0,
+                "length_mm": 100.0,
+                "provided_thickness_mm": 10.0,
+            }
+        )
+        figure = build_connection_figure(result, "haunch:eaves-haunch")
+        stiffeners = [
+            trace
+            for trace in _mesh_traces(figure)
+            if (trace.meta or {}).get("member") == "eaves"
+            and (trace.meta or {}).get("role") == "stiffener"
+        ]
+        column = location["column_section"]
+        from member_database import load_member_database
+
+        section = next(
+            family[column]
+            for family in load_member_database().values()
+            if column in family
+        )
+        expected_clear_depth = float(section["h"]) - 2.0 * float(
+            section["tf"]
+        )
+        self.assertEqual(len(stiffeners), 2)
+        for trace in stiffeners:
+            self.assertTrue(
+                (trace.meta or {}).get("spans_between_column_flanges")
+            )
+            self.assertAlmostEqual(_trace_spans(trace)[0], expected_clear_depth)
+            self.assertAlmostEqual(_trace_spans(trace)[1], float(section["b"]))
 
     def test_apex_has_two_rafters_and_never_draws_a_column(self):
         result = _valid_apex_result()

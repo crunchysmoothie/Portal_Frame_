@@ -540,6 +540,142 @@ def _add_i_section(
     )
 
 
+def _root_cut_along_mm(
+    *,
+    origin: _Vector,
+    axis: _Vector,
+    depth_axis: _Vector,
+    depth_mm: float,
+    root_plane_x_mm: float,
+) -> float:
+    """Return the local distance that places a point on a global-X plane."""
+
+    axis_x = float(axis[0])
+    if abs(axis_x) <= _EPSILON:
+        raise ValueError("The member axis cannot be cut on a global-X plane.")
+    return (
+        root_plane_x_mm
+        - float(origin[0])
+        - float(depth_axis[0]) * depth_mm
+    ) / axis_x
+
+
+def _add_i_section_to_root_plane(
+    figure: go.Figure,
+    *,
+    origin: _Vector,
+    axis: _Vector,
+    depth_axis: _Vector,
+    root_plane_x_mm: float,
+    length_mm: float,
+    section: Mapping[str, Any],
+    member: str,
+    label: str,
+) -> None:
+    """Extrude an I-section from a vertical root cut to its remote end."""
+
+    width_axis = (0.0, 1.0, 0.0)
+    axis = _normalise(axis)
+    depth_axis = _normalise(depth_axis)
+    h = float(section["h"])
+    b = float(section["b"])
+    tw = float(section["tw"])
+    tf = float(section["tf"])
+    web_depth = max(h - 2.0 * tf, 0.0)
+    flange_offset = (h - tf) / 2.0
+
+    def add_component(
+        *,
+        depth_centre_mm: float,
+        depth_size_mm: float,
+        width_mm: float,
+        name: str,
+        colour: str,
+        role: str,
+    ) -> None:
+        depths = (
+            depth_centre_mm - depth_size_mm / 2.0,
+            depth_centre_mm + depth_size_mm / 2.0,
+        )
+        widths = (-width_mm / 2.0, width_mm / 2.0)
+
+        def point(along_mm: float, width: float, depth: float) -> _Vector:
+            return _vector_add(
+                origin,
+                _vector_scale(axis, along_mm),
+                _vector_scale(width_axis, width),
+                _vector_scale(depth_axis, depth),
+            )
+
+        near = [
+            point(
+                _root_cut_along_mm(
+                    origin=origin,
+                    axis=axis,
+                    depth_axis=depth_axis,
+                    depth_mm=depth,
+                    root_plane_x_mm=root_plane_x_mm,
+                ),
+                width,
+                depth,
+            )
+            for depth, width in (
+                (depths[0], widths[0]),
+                (depths[0], widths[1]),
+                (depths[1], widths[1]),
+                (depths[1], widths[0]),
+            )
+        ]
+        far = [
+            point(length_mm, width, depth)
+            for depth, width in (
+                (depths[0], widths[0]),
+                (depths[0], widths[1]),
+                (depths[1], widths[1]),
+                (depths[1], widths[0]),
+            )
+        ]
+        triangles = [
+            triangle
+            for first, second, third, fourth in _BOX_FACES
+            for triangle in ((first, second, third), (first, third, fourth))
+        ]
+        _add_mesh(
+            figure,
+            vertices=near + far,
+            triangles=triangles,
+            edges=_BOX_EDGES,
+            name=name,
+            colour=colour,
+            meta={
+                "role": role,
+                "member": member,
+                "shape": "skew_cut_prism",
+                "dimensions_mm": [length_mm, width_mm, depth_size_mm],
+                "section": str(section.get("Designation", "")),
+                "root_plane_x_mm": root_plane_x_mm,
+            },
+        )
+
+    for index, sign in enumerate((-1.0, 1.0), 1):
+        add_component(
+            depth_centre_mm=sign * flange_offset,
+            depth_size_mm=tf,
+            width_mm=b,
+            name=f"{label} flange {index}",
+            colour=STEEL_FLANGE,
+            role="section_flange",
+        )
+    add_component(
+        depth_centre_mm=0.0,
+        depth_size_mm=web_depth,
+        width_mm=tw,
+        name=f"{label} web",
+        colour=STEEL_WEB,
+        role="section_web",
+    )
+
+
 def _add_triangular_web(
     figure: go.Figure,
     *,
@@ -552,6 +688,7 @@ def _add_triangular_web(
     web_thickness_mm: float,
     flange_thickness_mm: float,
     member: str,
+    root_plane_x_mm: float | None = None,
 ) -> None:
     web_depth = added_depth_mm - flange_thickness_mm
     if web_depth <= _EPSILON:
@@ -565,7 +702,21 @@ def _add_triangular_web(
     vertices = [
         _vector_add(
             origin,
-            _vector_scale(axis, along),
+            _vector_scale(
+                axis,
+                (
+                    _root_cut_along_mm(
+                        origin=origin,
+                        axis=axis,
+                        depth_axis=depth_axis,
+                        depth_mm=depth,
+                        root_plane_x_mm=root_plane_x_mm,
+                    )
+                    if root_plane_x_mm is not None
+                    and abs(along) <= _EPSILON
+                    else along
+                ),
+            ),
             _vector_scale(depth_axis, depth),
             _vector_scale(width_axis, width_sign * web_thickness_mm / 2.0),
         )
@@ -619,6 +770,7 @@ def _add_haunch_donor(
     added_depth_mm: float,
     section: Mapping[str, Any],
     member: str,
+    root_plane_x_mm: float | None = None,
 ) -> None:
     """Add the donor web and bottom flange; intentionally no donor top flange."""
 
@@ -637,10 +789,24 @@ def _add_haunch_donor(
         web_thickness_mm=tw,
         flange_thickness_mm=tf,
         member=member,
+        root_plane_x_mm=root_plane_x_mm,
+    )
+    root_depth = -h / 2.0 - added_depth_mm + tf / 2.0
+    root_along = (
+        _root_cut_along_mm(
+            origin=origin,
+            axis=axis,
+            depth_axis=depth_axis,
+            depth_mm=root_depth,
+            root_plane_x_mm=root_plane_x_mm,
+        )
+        if root_plane_x_mm is not None
+        else 0.0
     )
     root_centre = _vector_add(
         origin,
-        _vector_scale(depth_axis, -h / 2.0 - added_depth_mm + tf / 2.0),
+        _vector_scale(axis, root_along),
+        _vector_scale(depth_axis, root_depth),
     )
     toe_centre = _vector_add(
         origin,
@@ -713,6 +879,7 @@ def _add_joint_stiffeners(
     plate_height_mm: float,
     apex: bool,
     column_centre_x: float = 0.0,
+    column_section: Mapping[str, Any] | None = None,
     apex_levels_mm: tuple[float, float] | None = None,
     apex_level_source: str = "",
 ) -> None:
@@ -751,6 +918,17 @@ def _add_joint_stiffeners(
                 },
             )
         return
+    if column_section is None:
+        return
+    column_depth = float(column_section["h"])
+    column_width = float(column_section["b"])
+    column_flange_thickness = float(column_section["tf"])
+    clear_between_flanges = max(
+        column_depth - 2.0 * column_flange_thickness,
+        0.0,
+    )
+    if clear_between_flanges <= _EPSILON:
+        return
     levels = (
         -min(plate_height_mm * 0.32, height),
         min(plate_height_mm * 0.32, height),
@@ -760,12 +938,18 @@ def _add_joint_stiffeners(
         _add_box(
             figure,
             centre=(column_centre_x, 0.0, level),
-            sizes=(plate_length, min(height, plate_width_mm), thickness),
+            sizes=(clear_between_flanges, column_width, thickness),
             axes=((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
             name=f"Eaves stiffener {index + 1}",
             colour=STIFFENER_COLOUR,
             role="stiffener",
             member="eaves",
+            extra_meta={
+                "orientation": "transverse",
+                "spans_between_column_flanges": True,
+                "clear_depth_mm": clear_between_flanges,
+                "column_width_mm": column_width,
+            },
         )
 
 
@@ -1062,6 +1246,9 @@ def _haunch_bolts(
     *,
     bolts: Mapping[str, Any],
     plate_thickness_mm: float,
+    origin: _Vector = (0.0, 0.0, 0.0),
+    axis: _Vector = (1.0, 0.0, 0.0),
+    vertical_axis: _Vector = (0.0, 0.0, 1.0),
 ) -> None:
     row_count = max(int(bolts.get("row_count", 0)), 0)
     pitch = _finite_positive(bolts.get("pitch_mm"))
@@ -1086,8 +1273,12 @@ def _haunch_bolts(
             continue
         _add_cylinder(
             figure,
-            centre=(0.0, transverse, vertical),
-            axis=(1.0, 0.0, 0.0),
+            centre=_vector_add(
+                origin,
+                _vector_scale((0.0, 1.0, 0.0), transverse),
+                _vector_scale(vertical_axis, vertical),
+            ),
+            axis=axis,
             length_mm=bolt_length,
             diameter_mm=diameter,
             name=f"Connection bolt {index}",
@@ -1113,12 +1304,15 @@ def _eaves_figure(
     pitch = math.radians(_pitch_degrees(result, location))
     rafter_axis = (math.cos(pitch), 0.0, math.sin(pitch))
     rafter_depth_axis = _up_normal(rafter_axis)
-    rafter_origin = _vector_scale(rafter_axis, plate_t / 2.0)
+    plate_centre = (0.0, 0.0, -added_depth / 2.0)
+    column_face_x = -plate_t / 2.0
+    rafter_root_x = plate_t / 2.0
+    rafter_origin = (rafter_root_x, 0.0, 0.0)
     rafter_length = max(900.0, haunch_length * 1.18)
     figure = go.Figure()
     _add_box(
         figure,
-        centre=(0.0, 0.0, 0.0),
+        centre=plate_centre,
         sizes=(plate_t, plate_w, plate_h),
         axes=((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
         name="Eaves end plate",
@@ -1126,15 +1320,17 @@ def _eaves_figure(
         role="end_plate",
         member="eaves",
     )
-    column_centre_x = -plate_t / 2.0 - float(column["h"]) / 2.0
+    column_centre_x = column_face_x - float(column["h"]) / 2.0
     column_length = max(
         1050.0,
         plate_h * 1.55,
         float(rafter["h"]) + 2.0 * added_depth,
     )
+    plate_top_z = plate_centre[2] + plate_h / 2.0
+    column_centre_z = plate_top_z + 50.0 - column_length / 2.0
     _add_i_section(
         figure,
-        centre=(column_centre_x, 0.0, 0.0),
+        centre=(column_centre_x, 0.0, column_centre_z),
         axis=(0.0, 0.0, 1.0),
         depth_axis=(1.0, 0.0, 0.0),
         length_mm=column_length,
@@ -1142,13 +1338,12 @@ def _eaves_figure(
         member="column",
         label="Column",
     )
-    _add_i_section(
+    _add_i_section_to_root_plane(
         figure,
-        centre=_vector_add(
-            rafter_origin, _vector_scale(rafter_axis, rafter_length / 2.0)
-        ),
+        origin=rafter_origin,
         axis=rafter_axis,
         depth_axis=rafter_depth_axis,
+        root_plane_x_mm=rafter_root_x,
         length_mm=rafter_length,
         section=rafter,
         member="rafter",
@@ -1163,11 +1358,15 @@ def _eaves_figure(
         added_depth_mm=added_depth,
         section=rafter,
         member="eaves haunch",
+        root_plane_x_mm=rafter_root_x,
     )
     _haunch_bolts(
         figure,
         bolts=connection.get("bolts", {}),
         plate_thickness_mm=plate_t,
+        origin=plate_centre,
+        axis=(1.0, 0.0, 0.0),
+        vertical_axis=(0.0, 0.0, 1.0),
     )
     _add_joint_stiffeners(
         figure,
@@ -1176,6 +1375,7 @@ def _eaves_figure(
         plate_height_mm=plate_h,
         apex=False,
         column_centre_x=column_centre_x,
+        column_section=column,
     )
     return _apply_layout(figure)
 

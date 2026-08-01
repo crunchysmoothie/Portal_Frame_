@@ -170,6 +170,12 @@ def _design_summary(
             "source_flange_width_mm": project.get(
                 "rafter_flange_width_mm", 0
             ),
+            "source_clear_web_depth_mm": project.get(
+                "rafter_clear_web_depth_mm", 0
+            ),
+            "source_flange_thickness_mm": project.get(
+                "rafter_flange_thickness_mm", 0
+            ),
             "maximum_cut_depth_mm": project.get(
                 "maximum_haunch_cut_depth_mm", 0
             ),

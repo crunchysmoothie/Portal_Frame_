@@ -34,9 +34,24 @@ A3_WIDTH_MM = 420.0
 A3_HEIGHT_MM = 297.0
 MM_TO_PT = 72.0 / 25.4
 PROJECT_ROOT = Path(__file__).resolve().parent
-DWG_CONVERTER = Path(
-    r"C:\Program Files\Autodesk\AutoCAD 2026\accoreconsole.exe"
+DWG_CONVERTER_CANDIDATES = (
+    Path(r"C:\Program Files\Autodesk\AutoCAD LT 2027\accoreconsole.exe"),
+    Path(r"C:\Program Files\Autodesk\AutoCAD 2027\accoreconsole.exe"),
+    Path(r"C:\Program Files\Autodesk\AutoCAD 2026\accoreconsole.exe"),
+    Path(r"C:\Program Files\Autodesk\AutoCAD 2024\accoreconsole.exe"),
+    Path(r"C:\Program Files\Autodesk\AutoCAD 2023\accoreconsole.exe"),
 )
+
+
+def _select_dwg_converter(
+    candidates: Sequence[Path] = DWG_CONVERTER_CANDIDATES,
+) -> Path:
+    """Select the newest supported installed AutoCAD Core Console."""
+
+    return next((path for path in candidates if path.is_file()), candidates[0])
+
+
+DWG_CONVERTER = _select_dwg_converter()
 
 DXF_LAYERS = (
     "OBJECT",
@@ -128,6 +143,7 @@ class Line:
     layer: str = "OBJECT"
     width_mm: float = 0.25
     dashed: bool = False
+    pdf_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -160,6 +176,7 @@ class Text:
     align: str = "left"
     collision: bool = True
     allowed_zone: str | None = None
+    pdf_only: bool = False
 
     def lines(self) -> tuple[str, ...]:
         if "\n" in self.value:
@@ -206,7 +223,17 @@ class Text:
         return Rect(x, self.y - self.height_mm * 0.25, width, height)
 
 
-Primitive = Line | Polyline | Circle | Text
+@dataclass(frozen=True)
+class LinearDimension:
+    p1: tuple[float, float]
+    p2: tuple[float, float]
+    base: tuple[float, float]
+    angle: float
+    text: str
+    layer: str = "DIMS"
+
+
+Primitive = Line | Polyline | Circle | Text | LinearDimension
 
 
 @dataclass
@@ -456,11 +483,25 @@ def _add_horizontal_dimension(
 ) -> None:
     tick = 1.25
     sheet.add(
-        Line(x1, object_y, x1, dim_y, layer="DIMS", width_mm=0.15),
-        Line(x2, object_y, x2, dim_y, layer="DIMS", width_mm=0.15),
-        Line(x1, dim_y, x2, dim_y, layer="DIMS", width_mm=0.20),
-        Line(x1 - tick, dim_y - tick, x1 + tick, dim_y + tick, layer="DIMS"),
-        Line(x2 - tick, dim_y - tick, x2 + tick, dim_y + tick, layer="DIMS"),
+        Line(x1, object_y, x1, dim_y, layer="DIMS", width_mm=0.15, pdf_only=True),
+        Line(x2, object_y, x2, dim_y, layer="DIMS", width_mm=0.15, pdf_only=True),
+        Line(x1, dim_y, x2, dim_y, layer="DIMS", width_mm=0.20, pdf_only=True),
+        Line(
+            x1 - tick,
+            dim_y - tick,
+            x1 + tick,
+            dim_y + tick,
+            layer="DIMS",
+            pdf_only=True,
+        ),
+        Line(
+            x2 - tick,
+            dim_y - tick,
+            x2 + tick,
+            dim_y + tick,
+            layer="DIMS",
+            pdf_only=True,
+        ),
         Text(
             (x1 + x2) / 2.0,
             dim_y + 1.4,
@@ -469,6 +510,14 @@ def _add_horizontal_dimension(
             layer="DIMS",
             align="center",
             allowed_zone=allowed_zone,
+            pdf_only=True,
+        ),
+        LinearDimension(
+            p1=(x1, object_y),
+            p2=(x2, object_y),
+            base=(x1, dim_y),
+            angle=0.0,
+            text=label,
         ),
     )
 
@@ -485,11 +534,25 @@ def _add_vertical_dimension(
 ) -> None:
     tick = 1.25
     sheet.add(
-        Line(object_x, y1, dim_x, y1, layer="DIMS", width_mm=0.15),
-        Line(object_x, y2, dim_x, y2, layer="DIMS", width_mm=0.15),
-        Line(dim_x, y1, dim_x, y2, layer="DIMS", width_mm=0.20),
-        Line(dim_x - tick, y1 - tick, dim_x + tick, y1 + tick, layer="DIMS"),
-        Line(dim_x - tick, y2 - tick, dim_x + tick, y2 + tick, layer="DIMS"),
+        Line(object_x, y1, dim_x, y1, layer="DIMS", width_mm=0.15, pdf_only=True),
+        Line(object_x, y2, dim_x, y2, layer="DIMS", width_mm=0.15, pdf_only=True),
+        Line(dim_x, y1, dim_x, y2, layer="DIMS", width_mm=0.20, pdf_only=True),
+        Line(
+            dim_x - tick,
+            y1 - tick,
+            dim_x + tick,
+            y1 + tick,
+            layer="DIMS",
+            pdf_only=True,
+        ),
+        Line(
+            dim_x - tick,
+            y2 - tick,
+            dim_x + tick,
+            y2 + tick,
+            layer="DIMS",
+            pdf_only=True,
+        ),
         Text(
             dim_x + 1.8,
             (y1 + y2) / 2.0,
@@ -497,7 +560,76 @@ def _add_vertical_dimension(
             height_mm=2.5,
             layer="DIMS",
             allowed_zone=allowed_zone,
+            pdf_only=True,
         ),
+        LinearDimension(
+            p1=(object_x, y1),
+            p2=(object_x, y2),
+            base=(dim_x, y1),
+            angle=90.0,
+            text=label,
+        ),
+    )
+
+
+def _bolt_row_positions(
+    data: Mapping[str, Any],
+    *,
+    plate_bottom: float,
+    plate_top: float,
+) -> list[float]:
+    """Project the calculated end distance and pitch onto a drawn plate."""
+
+    scale = (plate_top - plate_bottom) / float(data["plate_height"])
+    return [
+        plate_bottom
+        + (float(data["end"]) + row * float(data["pitch"])) * scale
+        for row in range(int(data["rows"]))
+    ]
+
+
+def _add_bolt_row_dimensions(
+    sheet: ConnectionSheet,
+    data: Mapping[str, Any],
+    *,
+    plate_bottom: float,
+    plate_top: float,
+    row_positions: Sequence[float],
+    object_x: float,
+    dim_x: float,
+    allowed_zone: str,
+) -> None:
+    """Dimension both end distances and every individual bolt-row pitch."""
+
+    if not row_positions:
+        return
+    _add_vertical_dimension(
+        sheet,
+        plate_bottom,
+        row_positions[0],
+        object_x,
+        dim_x,
+        _fmt(float(data["end"])),
+        allowed_zone=allowed_zone,
+    )
+    for lower, upper in zip(row_positions, row_positions[1:]):
+        _add_vertical_dimension(
+            sheet,
+            lower,
+            upper,
+            object_x,
+            dim_x,
+            _fmt(float(data["pitch"])),
+            allowed_zone=allowed_zone,
+        )
+    _add_vertical_dimension(
+        sheet,
+        row_positions[-1],
+        plate_top,
+        object_x,
+        dim_x,
+        _fmt(float(data["end"])),
+        allowed_zone=allowed_zone,
     )
 
 
@@ -559,6 +691,28 @@ def _add_crosshair(sheet: ConnectionSheet, x: float, y: float, radius: float) ->
     )
 
 
+def _add_rect_outline(
+    sheet: ConnectionSheet,
+    rect: Rect,
+    *,
+    layer: str = "OBJECT",
+    width_mm: float = 0.30,
+) -> None:
+    sheet.add(
+        Polyline(
+            (
+                (rect.x, rect.y),
+                (rect.right, rect.y),
+                (rect.right, rect.top),
+                (rect.x, rect.top),
+            ),
+            closed=True,
+            layer=layer,
+            width_mm=width_mm,
+        )
+    )
+
+
 def _i_profile_points(section: Mapping[str, Any]) -> tuple[tuple[float, float], ...]:
     h = float(section["h"])
     b = float(section["b"])
@@ -592,6 +746,10 @@ def _validate_base_support(support: Mapping[str, Any]) -> dict[str, Any]:
     )
     holding = _mapping(
         support.get("holding_down_bolts"), f"base plate {name} holding-down bolts"
+    )
+    anchorage = _mapping(
+        holding.get("anchorage_estimate"),
+        f"base plate {name} Red Book anchorage estimate",
     )
     layout = _mapping(holding.get("layout"), f"base plate {name} bolt layout")
     diameter = _number(layout.get("diameter_mm"), f"base plate {name} bolt diameter")
@@ -642,6 +800,7 @@ def _validate_base_support(support: Mapping[str, Any]) -> dict[str, Any]:
         "width": width,
         "thickness": thickness,
         "holding": holding,
+        "anchorage": anchorage,
         "layout": layout,
         "diameter": diameter,
         "hole": hole,
@@ -931,7 +1090,9 @@ def _build_base_sheet(
         (
             f"4-M{_fmt(data['diameter'])} GRADE "
             f"{data['holding'].get('steel_grade', '8.8')} HOLDING-DOWN BOLTS\n"
-            f"HOLES DIA {_fmt(data['hole'])}"
+            f"HOLES DIA {_fmt(data['hole'])}\n"
+            "MIN CENTRE CLEAR OF COLUMN FACE "
+            f"{_fmt(float(data['layout'].get('minimum_section_face_clearance_mm', 0.0)))}"
         ),
         allowed_zone="plan",
         max_width_mm=34,
@@ -939,8 +1100,8 @@ def _build_base_sheet(
     _add_leader(
         sheet,
         (cx, cy),
-        (159, 163),
-        (161, 161),
+        (35, 251),
+        (36, 249),
         f"COLUMN {data['column_name']}\nCENTRED ON PLATE",
         allowed_zone="plan",
         max_width_mm=34,
@@ -951,11 +1112,21 @@ def _build_base_sheet(
     col_tf = float(data["column"]["tf"])
     col_tw = float(data["column"]["tw"])
     shown_column_height = min(max(col_h, 320.0), 520.0)
+    anchorage_length = float(data["anchorage"]["anchorage_length_mm"])
+    anchor_plate_side = float(data["anchorage"]["anchor_plate_length_mm"])
+    anchor_plate_thickness = float(
+        data["anchorage"]["minimum_anchor_plate_thickness_mm"]
+    )
     section_source = Rect(
         -data["length"] / 2.0 - 80.0,
-        -120.0,
+        -anchorage_length - anchor_plate_thickness - 30.0,
         data["length"] + 160.0,
-        shown_column_height + 180.0,
+        (
+            shown_column_height
+            + anchorage_length
+            + anchor_plate_thickness
+            + 70.0
+        ),
     )
     section_target = Rect(225, 120, 130, 126)
     section_transform = _ViewTransform.fit(section_source, section_target)
@@ -1005,15 +1176,25 @@ def _build_base_sheet(
             )
         )
     anchor_xs = (-data["pitch"] / 2.0, data["pitch"] / 2.0)
+    anchor_plate_draws = []
     for anchor_x in anchor_xs:
         top_point = section_transform.point(anchor_x, data["thickness"] + 22.0)
-        cut_point = section_transform.point(anchor_x, -85.0)
+        bottom_point = section_transform.point(anchor_x, -anchorage_length)
+        anchor_plate = section_transform.rect(
+            Rect(
+                anchor_x - anchor_plate_side / 2.0,
+                -anchorage_length - anchor_plate_thickness,
+                anchor_plate_side,
+                anchor_plate_thickness,
+            )
+        )
+        anchor_plate_draws.append(anchor_plate)
         sheet.add(
             Line(
                 top_point[0],
                 top_point[1],
-                cut_point[0],
-                cut_point[1],
+                bottom_point[0],
+                bottom_point[1],
                 layer="BOLTS",
                 width_mm=0.35,
             ),
@@ -1025,22 +1206,25 @@ def _build_base_sheet(
                 layer="BOLTS",
                 width_mm=0.45,
             ),
-            Polyline(
-                (
-                    (cut_point[0] - 2.5, cut_point[1] + 2),
-                    (cut_point[0] + 2.5, cut_point[1] - 2),
-                    (cut_point[0] - 2.5, cut_point[1] - 6),
-                    (cut_point[0] + 2.5, cut_point[1] - 10),
-                ),
-                layer="HIDDEN",
-                width_mm=0.18,
-            ),
+        )
+        _add_hatch_rect(sheet, anchor_plate, 1.8)
+        _add_rect_outline(
+            sheet,
+            anchor_plate,
+            layer="BOLTS",
+            width_mm=0.30,
         )
     # Track the actual solid rectangles rather than one coarse bounding box;
     # the latter would incorrectly treat the clear space between anchor rods
     # as occupied drawing geometry.
     sheet.object_bounds.extend(
-        [plate_section, flange_left, flange_right, web_section]
+        [
+            plate_section,
+            flange_left,
+            flange_right,
+            web_section,
+            *anchor_plate_draws,
+        ]
     )
     _add_horizontal_dimension(
         sheet,
@@ -1068,7 +1252,14 @@ def _build_base_sheet(
         section_transform.point(data["pitch"] / 2, -45),
         (365, 131),
         (368, 129),
-        f"M{_fmt(data['diameter'])} ANCHOR\nEMBEDMENT TO PROJECT DETAIL",
+        (
+            f"M{_fmt(data['diameter'])} HD BOLT | "
+            f"ANCHORAGE {_fmt(anchorage_length)}\n"
+            f"ANCHOR PLATE {_fmt(anchor_plate_side)} x "
+            f"{_fmt(anchor_plate_side)} x "
+            f"{_fmt(anchor_plate_thickness)} MIN\n"
+            "25 MPa CONCRETE | VERIFY 7d EDGE DISTANCE"
+        ),
         allowed_zone="section",
         max_width_mm=34,
     )
@@ -1152,11 +1343,11 @@ def _build_base_sheet(
         )
 
     notes = (
-        "1. PLATE AND BOLT CENTRES ARE CALCULATED DIMENSIONS.",
+        "1. HD-BOLT TOOL AND EDGE CLEARANCES FOLLOW RED BOOK TABLES 6.17 AND 6.19.",
         "2. PROVIDE STANDARD WASHERS AND NUTS TO THE BOLT GRADE.",
-        "3. ANCHOR EMBEDMENT AND CONCRETE ANCHORAGE ARE PROJECT DETAILS.",
+        "3. PROVIDE THE CALCULATED RED BOOK ANCHORAGE AND ANCHOR PLATES SHOWN.",
         "4. STIFFENERS, WHEN SHOWN, ARE FLAT RECTANGULAR PLATES.",
-        "5. VERIFY GROUT, PEDESTAL, TOLERANCES AND ERECTION CLEARANCE.",
+        "5. VERIFY 7d CONCRETE EDGE, PEDESTAL REINFORCEMENT, GROUT AND TOLERANCES.",
     )
     for index, note in enumerate(notes):
         sheet.add(
@@ -1199,6 +1390,41 @@ def _add_end_plate_elevation(
             width_mm=0.38,
         )
     )
+    rafter = data["rafter"]
+    rafter_h = float(rafter["h"])
+    rafter_b = min(float(rafter["b"]), plate_w)
+    rafter_tw = min(float(rafter["tw"]), rafter_b)
+    rafter_tf = min(float(rafter["tf"]), rafter_h / 2.0)
+    top_y = plate_h / 2.0
+    beam_bottom_y = top_y - rafter_h
+    haunch_bottom_y = max(
+        -plate_h / 2.0,
+        beam_bottom_y - float(data["depth"]),
+    )
+    projected_components = (
+        Rect(-rafter_b / 2.0, top_y - rafter_tf, rafter_b, rafter_tf),
+        Rect(
+            -rafter_tw / 2.0,
+            beam_bottom_y + rafter_tf,
+            rafter_tw,
+            max(rafter_h - 2.0 * rafter_tf, 0.1),
+        ),
+        Rect(-rafter_b / 2.0, beam_bottom_y, rafter_b, rafter_tf),
+        Rect(
+            -rafter_tw / 2.0,
+            haunch_bottom_y + rafter_tf,
+            rafter_tw,
+            max(beam_bottom_y - haunch_bottom_y - rafter_tf, 0.1),
+        ),
+        Rect(-rafter_b / 2.0, haunch_bottom_y, rafter_b, rafter_tf),
+    )
+    for component in projected_components:
+        _add_rect_outline(
+            sheet,
+            transform.rect(component),
+            layer="OBJECT",
+            width_mm=0.24,
+        )
     cx, cy = transform.point(0, 0)
     sheet.add(
         Line(cx, plate.y - 4, cx, plate.top + 4, layer="CENTRE", dashed=True),
@@ -1206,7 +1432,10 @@ def _add_end_plate_elevation(
     )
     first_y = -plate_h / 2.0 + float(data["end"])
     bolt_points = []
+    bolt_row_y: list[float] = []
     for row in range(int(data["rows"])):
+        row_y = transform.point(0.0, first_y + row * float(data["pitch"]))[1]
+        bolt_row_y.append(row_y)
         for x in (-float(data["gauge"]) / 2.0, float(data["gauge"]) / 2.0):
             point = transform.point(x, first_y + row * float(data["pitch"]))
             bolt_points.append(point)
@@ -1215,8 +1444,6 @@ def _add_end_plate_elevation(
     sheet.object_bounds.append(plate)
     left = min(x for x, _ in bolt_points)
     right = max(x for x, _ in bolt_points)
-    bottom = min(y for _, y in bolt_points)
-    top = max(y for _, y in bolt_points)
     _add_horizontal_dimension(
         sheet,
         plate.x,
@@ -1262,31 +1489,14 @@ def _add_end_plate_elevation(
         _fmt(plate_h),
         allowed_zone=zone_name,
     )
-    _add_vertical_dimension(
+    _add_bolt_row_dimensions(
         sheet,
-        plate.y,
-        bottom,
-        plate.right,
-        plate.right + 9,
-        _fmt(float(data["end"])),
-        allowed_zone=zone_name,
-    )
-    _add_vertical_dimension(
-        sheet,
-        bottom,
-        top,
-        plate.right,
-        plate.right + 9,
-        f"{int(data['rows']) - 1} @ {_fmt(float(data['pitch']))}",
-        allowed_zone=zone_name,
-    )
-    _add_vertical_dimension(
-        sheet,
-        top,
-        plate.top,
-        plate.right,
-        plate.right + 9,
-        _fmt(float(data["end"])),
+        data,
+        plate_bottom=plate.y,
+        plate_top=plate.top,
+        row_positions=bolt_row_y,
+        object_x=plate.right,
+        dim_x=plate.right + 9,
         allowed_zone=zone_name,
     )
     _add_leader(
@@ -1493,7 +1703,7 @@ def _build_eaves_sheet(
         subtitle=(
             f"COLUMN {data['column_name']} | RAFTER {data['rafter_name']} | "
             f"HAUNCH L={_fmt(data['length'])}, CUT DEPTH={_fmt(data['depth'])} | "
-            f"LIMIT h-b={_fmt(data['cut_check'].maximum_cut_depth_mm)}"
+            f"LIMIT hw+tf={_fmt(data['cut_check'].maximum_cut_depth_mm)}"
         ),
     )
     sheet.zones = {
@@ -1512,12 +1722,16 @@ def _build_eaves_sheet(
     column_x1, column_x2 = 48.0, 76.0
     column_y1, column_y2 = 118.0, 244.0
     plate_x = 79.0
-    joint_y = 205.0
+    plate_bottom_y, plate_top_y = 143.0, 233.0
+    plate_scale = (plate_top_y - plate_bottom_y) / float(data["plate_height"])
+    rafter_top_y = plate_top_y
+    rafter_bottom_y = rafter_top_y - float(data["rafter"]["h"]) * plate_scale
+    joint_y = rafter_top_y
+    rafter_depth_draw = rafter_top_y - rafter_bottom_y
     slope = 0.13
     rafter_end_x = 174.0
-    rafter_depth_draw = 17.0
-    upper_y_end = joint_y + slope * (rafter_end_x - plate_x)
-    lower_y_start = joint_y - rafter_depth_draw
+    upper_y_end = rafter_top_y + slope * (rafter_end_x - plate_x)
+    lower_y_start = rafter_bottom_y
     lower_y_end = upper_y_end - rafter_depth_draw
     sheet.add(
         Polyline(
@@ -1535,8 +1749,56 @@ def _build_eaves_sheet(
         Line(plate_x, joint_y, rafter_end_x, upper_y_end, layer="OBJECT", width_mm=0.55),
         Line(plate_x, lower_y_start, rafter_end_x, lower_y_end, layer="OBJECT", width_mm=0.55),
     )
+    # Show the rolled column and rafter flange thicknesses, not only their
+    # overall bounding outlines.
+    column_tf_draw = max(
+        1.2,
+        min(
+            3.0,
+            float(data["column"]["tf"])
+            / float(data["column"]["h"])
+            * (column_x2 - column_x1),
+        ),
+    )
+    sheet.add(
+        Line(
+            column_x1 + column_tf_draw,
+            column_y1,
+            column_x1 + column_tf_draw,
+            column_y2,
+            layer="OBJECT",
+            width_mm=0.25,
+        ),
+        Line(
+            column_x2 - column_tf_draw,
+            column_y1,
+            column_x2 - column_tf_draw,
+            column_y2,
+            layer="OBJECT",
+            width_mm=0.25,
+        ),
+        Line(
+            plate_x,
+            joint_y - 1.7,
+            rafter_end_x,
+            upper_y_end - 1.7,
+            layer="OBJECT",
+            width_mm=0.24,
+        ),
+        Line(
+            plate_x,
+            lower_y_start + 1.7,
+            rafter_end_x,
+            lower_y_end + 1.7,
+            layer="OBJECT",
+            width_mm=0.24,
+        ),
+    )
     haunch_toe_x = 155.0
-    haunch_bottom_at_plate = 151.0
+    haunch_bottom_at_plate = max(
+        plate_bottom_y,
+        lower_y_start - float(data["depth"]) * plate_scale,
+    )
     haunch_bottom_toe = (
         lower_y_start
         + slope * (haunch_toe_x - plate_x)
@@ -1595,13 +1857,28 @@ def _build_eaves_sheet(
                     width_mm=0.3,
                 )
             )
-    for row in range(int(data["rows"])):
-        y = 148.0 + row * (80.0 / max(int(data["rows"]) - 1, 1))
+    bolt_row_y = _bolt_row_positions(
+        data,
+        plate_bottom=plate_bottom_y,
+        plate_top=plate_top_y,
+    )
+    for y in bolt_row_y:
+        # In the GA the bolts are represented by their axes only.  Keeping
+        # the dashed line on the column/end-plate side avoids implying that
+        # the bolt passes through the rafter flange.
         sheet.add(
-            Line(71, y, 86, y, layer="BOLTS", width_mm=0.3),
-            Circle(70, y, 1.6, layer="BOLTS"),
-            Circle(87, y, 1.6, layer="BOLTS"),
+            Line(61.0, y, plate_x, y, layer="BOLTS", width_mm=0.26, dashed=True)
         )
+    _add_bolt_row_dimensions(
+        sheet,
+        data,
+        plate_bottom=plate_bottom_y,
+        plate_top=plate_top_y,
+        row_positions=bolt_row_y,
+        object_x=column_x1,
+        dim_x=38.0,
+        allowed_zone="ga",
+    )
     sheet.object_bounds.extend(
         [
             Rect(
@@ -1633,8 +1910,8 @@ def _build_eaves_sheet(
     _add_leader(
         sheet,
         (plate_x, 224),
-        (116, 241),
-        (120, 239),
+        (116, 251),
+        (120, 249),
         (
             f"END PLATE {_fmt(data['plate_height'])} x "
             f"{_fmt(data['plate_width'])} x {_fmt(data['plate_thickness'])}"
@@ -1678,9 +1955,17 @@ def _build_eaves_sheet(
     notes = (
         "1. HAUNCH TOP FLANGE IS REMOVED; WEB IS WELDED TO THE MAIN RAFTER.",
         "2. HAUNCH BOTTOM FLANGE IS RETAINED AND FOLLOWS THE TAPER.",
-        "3. TRANSVERSE STIFFENERS ARE FLAT RECTANGULAR PLATES.",
+        (
+            "3. TRANSVERSE STIFFENERS ARE FLAT RECTANGULAR PLATES."
+            if data["stiffener"].get("required")
+            else "3. TRANSVERSE STIFFENERS ARE NOT REQUIRED."
+        ),
         "4. BOLT PITCH, GAUGE, END AND EDGE DISTANCES ARE CALCULATED.",
-        "5. PROVIDE END-PLATE AND STIFFENER WELDS TO CONNECTION CALCULATIONS.",
+        (
+            "5. PROVIDE END-PLATE AND STIFFENER WELDS TO CONNECTION CALCULATIONS."
+            if data["stiffener"].get("required")
+            else "5. PROVIDE END-PLATE WELDS TO CONNECTION CALCULATIONS."
+        ),
     )
     for index, note in enumerate(notes):
         sheet.add(
@@ -1710,7 +1995,7 @@ def _build_apex_sheet(
             f"RAFTERS {data['rafter_name']} BOTH SIDES | "
             f"HAUNCH L={_fmt(data['length'])} PER SLOPE, "
             f"CUT DEPTH={_fmt(data['depth'])} | "
-            f"LIMIT h-b={_fmt(data['cut_check'].maximum_cut_depth_mm)}"
+            f"LIMIT hw+tf={_fmt(data['cut_check'].maximum_cut_depth_mm)}"
         ),
     )
     sheet.zones = {
@@ -1726,10 +2011,17 @@ def _build_apex_sheet(
     _add_zone_title(sheet, sheet.zones["notes"], "FABRICATION CALLOUTS", zone_name="notes")
 
     apex_x = 108.0
-    apex_y = 218.0
+    plate_bottom_y, plate_top_y = 142.0, 232.0
+    plate_scale = (plate_top_y - plate_bottom_y) / data["plate_height"]
+    apex_y = plate_top_y
     left_x, right_x = 34.0, 182.0
     slope = 0.16
-    depth_draw = 16.0
+    depth_draw = data["rafter"]["h"] * plate_scale
+    haunch_flange_draw = max(data["rafter"]["tf"] * plate_scale, 1.2)
+    haunch_bottom_y = max(
+        plate_bottom_y + haunch_flange_draw,
+        apex_y - depth_draw - data["depth"] * plate_scale,
+    )
     left_top_y = apex_y - slope * (apex_x - left_x)
     right_top_y = apex_y - slope * (right_x - apex_x)
     sheet.add(
@@ -1751,8 +2043,8 @@ def _build_apex_sheet(
             layer="OBJECT",
             width_mm=0.55,
         ),
-        Line(apex_x - 2, 142, apex_x - 2, 232, layer="OBJECT", width_mm=0.6),
-        Line(apex_x + 2, 142, apex_x + 2, 232, layer="OBJECT", width_mm=0.6),
+        Line(apex_x - 2, plate_bottom_y, apex_x - 2, plate_top_y, layer="OBJECT", width_mm=0.6),
+        Line(apex_x + 2, plate_bottom_y, apex_x + 2, plate_top_y, layer="OBJECT", width_mm=0.6),
     )
     left_toe = 55.0
     right_toe = 161.0
@@ -1763,7 +2055,7 @@ def _build_apex_sheet(
             (
                 (apex_x - 2, apex_y - depth_draw),
                 (left_toe, left_lower_toe_y),
-                (apex_x - 2, 158),
+                (apex_x - 2, haunch_bottom_y),
             ),
             closed=True,
             layer="OBJECT",
@@ -1773,24 +2065,44 @@ def _build_apex_sheet(
             (
                 (apex_x + 2, apex_y - depth_draw),
                 (right_toe, right_lower_toe_y),
-                (apex_x + 2, 158),
+                (apex_x + 2, haunch_bottom_y),
             ),
             closed=True,
             layer="OBJECT",
             width_mm=0.38,
         ),
-        Line(apex_x - 2, 155.5, left_toe, left_lower_toe_y - 2.0, layer="OBJECT", width_mm=0.6),
-        Line(apex_x + 2, 155.5, right_toe, right_lower_toe_y - 2.0, layer="OBJECT", width_mm=0.6),
+        Line(apex_x - 2, plate_bottom_y, left_toe, left_lower_toe_y - haunch_flange_draw, layer="OBJECT", width_mm=0.6),
+        Line(apex_x + 2, plate_bottom_y, right_toe, right_lower_toe_y - haunch_flange_draw, layer="OBJECT", width_mm=0.6),
         Line(apex_x - 2, apex_y - depth_draw, left_toe, left_lower_toe_y, layer="WELDS", width_mm=0.5),
         Line(apex_x + 2, apex_y - depth_draw, right_toe, right_lower_toe_y, layer="WELDS", width_mm=0.5),
     )
-    for row in range(int(data["rows"])):
-        y = 147.0 + row * (80.0 / max(int(data["rows"]) - 1, 1))
+    bolt_row_y = _bolt_row_positions(
+        data,
+        plate_bottom=plate_bottom_y,
+        plate_top=plate_top_y,
+    )
+    for y in bolt_row_y:
         sheet.add(
-            Line(apex_x - 8, y, apex_x + 8, y, layer="BOLTS", width_mm=0.32),
-            Circle(apex_x - 9, y, 1.5, layer="BOLTS"),
-            Circle(apex_x + 9, y, 1.5, layer="BOLTS"),
+            Line(
+                apex_x - 8,
+                y,
+                apex_x + 8,
+                y,
+                layer="BOLTS",
+                width_mm=0.26,
+                dashed=True,
+            )
         )
+    _add_bolt_row_dimensions(
+        sheet,
+        data,
+        plate_bottom=plate_bottom_y,
+        plate_top=plate_top_y,
+        row_positions=bolt_row_y,
+        object_x=apex_x - 8,
+        dim_x=25.0,
+        allowed_zone="ga",
+    )
     sheet.object_bounds.extend(
         [
             Rect(apex_x - 2.8, 142, 5.6, 90),
@@ -2010,6 +2322,10 @@ def _render_pdf_primitive(
             fill=0,
         )
         return
+    if isinstance(primitive, LinearDimension):
+        # PDF dimensions are drawn by their accompanying PDF-only primitives;
+        # this semantic entity is reserved for native CAD output.
+        return
     if isinstance(primitive, Text):
         _set_pdf_layer_style(pdf, primitive.layer, 0.15)
         font = "Helvetica-Bold" if primitive.bold else "Helvetica"
@@ -2069,16 +2385,36 @@ def _add_dxf_layers(doc: ezdxf.document.Drawing) -> None:
             color=_LAYER_COLOURS[name],
             linetype=linetype,
         )
+    if "PF-1-1" not in doc.dimstyles:
+        doc.dimstyles.new(
+            "PF-1-1",
+            dxfattribs={
+                "dimtxt": 2.5,
+                "dimasz": 1.6,
+                "dimdec": 0,
+                "dimtad": 1,
+                "dimexo": 0.8,
+                "dimexe": 1.25,
+            },
+        )
 
 
-def _render_dxf_primitive(layout: Any, primitive: Primitive) -> None:
+def _render_dxf_primitive(
+    layout: Any,
+    primitive: Primitive,
+    *,
+    offset: tuple[float, float] = (0.0, 0.0),
+) -> None:
+    ox, oy = offset
     if isinstance(primitive, Line):
+        if primitive.pdf_only:
+            return
         attrs = {"layer": primitive.layer}
         if primitive.dashed and primitive.layer not in {"HIDDEN", "CENTRE"}:
             attrs["linetype"] = "DASHED"
         layout.add_line(
-            (primitive.x1, primitive.y1),
-            (primitive.x2, primitive.y2),
+            (primitive.x1 + ox, primitive.y1 + oy),
+            (primitive.x2 + ox, primitive.y2 + oy),
             dxfattribs=attrs,
         )
         return
@@ -2087,19 +2423,33 @@ def _render_dxf_primitive(layout: Any, primitive: Primitive) -> None:
         if primitive.dashed and primitive.layer not in {"HIDDEN", "CENTRE"}:
             attrs["linetype"] = "DASHED"
         layout.add_lwpolyline(
-            primitive.points,
+            [(x + ox, y + oy) for x, y in primitive.points],
             close=primitive.closed,
             dxfattribs=attrs,
         )
         return
     if isinstance(primitive, Circle):
         layout.add_circle(
-            (primitive.x, primitive.y),
+            (primitive.x + ox, primitive.y + oy),
             primitive.radius,
             dxfattribs={"layer": primitive.layer},
         )
         return
+    if isinstance(primitive, LinearDimension):
+        dimension = layout.add_linear_dim(
+            base=(primitive.base[0] + ox, primitive.base[1] + oy),
+            p1=(primitive.p1[0] + ox, primitive.p1[1] + oy),
+            p2=(primitive.p2[0] + ox, primitive.p2[1] + oy),
+            angle=primitive.angle,
+            dimstyle="PF-1-1",
+            dxfattribs={"layer": primitive.layer},
+        )
+        dimension.dimension.dxf.text = primitive.text
+        dimension.render()
+        return
     if isinstance(primitive, Text):
+        if primitive.pdf_only:
+            return
         lines = primitive.lines()
         if len(lines) == 1:
             align = {
@@ -2115,7 +2465,10 @@ def _render_dxf_primitive(layout: Any, primitive: Primitive) -> None:
                     "style": "Standard",
                 },
             )
-            entity.set_placement((primitive.x, primitive.y), align=align)
+            entity.set_placement(
+                (primitive.x + ox, primitive.y + oy),
+                align=align,
+            )
         else:
             mtext = layout.add_mtext(
                 "\\P".join(lines),
@@ -2125,7 +2478,7 @@ def _render_dxf_primitive(layout: Any, primitive: Primitive) -> None:
                     "style": "Standard",
                 },
             )
-            mtext.dxf.insert = (primitive.x, primitive.y)
+            mtext.dxf.insert = (primitive.x + ox, primitive.y + oy)
             mtext.dxf.attachment_point = 7  # bottom-left
             if primitive.max_width_mm:
                 mtext.dxf.width = primitive.max_width_mm
@@ -2137,7 +2490,7 @@ def write_connection_dxf(
     result: Mapping[str, Any],
     path: str | Path,
 ) -> Path:
-    """Write a genuine UTF-8 R2018 DXF with one A3 paperspace per connection."""
+    """Write R2018 DXF sheets to model space and named A3 paper layouts."""
 
     sheets = build_connection_sheets(result)
     output = Path(path)
@@ -2147,7 +2500,12 @@ def write_connection_dxf(
     doc = ezdxf.new("R2018", units=units.MM, setup=True)
     doc.header["$INSUNITS"] = units.MM
     doc.header["$MEASUREMENT"] = 1
+    # Open in model space.  Some downstream DXF/DWG viewers ignore paper
+    # layouts, which previously made otherwise valid exports appear empty.
+    doc.header["$TILEMODE"] = 1
     _add_dxf_layers(doc)
+    modelspace = doc.modelspace()
+    sheet_spacing = A3_WIDTH_MM + 20.0
     for index, sheet in enumerate(sheets):
         if index == 0 and "Layout1" in doc.layouts:
             doc.layouts.rename("Layout1", sheet.layout_name)
@@ -2168,6 +2526,11 @@ def write_connection_dxf(
             )
         for primitive in sheet.primitives:
             _render_dxf_primitive(layout, primitive)
+            _render_dxf_primitive(
+                modelspace,
+                primitive,
+                offset=(index * sheet_spacing, 0.0),
+            )
     doc.saveas(output)
     if not output.is_file() or output.stat().st_size <= 0:
         raise RuntimeError("ezdxf did not create a non-empty connection DXF.")
@@ -2175,16 +2538,18 @@ def write_connection_dxf(
 
 
 def dwg_converter_status() -> dict[str, Any]:
-    """Return availability of the one approved AutoCAD Core Console executable."""
+    """Return the selected supported AutoCAD Core Console installation."""
 
     available = DWG_CONVERTER.is_file()
+    product = DWG_CONVERTER.parent.name
     return {
         "available": available,
         "path": str(DWG_CONVERTER),
+        "product": product,
         "reason": (
-            "AutoCAD 2026 Core Console is available."
+            f"{product} Core Console is available."
             if available
-            else "AutoCAD 2026 Core Console was not found at the fixed approved path."
+            else "No supported AutoCAD or AutoCAD LT Core Console was found."
         ),
     }
 
@@ -2192,7 +2557,10 @@ def dwg_converter_status() -> dict[str, Any]:
 def _concise_converter_output(value: str | None, limit: int = 360) -> str:
     """Collapse console control characters without flooding the UI or logs."""
 
-    cleaned = re.sub(r"\s+", " ", (value or "").replace("\x00", " ")).strip()
+    # AutoCAD Core Console emits UTF-16-style output on Windows even when
+    # subprocess text mode decodes it as the active ANSI encoding.  Removing
+    # the interleaved NULs restores readable diagnostics.
+    cleaned = re.sub(r"\s+", " ", (value or "").replace("\x00", "")).strip()
     if len(cleaned) <= limit:
         return cleaned
     leading = max(80, limit // 2 - 3)
@@ -2204,7 +2572,7 @@ def write_connection_dwg(
     dxf_path: str | Path,
     dwg_path: str | Path,
 ) -> Path:
-    """Convert one DXF to DWG with AutoCAD Core Console at a fixed path."""
+    """Convert one DXF to DWG with the selected AutoCAD Core Console."""
 
     source = Path(dxf_path).resolve()
     target = Path(dwg_path).resolve()
@@ -2218,8 +2586,9 @@ def write_connection_dwg(
         raise FileExistsError(f"Refusing to overwrite existing DWG: {target}")
     if not DWG_CONVERTER.is_file():
         raise FileNotFoundError(
-            "AutoCAD 2026 Core Console is unavailable at the fixed approved path: "
-            f"{DWG_CONVERTER}"
+            "No supported AutoCAD or AutoCAD LT Core Console is available. "
+            "Checked: "
+            + ", ".join(str(path) for path in DWG_CONVERTER_CANDIDATES)
         )
     target.parent.mkdir(parents=True, exist_ok=True)
     if any(character in str(target) for character in ("\r", "\n", '"')):
@@ -2240,6 +2609,8 @@ def write_connection_dwg(
             script.write(
                 "_.FILEDIA\n0\n"
                 "_.CMDDIA\n0\n"
+                "_.TILEMODE\n1\n"
+                "_.ZOOM\n_E\n"
                 "_.SAVEAS\n2018\n"
                 f'"{target}"\n'
                 "_.QUIT\n"

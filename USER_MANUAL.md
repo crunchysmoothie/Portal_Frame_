@@ -128,30 +128,42 @@ the main eave-column section is used only as a preliminary stiffness proxy.
 
 ## Post-analysis connections and automatic portal foundations
 
-After a portal-frame analysis, enter only the soil unit weight in kN/m3 and the
-permissible bearing pressure in kPa. The automatic common-pad search calculates
-the footing length, width and height in practical increments. It checks service
-bearing/uplift, reinforced-concrete flexure and shear, and requires ULS sliding
-and overturning safety factors of at least 1.5.
+After a portal-frame analysis, enter the permissible bearing pressure, soil unit
+weight, soil cover, base-friction coefficient and sliding-resistance basis. If
+passive resistance is credited, also enter the soil friction angle and passive
+mobilisation factor. The automatic common-pad search calculates the footing
+length, width and height in practical increments.
 
-The result repeats the fixed preliminary assumptions used to avoid additional
-user inputs: SANS 10100-1, 30 MPa concrete, 500 MPa reinforcement, T16@150
-bottom mesh, 75 mm cover, a 400 x 400 mm loaded area, 0.50 m soil cover and a
-base-friction coefficient of 0.35. These assumptions, permissible bearing and
-settlement still require project-specific engineering confirmation.
+Choose **Sliding Resisted** only where a separate restraint, such as a designed
+tie or slab load path, will carry the horizontal action. That option removes pad
+sliding from the automatic size search and records the external restraint as an
+engineering hold point. Choose **Sliding Not Resisted** where the isolated pad
+must resist sliding using base friction and any mobilised Rankine passive
+pressure. ULS support reactions are already factored, so the required ULS
+sliding safety factor defaults to 1.0; ULS overturning retains 1.5.
+
+Passive resistance is excluded by default. Only enable it where a geotechnical
+engineer confirms that retained, adequately compacted and drained soil will
+remain available to mobilise the entered resistance throughout the design life.
+The fixed preliminary RC assumptions remain SANS 10100-1, 25 MPa concrete,
+500 MPa reinforcement, T16@150 bottom mesh, 75 mm cover and a 400 x 400 mm
+loaded area.
 
 Portal analysis automatically enables a separate **Connections** workflow once
 the frame sections and actions are final. Base-plate bearing, plate bending,
-bolt distances and steel interaction are checked. Haunch end plates include
-T-stub prying/yield-line behaviour, bolt interaction, elastic weld-group design,
-supporting flange/web local checks, and stiffener yielding, buckling and weld
-checks. Supporting-member screens that exceed unity automatically trigger
-calculated flat transverse stiffeners. The app shows each connection as an
+bolt distances and steel interaction are checked. Haunch end plates and
+supporting flanges include all three equivalent T-stub modes, prying, bearing,
+bolt interaction and elastic weld-group design. Supporting-column checks cover
+web tension yielding, compression crippling, compression buckling and panel
+shear. Only failed unreinforced flange or concentrated web components trigger
+calculated flat transverse stiffeners; failed panel shear remains a doubler-plate
+or connection-revision hold point. The app shows each connection as an
 interactive 3D inspection model, but does not export a 3D file.
 
 Every haunch donor is cut from the selected rafter section. Its displayed and
-checked maximum cut depth is `h - b`, using the section depth and flange width
-from the member database. The donor top flange is removed, its bottom flange is
+checked maximum cut depth is `hw + tf`, using the clear web depth plus the
+retained bottom-flange thickness from the member database. The donor top flange
+is removed, its bottom flange is
 retained, and the remaining web is welded to the main rafter. Manual depths
 above this limit are rejected; automatic rafter selection excludes incompatible
 sections.
@@ -165,10 +177,11 @@ in the report and intentionally omitted from the fabrication markup.
 The DWG button is enabled after the installed AutoCAD 2026 Core Console
 successfully converts the calculated DXF; the PDF and DXF remain available if
 that local converter cannot run.
-Concrete anchor breakout, pull-out and embedment remain
-**INPUT_REQUIRED** until the anchor standard, anchor type, embedment and
-pedestal geometry are supplied; grout, shear keys and fabrication tolerances
-also require project detailing.
+Holding-down bolt steel and anchor-plate anchorage are estimated from Red Book
+Table 4.6 using 25 MPa concrete. The stated embedment, anchor plate, minimum
+`7d` concrete edge distance, pedestal geometry and reinforcement must still be
+confirmed for the project; grout, shear keys and fabrication tolerances also
+require project detailing.
 
 ## Crawl beams
 

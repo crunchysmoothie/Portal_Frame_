@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import math
 import unittest
 from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from connection_design import (
+    _design_haunch_end_plate,
     design_portal_connections,
     write_connection_markup_html,
 )
@@ -13,6 +15,7 @@ from connection_report import write_connection_report_html
 from foundation_design import (
     FoundationInputError,
     design_pad_foundations,
+    passive_sliding_resistance,
 )
 
 
@@ -137,7 +140,7 @@ class AutomaticFoundationTests(unittest.TestCase):
         for support in result["supports"]:
             self.assertGreaterEqual(
                 support["uls_stability"]["sliding"]["safety_factor"],
-                1.5,
+                1.0,
             )
             self.assertGreaterEqual(
                 support["uls_stability"]["overturning"]["safety_factor"],
@@ -157,6 +160,180 @@ class AutomaticFoundationTests(unittest.TestCase):
             context.exception.errors,
         )
 
+    def test_automatic_design_accepts_soil_cover_friction_and_sliding_basis(self):
+        result = design_pad_foundations(
+            _snapshot(),
+            {
+                "foundation_soil_unit_weight_kn_m3": 18,
+                "foundation_permissible_bearing_kpa": 150,
+                "foundation_soil_cover_depth_m": 0.9,
+                "foundation_friction_coefficient": 0.55,
+                "foundation_sliding_resistance": "Sliding Not Resisted",
+                "foundation_soil_friction_angle_deg": 30,
+                "foundation_passive_resistance": "Passive Resistance Included",
+                "foundation_passive_mobilisation_factor": 0.4,
+                "foundation_uls_sliding_required_sf": 1.0,
+            },
+        )
+        self.assertAlmostEqual(result["user_inputs"]["soil_cover_depth_m"], 0.9)
+        self.assertAlmostEqual(result["user_inputs"]["friction_coefficient"], 0.55)
+        self.assertEqual(
+            result["user_inputs"]["sliding_resistance"], "Sliding Not Resisted"
+        )
+        self.assertAlmostEqual(
+            result["user_inputs"]["soil_friction_angle_deg"], 30.0
+        )
+        self.assertEqual(
+            result["user_inputs"]["passive_resistance"],
+            "Passive Resistance Included",
+        )
+        self.assertAlmostEqual(
+            result["user_inputs"]["passive_mobilisation_factor"], 0.4
+        )
+        sliding = result["supports"][0]["uls_stability"]["sliding"]
+        self.assertGreater(sliding["passive_resistance_kN"], 0.0)
+        self.assertAlmostEqual(
+            sliding["safety_factor"],
+            sliding["total_resistance_kN"]
+            / sliding["horizontal_demand_kN"],
+        )
+        self.assertEqual(
+            result["supports"][0]["serviceability"]["sliding"]["status"],
+            "PASS",
+        )
+
+    def test_sliding_resisted_uses_external_restraint_and_does_not_govern(self):
+        result = design_pad_foundations(
+            _snapshot(),
+            {
+                "foundation_soil_unit_weight_kn_m3": 18,
+                "foundation_permissible_bearing_kpa": 150,
+                "foundation_soil_cover_depth_m": 0.3,
+                "foundation_friction_coefficient": 0.0,
+                "foundation_sliding_resistance": "Sliding Resisted",
+            },
+        )
+        support = result["supports"][0]
+        self.assertEqual(
+            support["serviceability"]["sliding"]["status"],
+            "RESISTED_EXTERNALLY",
+        )
+        self.assertEqual(
+            support["uls_stability"]["sliding"]["status"],
+            "RESISTED_EXTERNALLY",
+        )
+        self.assertEqual(support["uls_stability"]["status"], "PASS")
+
+    def test_external_sliding_restraint_avoids_friction_driven_oversizing(self):
+        snapshot = _snapshot()
+        for reaction in snapshot["results"]["reactions"]:
+            reaction["fx"] *= 3.0
+        common = {
+            "foundation_soil_unit_weight_kn_m3": 18,
+            "foundation_permissible_bearing_kpa": 150,
+            "foundation_soil_cover_depth_m": 0.3,
+            "foundation_friction_coefficient": 0.2,
+        }
+        restrained = design_pad_foundations(
+            snapshot,
+            {**common, "foundation_sliding_resistance": "Sliding Resisted"},
+        )
+        unrestrained = design_pad_foundations(
+            snapshot,
+            {**common, "foundation_sliding_resistance": "Sliding Not Resisted"},
+        )
+        restrained_volume = (
+            restrained["automatic_design"]["length_m"]
+            * restrained["automatic_design"]["width_m"]
+            * restrained["automatic_design"]["height_mm"]
+        )
+        unrestrained_volume = (
+            unrestrained["automatic_design"]["length_m"]
+            * unrestrained["automatic_design"]["width_m"]
+            * unrestrained["automatic_design"]["height_mm"]
+        )
+        self.assertLess(restrained_volume, unrestrained_volume)
+
+    def test_rankine_passive_resistance_reports_each_calculation_component(self):
+        result = passive_sliding_resistance(
+            soil_unit_weight_kn_m3=19.0,
+            soil_friction_angle_deg=25.0,
+            embedment_depth_m=1.1,
+            footing_face_width_m=2.6,
+            mobilisation_factor=0.5,
+        )
+        expected_kp = math.tan(math.pi / 4 + math.radians(25.0) / 2) ** 2
+        expected_characteristic = 0.5 * 19.0 * expected_kp * 1.1**2 * 2.6
+        self.assertAlmostEqual(result["coefficient_kp"], expected_kp)
+        self.assertAlmostEqual(
+            result["characteristic_resistance_kN"],
+            expected_characteristic,
+        )
+        self.assertAlmostEqual(
+            result["mobilised_resistance_kN"],
+            0.5 * expected_characteristic,
+        )
+
+    def test_factored_uls_actions_default_to_required_sliding_sf_of_one(self):
+        result = design_pad_foundations(
+            _snapshot(),
+            {
+                "foundation_soil_unit_weight_kn_m3": 18,
+                "foundation_permissible_bearing_kpa": 150,
+                "foundation_sliding_resistance": "Sliding Not Resisted",
+            },
+        )
+        stability = result["supports"][0]["uls_stability"]
+        self.assertAlmostEqual(stability["required_sliding_safety_factor"], 1.0)
+        sliding_check = next(
+            check
+            for check in result["supports"][0]["structural"]["checks"]
+            if check["name"].startswith("ULS sliding stability")
+        )
+        self.assertAlmostEqual(
+            sliding_check["demand"],
+            abs(
+                result["supports"][0]["structural"][
+                    "horizontal_reaction_kN"
+                ]
+            ),
+        )
+
+    def test_sliding_inputs_are_validated_and_project_sf_scales_demand(self):
+        with self.assertRaises(FoundationInputError) as context:
+            design_pad_foundations(
+                _snapshot(),
+                {
+                    "foundation_soil_unit_weight_kn_m3": 18,
+                    "foundation_permissible_bearing_kpa": 150,
+                    "foundation_passive_mobilisation_factor": 1.2,
+                },
+            )
+        self.assertIn(
+            "foundation_passive_mobilisation_factor",
+            context.exception.errors,
+        )
+
+        result = design_pad_foundations(
+            _snapshot(),
+            {
+                "foundation_soil_unit_weight_kn_m3": 18,
+                "foundation_permissible_bearing_kpa": 150,
+                "foundation_uls_sliding_required_sf": 1.5,
+                "foundation_sliding_resistance": "Sliding Not Resisted",
+            },
+        )
+        support = result["supports"][0]
+        sliding_check = next(
+            check
+            for check in support["structural"]["checks"]
+            if check["name"].startswith("ULS sliding stability")
+        )
+        self.assertAlmostEqual(
+            sliding_check["demand"],
+            1.5 * abs(support["structural"]["horizontal_reaction_kN"]),
+        )
+
 
 class PostAnalysisConnectionTests(unittest.TestCase):
     def test_base_plate_and_haunch_checks_are_reported_from_stored_actions(self):
@@ -173,6 +350,39 @@ class PostAnalysisConnectionTests(unittest.TestCase):
         )
         self.assertGreaterEqual(
             bolt_layout["gauge_mm"], bolt_layout["minimum_gauge_mm"]
+        )
+        self.assertGreaterEqual(
+            bolt_layout["provided_section_face_clearance_depth_mm"],
+            bolt_layout["minimum_section_face_clearance_mm"],
+        )
+        self.assertGreaterEqual(
+            bolt_layout["provided_section_face_clearance_width_mm"],
+            bolt_layout["minimum_section_face_clearance_mm"],
+        )
+        self.assertEqual(
+            bolt_layout["hole_diameter_mm"],
+            bolt_layout["diameter_mm"] + bolt_layout["hole_oversize_mm"],
+        )
+        self.assertEqual(bolt_layout["hole_oversize_mm"], 6.0)
+        self.assertIn("Red Book", bolt_layout["detailing_source"])
+        bolt_design = support["holding_down_bolts"]
+        anchorage = bolt_design["anchorage_estimate"]
+        self.assertEqual(anchorage["concrete_strength_mpa"], 25.0)
+        self.assertGreaterEqual(
+            anchorage["concrete_tension_resistance_kN"],
+            bolt_design["governing_check"]["bolt_tension_kN"],
+        )
+        self.assertEqual(
+            anchorage["minimum_concrete_edge_distance_mm"],
+            7.0 * bolt_layout["diameter_mm"],
+        )
+        self.assertEqual(
+            anchorage["anchor_plate_length_mm"],
+            3.5 * bolt_layout["diameter_mm"],
+        )
+        self.assertEqual(
+            anchorage["minimum_anchor_plate_thickness_mm"],
+            2.0 * bolt_layout["diameter_mm"] / 3.0,
         )
         self.assertIn("required", support["stiffeners"])
         haunch = result["haunch_connections"]
@@ -193,7 +403,7 @@ class PostAnalysisConnectionTests(unittest.TestCase):
         detailed = result["detailed_checks"]
         self.assertEqual(
             detailed["base_plates"]["supports"][0]["anchor_concrete"]["status"],
-            "INPUT_REQUIRED",
+            "PRELIMINARY_PASS_WITH_DETAIL_REQUIRED",
         )
         detailed_haunch = detailed["haunch_connections"]["locations"][0]
         self.assertIn(
@@ -238,18 +448,37 @@ class PostAnalysisConnectionTests(unittest.TestCase):
             self.assertIn("INPUT_REQUIRED", report)
             self.assertIn("Elastic line-weld group", report)
 
-    def test_heavier_haunch_connection_adds_calculated_stiffeners(self):
+    def test_all_concrete_design_uses_fixed_25_mpa_strength(self):
+        foundation = design_pad_foundations(
+            _snapshot(),
+            {
+                "foundation_soil_unit_weight_kn_m3": 18,
+                "foundation_permissible_bearing_kpa": 150,
+                "foundation_concrete_strength_mpa": 40,
+            },
+        )
+        self.assertEqual(
+            foundation["inputs"]["concrete_strength_mpa"],
+            25.0,
+        )
+        connection = design_portal_connections(_snapshot())
+        self.assertEqual(
+            connection["base_plates"]["basis"]["concrete_strength_mpa"],
+            25.0,
+        )
+
+    def test_heavier_haunch_connection_reports_panel_zone_hold_point(self):
         snapshot = deepcopy(_snapshot())
         snapshot["results"]["members"][1]["major_moment"] = 180.0
         result = design_portal_connections(snapshot)
         connection = result["haunch_connections"]["locations"][0][
             "connection"
         ]
-        stiffeners = connection["stiffeners"]
-        self.assertTrue(stiffeners["required"])
-        self.assertGreater(stiffeners["provided_thickness_mm"], 0)
-        self.assertGreater(stiffeners["height_mm"], 0)
-        self.assertEqual(stiffeners["status"], "PRELIMINARY_PASS")
+        self.assertEqual(connection["status"], "HOLD_POINT")
+        self.assertIn(
+            "three-mode end-plate T-stub checks",
+            connection["reason"],
+        )
 
     def test_local_column_overstress_automatically_adds_checked_stiffeners(self):
         result = design_portal_connections(_snapshot())
@@ -266,6 +495,56 @@ class PostAnalysisConnectionTests(unittest.TestCase):
         self.assertIn(
             "STIFFENER_REQUIRED",
             {check["status"] for check in detailed["local_member_checks"]},
+        )
+
+    def test_prokon_reference_geometry_passes_without_stiffeners(self):
+        from member_database import load_member_database
+
+        database = load_member_database()
+        rafter = database["I-Sections"]["254x146x31"]
+        column = database["I-Sections"]["254x146x37"]
+        connection = _design_haunch_end_plate(
+            {"added_depth_mm": 227.6},
+            {
+                "major_moment_kNm": 99.0,
+                "axial_force_kN": 0.0,
+                "shear_force_kN": 43.0,
+            },
+            rafter,
+            column,
+        )
+        self.assertEqual(connection["status"], "PRELIMINARY_PASS")
+        self.assertEqual(connection["bolts"]["diameter_mm"], 16.0)
+        self.assertLessEqual(
+            connection["bolts"]["gauge_mm"],
+            column["b"]
+            - 2.0 * connection["bolts"]["minimum_edge_distance_mm"],
+        )
+        self.assertLessEqual(
+            connection["plate"]["provided_thickness_mm"],
+            12.0,
+        )
+        self.assertFalse(connection["stiffeners"]["required"])
+        components = connection["supporting_member_components"]
+        self.assertAlmostEqual(
+            components["flange_t_stub"]["resistance_kN"],
+            150.731,
+            delta=2.0,
+        )
+        self.assertAlmostEqual(
+            components["web_compression_crippling"]["resistance_kN"],
+            249.982,
+            delta=2.0,
+        )
+        self.assertAlmostEqual(
+            components["web_compression_buckling"]["resistance_kN"],
+            372.952,
+            delta=2.0,
+        )
+        self.assertAlmostEqual(
+            components["web_panel_shear"]["resistance_kN"],
+            283.409,
+            delta=0.1,
         )
 
 

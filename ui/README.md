@@ -62,17 +62,22 @@ details with full bolt dimension chains, plate sizes, weld callouts and
 flat-stiffener dimensions. The same canonical 2D sheets are exported as a
 vector PDF, R2018 DXF and DWG. The interactive Plotly model is for in-app
 inspection only and exposes no 3D-file export. Bolt geometry, prying, plates, weld groups,
-supporting-member effects and stiffeners are calculated. Concrete anchor
-breakout, pull-out and embedment remain visibly `INPUT_REQUIRED`.
+supporting-member effects and stiffeners are calculated. Red Book Table 4.6
+provides a preliminary HD-bolt anchor-plate estimate for 25 MPa concrete;
+pedestal geometry, `7d` edge distance and reinforcement remain visibly marked
+for project confirmation.
 Connection drawings omit utilisation/status text; those values remain in the
 calculation report. Haunch donors omit their top flange, retain the bottom
-flange and enforce the displayed database-dimension limit `h - b`.
+flange and enforce the displayed usable-donor limit `hw + tf`.
 
-The Foundation page requests only soil unit weight and permissible bearing
-pressure. It automatically searches a common pad length, width and height and
-checks ULS sliding and overturning at safety factor 1.5. Fixed concrete,
-reinforcement, cover, soil-cover and friction assumptions are visible and
-repeated in the result.
+The Foundation page requests the bearing, soil-cover and sliding inputs. It
+automatically searches a common pad length, width and height. **Sliding
+Resisted** records a separate external restraint and prevents pad sliding from
+inflating the automatic size; the external load path remains a design hold
+point. **Sliding Not Resisted** checks normal force, base friction, optional
+mobilised Rankine passive resistance, horizontal demand and achieved safety
+factor. ULS reactions are already factored, so the required sliding safety
+factor defaults to 1.0; ULS overturning retains 1.5.
 
 Portal rafters and columns can be left on **Automatic - lightest passing** or
 set to an explicit I- or H-section. An explicit section is still checked through

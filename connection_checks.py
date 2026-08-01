@@ -12,6 +12,7 @@ import math
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from connection_components import supporting_member_components
 from haunch_geometry import haunch_cut_depth_check
 from member_database import load_member_database
 
@@ -452,15 +453,50 @@ def _base_plate_checks(
                 _check(
                     reference="BP-04",
                     name="Anchor-bolt edge distance",
-                    equation="e >= 1.5d",
+                    equation="e >= Red Book recommended edge distance",
                     substitution=(
                         f"{float(layout['edge_distance_mm']):.1f} >= "
-                        f"{float(layout['minimum_edge_distance_mm']):.1f}"
+                        f"{float(layout.get('recommended_edge_distance_mm', layout['minimum_edge_distance_mm'])):.1f}"
                     ),
-                    demand=float(layout["minimum_edge_distance_mm"]),
+                    demand=float(
+                        layout.get(
+                            "recommended_edge_distance_mm",
+                            layout["minimum_edge_distance_mm"],
+                        )
+                    ),
                     resistance=float(layout["edge_distance_mm"]),
                     units="mm",
-                    source="Mahachi Chapter 7.3, SANS 10162 Clause 22.3.3.",
+                    source="The Red Book Table 6.19.",
+                ),
+                _check(
+                    reference="BP-05",
+                    name="Anchor-bolt clearance from column depth faces",
+                    equation="c_provided >= B/2 + C1",
+                    substitution=(
+                        f"{float(layout['provided_section_face_clearance_depth_mm']):.1f} "
+                        f">= {float(layout['minimum_section_face_clearance_mm']):.1f}"
+                    ),
+                    demand=float(layout["minimum_section_face_clearance_mm"]),
+                    resistance=float(
+                        layout["provided_section_face_clearance_depth_mm"]
+                    ),
+                    units="mm",
+                    source="The Red Book Table 6.17 impact-wrench clearances.",
+                ),
+                _check(
+                    reference="BP-06",
+                    name="Anchor-bolt clearance from column width faces",
+                    equation="c_provided >= B/2 + C1",
+                    substitution=(
+                        f"{float(layout['provided_section_face_clearance_width_mm']):.1f} "
+                        f">= {float(layout['minimum_section_face_clearance_mm']):.1f}"
+                    ),
+                    demand=float(layout["minimum_section_face_clearance_mm"]),
+                    resistance=float(
+                        layout["provided_section_face_clearance_width_mm"]
+                    ),
+                    units="mm",
+                    source="The Red Book Table 6.17 impact-wrench clearances.",
                 ),
             ])
         governing_bolt = bolt_design.get("governing_check")
@@ -516,29 +552,69 @@ def _base_plate_checks(
             * max(int(support.get("stiffeners", {}).get("count", 1)), 1),
             connected_thickness_mm=float(plate["provided_thickness_mm"]),
         )
-        anchor_concrete = {
-            "status": "INPUT_REQUIRED",
-            "checks": [
+        anchorage = bolt_design.get("anchorage_estimate", {})
+        governing_bolt = bolt_design.get("governing_check", {})
+        anchor_checks = []
+        if anchorage and governing_bolt:
+            anchor_checks.append(
                 _check(
-                    reference="BP-06",
-                    name="Concrete anchor breakout, pull-out and embedment",
-                    equation="Project anchor standard and product geometry required",
-                    substitution="Not calculated from steel-frame reactions alone",
-                    demand=0.0,
-                    resistance=0.0,
-                    units="",
-                    source=(
-                        "Requires the project anchor standard and verified "
-                        "pedestal/anchor geometry; not covered by Mahachi Chapter 7."
+                    reference="BP-07",
+                    name="Red Book HD-bolt concrete anchorage estimate",
+                    equation="T_u <= T_rc from Table 4.6",
+                    substitution=(
+                        f"{float(governing_bolt['bolt_tension_kN']):.2f} <= "
+                        f"{float(anchorage['concrete_tension_resistance_kN']):.2f}"
                     ),
-                    completed=False,
+                    demand=float(governing_bolt["bolt_tension_kN"]),
+                    resistance=float(
+                        anchorage["concrete_tension_resistance_kN"]
+                    ),
+                    units="kN/bolt",
+                    source=(
+                        "The Red Book Table 4.6, holding-down bolts with "
+                        "anchor plates in 25 MPa concrete."
+                    ),
                     note=(
-                        "Required inputs: anchor type/head or plate, effective "
-                        "embedment, pedestal dimensions, edge distances, "
-                        "concrete cracking condition and reinforcement."
+                        f"Use anchorage length {float(anchorage['anchorage_length_mm']):.0f} mm, "
+                        f"anchor plate {float(anchorage['anchor_plate_length_mm']):.0f} x "
+                        f"{float(anchorage['anchor_plate_width_mm']):.0f} x "
+                        f"{float(anchorage['minimum_anchor_plate_thickness_mm']):.1f} mm minimum."
                     ),
                 )
-            ],
+            )
+        anchor_checks.append(
+            _check(
+                reference="BP-08",
+                name="Concrete edge distance and pedestal detailing",
+                equation="Concrete edge distance >= 7d",
+                substitution=(
+                    f"Provide at least "
+                    f"{float(anchorage.get('minimum_concrete_edge_distance_mm', 0.0)):.0f} mm"
+                    if anchorage
+                    else "Red Book anchorage geometry is unavailable"
+                ),
+                demand=float(
+                    anchorage.get("minimum_concrete_edge_distance_mm", 0.0)
+                ),
+                resistance=0.0,
+                units="mm",
+                source="The Red Book Table 4.6 notes.",
+                completed=False,
+                note=(
+                    "Confirm the stated pedestal dimensions, 7d concrete edge "
+                    "distance, degreased bolt shank, reinforcement and anchor "
+                    "plate installation on the project drawings."
+                ),
+            )
+        )
+        anchor_concrete = {
+            "status": (
+                "PRELIMINARY_PASS_WITH_DETAIL_REQUIRED"
+                if anchorage
+                else "INPUT_REQUIRED"
+            ),
+            "checks": anchor_checks,
+            "estimate": anchorage,
         }
         calculated_pass = (
             all(item["status"] == "PASS" for item in checks)
@@ -622,12 +698,9 @@ def _haunch_checks(
         fabrication_check = _check(
             reference="HC-00",
             name="Donor-section haunch cut depth",
-            equation="d_cut <= h - b",
+            equation="d_cut <= hw + tf",
             substitution=(
-                f"{cut_depth:.1f} <= "
-                f"{cut_geometry.source_section_depth_mm:.1f} - "
-                f"{cut_geometry.source_flange_width_mm:.1f} = "
-                f"{cut_geometry.maximum_cut_depth_mm:.1f}"
+                f"{cut_depth:.1f} <= {cut_geometry.equation}"
             ),
             demand=cut_depth,
             resistance=cut_geometry.maximum_cut_depth_mm,
@@ -662,20 +735,63 @@ def _haunch_checks(
             + float(prying["design_tension_per_bolt_kN"])
             / float(bolts["tension_resistance_kN"])
         )
+        plate = connection["plate"]
+        plate_t_stub = plate.get("t_stub", {})
+        row_demand = float(
+            connection.get(
+                "row_demand_kN",
+                flange_force
+                / max(int(connection.get("tension_row_count", 2)), 1),
+            )
+        )
         checks = [
             fabrication_check,
             _check(
-                reference="HC-01",
-                name="T-stub/end-plate yield-line mechanism",
-                equation="U = 0.25 m P_u / M_r",
+                reference="HC-01A",
+                name="End-plate T-stub Mode 1 - complete yielding",
+                equation="R_1 = 4 M_pl / m",
                 substitution=(
-                    f"0.25 x {prying['m_mm']:.2f} x {flange_force:.2f} / "
-                    f"{prying['plate_moment_resistance_kNm'] * 1000:.2f}"
+                    f"{row_demand:.2f} / "
+                    f"{float(plate_t_stub.get('mode_1_complete_yielding_kN', 0)):.2f}"
                 ),
-                demand=prying["plate_mechanism_utilisation"],
-                resistance=1.0,
-                units="utilisation",
-                source=prying["source"],
+                demand=row_demand,
+                resistance=float(
+                    plate_t_stub.get("mode_1_complete_yielding_kN", 0.0)
+                ),
+                units="kN",
+                source="EN 1993-1-8 component-method equivalent T-stub.",
+            ),
+            _check(
+                reference="HC-01B",
+                name="End-plate T-stub Mode 2 - bolt and plate yielding",
+                equation="R_2 = (2 M_pl + n sum(B_t)) / (m + n)",
+                substitution=(
+                    f"{row_demand:.2f} / "
+                    f"{float(plate_t_stub.get('mode_2_bolt_and_yielding_kN', 0)):.2f}"
+                ),
+                demand=row_demand,
+                resistance=float(
+                    plate_t_stub.get(
+                        "mode_2_bolt_and_yielding_kN", 0.0
+                    )
+                ),
+                units="kN",
+                source="EN 1993-1-8 component-method equivalent T-stub.",
+            ),
+            _check(
+                reference="HC-01C",
+                name="End-plate T-stub Mode 3 - bolt failure",
+                equation="R_3 = sum(B_t)",
+                substitution=(
+                    f"{row_demand:.2f} / "
+                    f"{float(plate_t_stub.get('mode_3_bolt_failure_kN', 0)):.2f}"
+                ),
+                demand=row_demand,
+                resistance=float(
+                    plate_t_stub.get("mode_3_bolt_failure_kN", 0.0)
+                ),
+                units="kN",
+                source="EN 1993-1-8 component-method equivalent T-stub.",
             ),
             _check(
                 reference="HC-02",
@@ -694,6 +810,21 @@ def _haunch_checks(
             ),
             _check(
                 reference="HC-03",
+                name="End-plate bearing at bolt hole",
+                equation="B_r = 3 phi_b t_p d f_u",
+                substitution=(
+                    f"{float(bolts['bolt_shear_kN']):.2f} / "
+                    f"{float(plate.get('bearing_resistance_per_bolt_kN', 0)):.2f}"
+                ),
+                demand=float(bolts["bolt_shear_kN"]),
+                resistance=float(
+                    plate.get("bearing_resistance_per_bolt_kN", 0.0)
+                ),
+                units="kN/bolt",
+                source="SANS 10162 bearing-type bolted connection model.",
+            ),
+            _check(
+                reference="HC-04A",
                 name="End-plate bolt pitch",
                 equation="2.7d <= p <= 200 mm",
                 substitution=(
@@ -708,6 +839,57 @@ def _haunch_checks(
                 resistance=float(bolts["maximum_pitch_mm"]),
                 units="mm",
                 source="Mahachi Chapter 7.3 and connection detailing limit.",
+            ),
+            _check(
+                reference="HC-04B",
+                name="End-plate bolt end and edge distances",
+                equation="e >= 1.5d",
+                substitution=(
+                    f"min({float(bolts['edge_distance_mm']):.1f}, "
+                    f"{float(bolts['end_distance_mm']):.1f}) >= "
+                    f"{float(bolts['minimum_edge_distance_mm']):.1f}"
+                ),
+                demand=float(bolts["minimum_edge_distance_mm"]),
+                resistance=min(
+                    float(bolts["edge_distance_mm"]),
+                    float(bolts["end_distance_mm"]),
+                ),
+                units="mm",
+                source="Mahachi Chapter 7.3 and SANS 10162 bolt detailing.",
+            ),
+            _check(
+                reference="HC-04C",
+                name="End-plate minimum bolt gauge",
+                equation="g >= 2.7d",
+                substitution=(
+                    f"{float(bolts['gauge_mm']):.1f} >= "
+                    f"{float(bolts['minimum_gauge_mm']):.1f}"
+                ),
+                demand=float(bolts["minimum_gauge_mm"]),
+                resistance=float(bolts["gauge_mm"]),
+                units="mm",
+                source="Mahachi Chapter 7.3 and SANS 10162 bolt detailing.",
+            ),
+            _check(
+                reference="HC-04D",
+                name="Bolt-line fit within supporting flange",
+                equation="g/2 + e_min <= b_support/2",
+                substitution=(
+                    f"{float(bolts['gauge_mm']) / 2:.1f} + "
+                    f"{float(bolts['minimum_edge_distance_mm']):.1f} <= "
+                    f"{float(supporting_member['b']) / 2:.1f}"
+                ),
+                demand=(
+                    float(bolts["gauge_mm"]) / 2.0
+                    + float(bolts["minimum_edge_distance_mm"])
+                ),
+                resistance=float(supporting_member["b"]) / 2.0,
+                units="mm",
+                source="Inside-flange bolt-layout geometry.",
+                note=(
+                    "The bolt-hole centreline and minimum edge distance must "
+                    "fit inside the supporting flange."
+                ),
             ),
         ]
         weld = _rectangular_weld_group(
@@ -735,79 +917,146 @@ def _haunch_checks(
                 connection["plate"]["provided_thickness_mm"]
             ),
         )
-        supporting_flange_mr_nmm = (
-            0.25
-            * RESISTANCE_FACTOR
-            * float(supporting_member["b"])
-            * float(supporting_member["tf"]) ** 2
-            * STEEL_FY_MPA
-        )
-        supporting_flange_demand_nmm = (
-            0.25 * prying["m_mm"] * flange_force * 1000.0
-        )
-        bearing_length = (
-            float(connection["plate"]["provided_thickness_mm"])
-            + 2.5 * float(supporting_member["tf"])
-            + 2.0 * float(supporting_member.get("r1", 0.0))
-        )
-        web_yield_resistance = (
-            RESISTANCE_FACTOR
-            * float(supporting_member["tw"])
-            * bearing_length
-            * STEEL_FY_MPA
-            / 1000.0
-        )
+        components = connection.get("supporting_member_components")
+        if not components:
+            components = supporting_member_components(
+                supporting_member=supporting_member,
+                connected_member=rafter,
+                bolt_gauge_mm=float(bolts["gauge_mm"]),
+                bolt_tension_resistance_kN=float(
+                    bolts["tension_resistance_kN"]
+                ),
+                row_demand_kN=row_demand,
+                flange_force_kN=flange_force,
+                panel_shear_kN=flange_force,
+            )
+        flange_component = components["flange_t_stub"]
         local_checks = [
             _check(
-                reference="HC-04",
-                name=f"{supporting_label} flange T-stub bending",
-                equation=(
-                    "U = 0.25 m P_u / "
-                    f"M_r,{resistance_suffix}"
-                ),
+                reference="HC-05A",
+                name=f"{supporting_label} flange T-stub Mode 1",
+                equation="R_1 = 4 M_pl / m",
                 substitution=(
-                    f"{supporting_flange_demand_nmm / 1e6:.3f} / "
-                    f"{supporting_flange_mr_nmm / 1e6:.3f}"
+                    f"{row_demand:.2f} / "
+                    f"{float(flange_component['mode_1_complete_yielding_kN']):.2f}"
                 ),
-                demand=supporting_flange_demand_nmm,
-                resistance=supporting_flange_mr_nmm,
-                units="N.mm",
-                source=(
-                    "Mahachi Example E7.5 T-stub yield-line model applied "
-                    f"preliminarily to the {source_target} flange."
+                demand=row_demand,
+                resistance=float(
+                    flange_component["mode_1_complete_yielding_kN"]
                 ),
+                units="kN",
+                source="EN 1993-1-8 component-method equivalent T-stub.",
                 note=(
                     "A failed check requires transverse stiffeners or a "
                     f"thicker/stronger {source_target} flange."
                 ),
             ),
             _check(
-                reference="HC-05",
-                name=f"{supporting_label} web local yielding",
-                equation=(
-                    f"R_w,{resistance_suffix} = "
-                    "phi t_w (t_p + 2.5t_f + 2r) f_y"
-                ),
+                reference="HC-05B",
+                name=f"{supporting_label} flange T-stub Mode 2",
+                equation="R_2 = (2 M_pl + n sum(B_t)) / (m + n)",
                 substitution=(
-                    f"0.90 x {float(supporting_member['tw']):.2f} x "
-                    f"{bearing_length:.2f} x 355 / 1000"
+                    f"{row_demand:.2f} / "
+                    f"{float(flange_component['mode_2_bolt_and_yielding_kN']):.2f}"
+                ),
+                demand=row_demand,
+                resistance=float(
+                    flange_component["mode_2_bolt_and_yielding_kN"]
+                ),
+                units="kN",
+                source="EN 1993-1-8 component-method equivalent T-stub.",
+                note=(
+                    "A failed check requires transverse stiffeners or a "
+                    f"thicker/stronger {source_target} flange."
+                ),
+            ),
+            _check(
+                reference="HC-05C",
+                name=f"{supporting_label} flange T-stub Mode 3",
+                equation="R_3 = sum(B_t)",
+                substitution=(
+                    f"{row_demand:.2f} / "
+                    f"{float(flange_component['mode_3_bolt_failure_kN']):.2f}"
+                ),
+                demand=row_demand,
+                resistance=float(
+                    flange_component["mode_3_bolt_failure_kN"]
+                ),
+                units="kN",
+                source="EN 1993-1-8 component-method equivalent T-stub.",
+            ),
+            _check(
+                reference="HC-06",
+                name=f"{supporting_label} web tension yielding",
+                equation="T_r = phi t_w l_eff f_y",
+                substitution=(
+                    f"{flange_force:.2f} / "
+                    f"{float(components['web_tension_yielding']['resistance_kN']):.2f}"
                 ),
                 demand=flange_force,
-                resistance=web_yield_resistance,
+                resistance=float(
+                    components["web_tension_yielding"]["resistance_kN"]
+                ),
                 units="kN",
-                source=(
-                    "Preliminary concentrated-force web-yielding model "
-                    f"applied to the {source_target}; confirm against the "
-                    "adopted connection standard."
+                source="SANS 10162 supporting-web tension-yielding model.",
+            ),
+            _check(
+                reference="HC-07",
+                name=f"{supporting_label} web compression crippling",
+                equation="B_r = 0.80 t_w l_eff f_y",
+                substitution=(
+                    f"{flange_force:.2f} / "
+                    f"{float(components['web_compression_crippling']['resistance_kN']):.2f}"
+                ),
+                demand=flange_force,
+                resistance=float(
+                    components["web_compression_crippling"]["resistance_kN"]
+                ),
+                units="kN",
+                source="SANS 10162 web compression crippling model.",
+            ),
+            _check(
+                reference="HC-08",
+                name=f"{supporting_label} web compression buckling",
+                equation="B_r = 0.80(640000)t_w l_eff/(h_w/t_w)^2",
+                substitution=(
+                    f"{flange_force:.2f} / "
+                    f"{float(components['web_compression_buckling']['resistance_kN']):.2f}"
+                ),
+                demand=flange_force,
+                resistance=float(
+                    components["web_compression_buckling"]["resistance_kN"]
+                ),
+                units="kN",
+                source="SANS 10162 supporting-web compression buckling model.",
+            ),
+            _check(
+                reference="HC-09",
+                name=f"{supporting_label} web panel shear",
+                equation="V_r = 0.55 phi f_y t_w h",
+                substitution=(
+                    f"{float(components['web_panel_shear']['demand_kN']):.2f} / "
+                    f"{float(components['web_panel_shear']['resistance_kN']):.2f}"
+                ),
+                demand=float(components["web_panel_shear"]["demand_kN"]),
+                resistance=float(
+                    components["web_panel_shear"]["resistance_kN"]
+                ),
+                units="kN",
+                source="SANS 10162 supporting-web panel shear model.",
+                note=(
+                    "A failed panel-shear check requires a doubler plate or "
+                    "revised connection; transverse flange stiffeners alone "
+                    "do not resolve it."
                 ),
             ),
         ]
         reinforced = (
             stiffeners["status"] == "PASS"
-            and any(item["status"] == "FAIL" for item in local_checks)
+            and any(item["status"] == "FAIL" for item in local_checks[:-1])
         )
         if reinforced:
-            for item in local_checks:
+            for item in local_checks[:-1]:
                 if item["status"] == "FAIL":
                     item["status"] = "STIFFENER_REQUIRED"
                     item["note"] = (
@@ -866,7 +1115,7 @@ def calculate_connection_checks(
     haunch = _haunch_checks(snapshot, haunch_connections)
     failed = base["status"] == "FAIL" or haunch["status"] == "FAIL"
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "FAIL" if failed else "PASS_WITH_INPUT_REQUIRED",
         "base_plates": base,
         "haunch_connections": haunch,
@@ -874,19 +1123,21 @@ def calculate_connection_checks(
             "Donor-section haunch cut-depth geometry",
             "Base-plate concrete bearing and plate bending",
             "Bolt distances and steel shear/tension interaction",
-            "T-stub prying and end-plate yield-line mechanism",
+            "Red Book HD-bolt anchor-plate estimate for 25 MPa concrete",
+            "End-plate T-stub Modes 1, 2 and 3 including prying",
             "E70XX fillet/CJP weld selection from elastic weld-group demand",
             "Stiffener yielding, plate-column buckling and weld demand",
             (
-                "Preliminary connection-specific supporting-member flange "
-                "bending and web local yielding"
+                "Supporting-flange T-stub Modes 1, 2 and 3; web tension "
+                "yielding, compression crippling/buckling and panel shear"
             ),
         ],
         "input_required_scope": [
-            "Concrete anchor breakout, pull-out and embedment",
-            "Pedestal reinforcement and anchor load-path detailing",
+            "Verification of the required 7d concrete edge distance",
+            "Pedestal geometry, reinforcement and anchor load-path detailing",
         ],
         "references": [
+            "EN 1993-1-8 equivalent T-stub component method.",
             "Mahachi Chapter 7.3-7.5, 7.7-7.9.",
             "SANS 10162 steel resistance models used by the frame engine.",
         ],

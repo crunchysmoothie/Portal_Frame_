@@ -1099,6 +1099,8 @@ def build_calculation_sheet_data_from_frame(
         "rafter_section": rafter_section,
         "rafter_section_depth_mm": selected_rafter_properties["h"],
         "rafter_flange_width_mm": selected_rafter_properties["b"],
+        "rafter_clear_web_depth_mm": selected_rafter_properties["hw"],
+        "rafter_flange_thickness_mm": selected_rafter_properties["tf"],
         "rafter_flange_thickness_mm": selected_rafter_properties["tf"],
         "maximum_haunch_cut_depth_mm": maximum_haunch_cut_depth_mm(
             selected_rafter_properties
@@ -1163,7 +1165,7 @@ def build_calculation_sheet_data_from_frame(
     ):
         assumptions.extend([
             "Rafter haunches are modelled as cut from the selected rafter and welded below it.",
-            "The entered haunch cut cannot exceed the selected donor-section limit h - b, using the actual database section depth h and flange width b.",
+            "The entered haunch cut cannot exceed the selected donor usable depth hw + tf: clear web plus the retained bottom-flange thickness.",
             "Each tapered haunch zone uses eight constant-property PyNite sub-elements with composite properties sampled at each sub-element midpoint.",
             "The inclined haunch flange is numerically tapered over its final flange thickness so area and Ixx converge to the parent rafter at the toe.",
             "Haunch sub-elements retain the parent rafter brace-panel stability length; numerical subdivision is not treated as lateral restraint.",

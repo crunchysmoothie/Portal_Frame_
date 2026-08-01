@@ -11,13 +11,24 @@ from unittest.mock import patch
 import ezdxf
 
 import connection_cad as cad
-from connection_design import design_portal_connections
+from connection_design import (
+    _design_haunch_end_plate,
+    _haunch_flange_obstructed_rows,
+    design_portal_connections,
+)
 from test_foundation_connections import _snapshot
 
 
 def _connection_result(*, include_apex: bool = True) -> dict:
     snapshot = _snapshot()
-    snapshot["results"]["project"]["column_section"] = "305x165x40"
+    snapshot["results"]["project"].update(
+        {
+            "column_section": "305x165x40",
+            "project_name": "Connection drawing test",
+            "project_number": "PF-001",
+            "designer": "Test designer",
+        }
+    )
     snapshot["input_data"]["frame_data"][0]["eaves_haunch_depth"] = 80.0
     if include_apex:
         snapshot["input_data"]["frame_data"][0].update(
@@ -58,6 +69,16 @@ class CanonicalConnectionSheetTests(unittest.TestCase):
         eaves = next(sheet for sheet in sheets if sheet.sheet_id == "HC-EAVES")
         self.assertIn("COLUMN 305x165x40", _sheet_text(eaves))
 
+    def test_connection_result_carries_project_title_block_metadata(self):
+        self.assertEqual(
+            self.result["project"],
+            {
+                "name": "Connection drawing test",
+                "number": "PF-001",
+                "designer": "Test designer",
+            },
+        )
+
     def test_cut_depth_uses_resolved_analysis_value_not_input_placeholder(self):
         snapshot = _snapshot()
         frame = snapshot["input_data"]["frame_data"][0]
@@ -92,6 +113,16 @@ class CanonicalConnectionSheetTests(unittest.TestCase):
             self.assertNotRegex(text, r"\bu\s*=")
             sheet.validate_collisions()
 
+    def test_large_column_section_keeps_base_plan_callout_clear_of_edge_dimension(self):
+        result = deepcopy(self.result)
+        for support in result["base_plates"]["supports"]:
+            support["column_section"] = "533x210x82"
+        sheets = cad.build_connection_sheets(result)
+        base = next(sheet for sheet in sheets if sheet.sheet_id == "BP-N1")
+        base.validate_collisions()
+        text = _sheet_text(base)
+        self.assertIn("COLUMN 533x210x82\nCENTRED ON PLATE", text)
+
     def test_dimensions_are_taken_from_calculated_geometry(self):
         sheets = cad.build_connection_sheets(self.result)
         base = next(sheet for sheet in sheets if sheet.sheet_id == "BP-N1")
@@ -122,10 +153,7 @@ class CanonicalConnectionSheetTests(unittest.TestCase):
         }
         self.assertIn(cad._fmt(float(bolts["gauge_mm"])), eaves_values)
         self.assertIn(cad._fmt(float(bolts["edge_distance_mm"])), eaves_values)
-        self.assertIn(
-            f"{int(bolts['row_count']) - 1} @ {cad._fmt(float(bolts['pitch_mm']))}",
-            eaves_values,
-        )
+        self.assertIn(cad._fmt(float(bolts["pitch_mm"])), eaves_values)
 
     def test_haunch_donor_has_removed_top_flange_and_retained_bottom_flange(self):
         eaves = next(
@@ -143,6 +171,226 @@ class CanonicalConnectionSheetTests(unittest.TestCase):
                 for primitive in eaves.primitives
             )
         )
+
+    def test_eaves_ga_uses_single_dashed_bolt_axes_with_full_spacing_chain(self):
+        eaves = next(
+            sheet
+            for sheet in cad.build_connection_sheets(self.result)
+            if sheet.sheet_id == "HC-EAVES"
+        )
+        location = next(
+            item
+            for item in self.result["haunch_connections"]["locations"]
+            if item["connection_type"] == "eaves_end_plate"
+        )
+        bolts = location["connection"]["bolts"]
+        ga_bolts = [
+            primitive
+            for primitive in eaves.primitives
+            if isinstance(primitive, cad.Line)
+            and primitive.layer == "BOLTS"
+            and eaves.zones["ga"].contains(
+                cad.Rect(primitive.x1, primitive.y1, 0.0, 0.0),
+                tolerance=0.1,
+            )
+        ]
+        self.assertEqual(len(ga_bolts), int(bolts["row_count"]))
+        self.assertTrue(all(primitive.dashed for primitive in ga_bolts))
+        self.assertTrue(all(max(primitive.x1, primitive.x2) <= 79.0 for primitive in ga_bolts))
+        ga_dimension_values = [
+            primitive.value
+            for primitive in eaves.primitives
+            if isinstance(primitive, cad.Text)
+            and primitive.layer == "DIMS"
+            and primitive.allowed_zone == "ga"
+        ]
+        self.assertEqual(
+            ga_dimension_values.count(cad._fmt(float(bolts["pitch_mm"]))),
+            int(bolts["row_count"]) - 1,
+        )
+        self.assertEqual(
+            ga_dimension_values.count(cad._fmt(float(bolts["end_distance_mm"]))),
+            2,
+        )
+
+    def test_eaves_bolt_rows_clear_projected_section_flanges(self):
+        obstructed = _haunch_flange_obstructed_rows(
+            plate_height_mm=680.0,
+            rafter={"h": 356.0, "tf": 20.0},
+            added_depth_mm=324.0,
+            row_count=5,
+            pitch_mm=155.0,
+        )
+        self.assertEqual(obstructed, [2])
+        self.assertEqual(
+            _haunch_flange_obstructed_rows(
+                plate_height_mm=680.0,
+                rafter={"h": 356.0, "tf": 20.0},
+                added_depth_mm=324.0,
+                row_count=6,
+                pitch_mm=125.0,
+            ),
+            [],
+        )
+
+    def test_eaves_design_adds_a_row_when_the_symmetric_grid_hits_a_flange(self):
+        section = {
+            "h": 356.0,
+            "b": 180.0,
+            "tw": 8.0,
+            "tf": 20.0,
+            "r1": 10.0,
+            "hw": 316.0,
+        }
+        connection = _design_haunch_end_plate(
+            {
+                "connection_type": "eaves_end_plate",
+                "supporting_member_section": "Synthetic",
+                "supporting_member_type": "column",
+                "added_depth_mm": 324.0,
+            },
+            {
+                "major_moment_kNm": 100.0,
+                "axial_force_kN": 50.0,
+                "shear_force_kN": 0.0,
+            },
+            section,
+            section,
+        )
+        self.assertIsNotNone(connection)
+        self.assertEqual(connection["bolts"]["row_count"], 6)
+        self.assertEqual(
+            _haunch_flange_obstructed_rows(
+                plate_height_mm=connection["plate"]["height_mm"],
+                rafter=section,
+                added_depth_mm=324.0,
+                row_count=connection["bolts"]["row_count"],
+                pitch_mm=connection["bolts"]["pitch_mm"],
+            ),
+            [],
+        )
+
+    def test_apex_design_also_moves_bolt_rows_clear_of_flange_bands(self):
+        result = _connection_result()
+        apex = next(
+            location
+            for location in result["haunch_connections"]["locations"]
+            if location["connection_type"] == "apex_splice"
+        )
+        bolts = apex["connection"]["bolts"]
+        self.assertEqual(
+            _haunch_flange_obstructed_rows(
+                plate_height_mm=apex["connection"]["plate"]["height_mm"],
+                rafter=apex["source_rafter_geometry"],
+                added_depth_mm=apex["added_depth_mm"],
+                row_count=bolts["row_count"],
+                pitch_mm=bolts["pitch_mm"],
+            ),
+            [],
+        )
+
+    def test_eaves_ga_anchors_rafter_top_flange_to_plate_top(self):
+        eaves = next(
+            sheet
+            for sheet in cad.build_connection_sheets(self.result)
+            if sheet.sheet_id == "HC-EAVES"
+        )
+        top_flange_lines = [
+            primitive
+            for primitive in eaves.primitives
+            if isinstance(primitive, cad.Line)
+            and primitive.layer == "OBJECT"
+            and abs(primitive.x1 - 79.0) < 1e-6
+            and abs(primitive.x2 - 174.0) < 1e-6
+        ]
+        self.assertTrue(top_flange_lines)
+        self.assertAlmostEqual(
+            max(primitive.y1 for primitive in top_flange_lines),
+            233.0,
+        )
+
+    def test_apex_ga_anchors_both_rafter_top_flanges_to_plate_top(self):
+        apex = next(
+            sheet
+            for sheet in cad.build_connection_sheets(self.result)
+            if sheet.sheet_id == "HC-APEX"
+        )
+        top_flange_lines = [
+            primitive
+            for primitive in apex.primitives
+            if isinstance(primitive, cad.Line)
+            and primitive.layer == "OBJECT"
+            and (
+                (
+                    abs(primitive.x1 - 34.0) < 1e-6
+                    and abs(primitive.x2 - 106.0) < 1e-6
+                )
+                or (
+                    abs(primitive.x1 - 110.0) < 1e-6
+                    and abs(primitive.x2 - 182.0) < 1e-6
+                )
+            )
+        ]
+        self.assertTrue(
+            any(
+                abs(primitive.x2 - 106.0) < 1e-6
+                and abs(primitive.y2 - 232.0) < 1e-6
+                for primitive in top_flange_lines
+            )
+        )
+        self.assertTrue(
+            any(
+                abs(primitive.x1 - 110.0) < 1e-6
+                and abs(primitive.y1 - 232.0) < 1e-6
+                for primitive in top_flange_lines
+            )
+        )
+
+    def test_end_plate_elevation_projects_rafter_and_haunch_profile(self):
+        eaves = next(
+            sheet
+            for sheet in cad.build_connection_sheets(self.result)
+            if sheet.sheet_id == "HC-EAVES"
+        )
+        plate_zone = eaves.zones["plate"]
+        projected_rectangles = [
+            primitive
+            for primitive in eaves.primitives
+            if isinstance(primitive, cad.Polyline)
+            and primitive.layer == "OBJECT"
+            and primitive.closed
+            and len(primitive.points) == 4
+            and all(
+                plate_zone.contains(cad.Rect(x, y, 0.0, 0.0), tolerance=0.1)
+                for x, y in primitive.points
+            )
+        ]
+        # Plate outline plus five component outlines: top flange, rafter web,
+        # rafter bottom flange, haunch web and retained bottom flange.
+        self.assertGreaterEqual(len(projected_rectangles), 6)
+
+    def test_end_plate_elevation_dimensions_every_internal_bolt_pitch(self):
+        eaves = next(
+            sheet
+            for sheet in cad.build_connection_sheets(self.result)
+            if sheet.sheet_id == "HC-EAVES"
+        )
+        location = next(
+            item
+            for item in self.result["haunch_connections"]["locations"]
+            if item["connection_type"] == "eaves_end_plate"
+        )
+        bolts = location["connection"]["bolts"]
+        pitch_label = cad._fmt(float(bolts["pitch_mm"]))
+        pitch_dimensions = [
+            primitive
+            for primitive in eaves.primitives
+            if isinstance(primitive, cad.Text)
+            and primitive.layer == "DIMS"
+            and primitive.allowed_zone == "plate"
+            and primitive.value == pitch_label
+        ]
+        self.assertEqual(len(pitch_dimensions), int(bolts["row_count"]) - 1)
 
     def test_required_base_stiffener_is_a_separate_flat_rectangle(self):
         result = deepcopy(self.result)
@@ -335,8 +583,15 @@ class ConnectionExportTests(unittest.TestCase):
             document = ezdxf.readfile(path)
             self.assertEqual(document.dxfversion, "AC1032")
             self.assertEqual(document.header["$INSUNITS"], 4)
+            self.assertEqual(document.header["$TILEMODE"], 1)
             layer_names = {layer.dxf.name for layer in document.layers}
             self.assertTrue(set(cad.DXF_LAYERS).issubset(layer_names))
+            modelspace = document.modelspace()
+            model_entity_types = {entity.dxftype() for entity in modelspace}
+            self.assertIn("LINE", model_entity_types)
+            self.assertIn("LWPOLYLINE", model_entity_types)
+            self.assertIn("DIMENSION", model_entity_types)
+            self.assertGreater(len(modelspace), 100)
             paper_layouts = [
                 layout
                 for layout in document.layouts
@@ -350,6 +605,7 @@ class ConnectionExportTests(unittest.TestCase):
                 entity_types = {entity.dxftype() for entity in layout}
                 self.assertIn("LINE", entity_types)
                 self.assertIn("LWPOLYLINE", entity_types)
+                self.assertIn("DIMENSION", entity_types)
                 self.assertIn("TEXT", entity_types)
                 self.assertIn("MTEXT", entity_types)
                 self.assertIn("CIRCLE", entity_types)
@@ -371,7 +627,10 @@ class ConnectionExportTests(unittest.TestCase):
                 script = Path(args[args.index("/s") + 1])
                 self.assertEqual(script.parent, target.parent)
                 self.assertTrue(script.is_file())
-                self.assertIn(str(target), script.read_text(encoding="utf-8"))
+                script_text = script.read_text(encoding="utf-8")
+                self.assertIn(str(target), script_text)
+                self.assertIn("_.TILEMODE\n1\n", script_text)
+                self.assertIn("_.ZOOM\n_E\n", script_text)
                 (target.parent / "acad.err").write_text(
                     "AutoCAD diagnostic",
                     encoding="utf-8",
@@ -435,10 +694,23 @@ class ConnectionExportTests(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 cad.write_connection_dwg(source, target)
 
-    def test_converter_status_reports_only_the_fixed_path(self):
+    def test_converter_selection_prefers_newest_supported_installation(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            newest = root / "AutoCAD LT 2027" / "accoreconsole.exe"
+            older = root / "AutoCAD 2026" / "accoreconsole.exe"
+            newest.parent.mkdir()
+            older.parent.mkdir()
+            older.write_bytes(b"older")
+            self.assertEqual(cad._select_dwg_converter((newest, older)), older)
+            newest.write_bytes(b"newest")
+            self.assertEqual(cad._select_dwg_converter((newest, older)), newest)
+
+    def test_converter_status_reports_selected_supported_path(self):
         status = cad.dwg_converter_status()
         self.assertEqual(status["path"], str(cad.DWG_CONVERTER))
         self.assertEqual(status["available"], cad.DWG_CONVERTER.is_file())
+        self.assertEqual(status["product"], cad.DWG_CONVERTER.parent.name)
 
 
 if __name__ == "__main__":
