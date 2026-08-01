@@ -90,8 +90,12 @@ class ProkonExportTests(unittest.TestCase):
         model = build_truss_comparison(result)
         self.assertEqual(model["members"][0]["release_i"], "T")
         self.assertEqual(model["members"][0]["release_j"], "T")
-        self.assertEqual(len(model["nodal_loads"]), 2)
+        self.assertEqual(len(model["nodal_loads"]), 0)
         self.assertEqual(model["supports"][1]["fixity"], "Y")
+        self.assertEqual(model["analysis"]["self_weight_case"], "D")
+        self.assertFalse(any(load["case"] == "D" for load in model["nodal_loads"]))
+        rendered = render_a03(model)
+        self.assertIn(b" Self weight to be added to:D\r\n", rendered)
 
 
 if __name__ == "__main__":

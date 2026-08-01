@@ -369,11 +369,16 @@ def build_truss_comparison(result: Mapping[str, Any], *, ranked_solution: int = 
             "section": section_names[designation], "release_i": "T", "release_j": "T",
         })
     cases = best.get("load_audit", {}).get("characteristic_node_loads_kn", {})
+    # Case D in the truss solver contains only the selected members' iterated
+    # self-weight, distributed equally to their end nodes.  Prokon can generate
+    # the same action directly from the exported member areas and steel density.
+    # Do not also export the equivalent D node loads or self-weight is counted
+    # twice in every combination containing D.
     nodal_loads = [
         {"case": case, "node": node_ids[node], "direction": direction, "magnitude": value}
         for case, loads in cases.items() for node, components in loads.items()
         for direction, value in (("FX", float(components[0])), ("FY", float(components[1])))
-        if abs(float(value)) > 1e-12
+        if case != "D" and abs(float(value)) > 1e-12
     ]
     left = node_ids[str(geometry["left_support"])]
     right = node_ids[str(geometry["right_support"])]
@@ -391,7 +396,7 @@ def build_truss_comparison(result: Mapping[str, Any], *, ranked_solution: int = 
         "analysis_id": result.get("analysis_id", ""),
         "structural_system": "Truss",
         "units": {"distance": "m", "force": "kN", "moment": "kNm"},
-        "analysis": {"domain": "XY plane", "type": "Linear", "self_weight_case": None},
+        "analysis": {"domain": "XY plane", "type": "Linear", "self_weight_case": "D"},
         "nodes": [{"id": node_ids[str(node["name"])], "source_name": node["name"], "x_m": float(node["x_mm"]) / 1000.0, "y_m": float(node["y_mm"]) / 1000.0, "z_m": 0.0} for node in nodes_in],
         "members": members,
         "sections": list(sections.values()),
@@ -404,6 +409,7 @@ def build_truss_comparison(result: Mapping[str, Any], *, ranked_solution: int = 
         "warnings": [
             "This export is the pin-jointed truss-only analysis model; PortalFrame eave-column and longitudinal-girder designs are separate models.",
             "All truss member ends are released as Prokon truss members to match the PortalFrame axial-only solver.",
+            "Prokon generates member self-weight in load case D; the PortalFrame equivalent nodal D self-weight loads are intentionally not exported to prevent double-counting.",
             "Member I and J values are stiffness placeholders derived from area and radius of gyration; released truss axial response depends on E and area.",
         ],
     }
