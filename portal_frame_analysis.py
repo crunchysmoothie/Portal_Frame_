@@ -2,6 +2,7 @@ import math
 import time
 import multiprocessing
 import warnings
+from dataclasses import replace
 from concurrent.futures import ProcessPoolExecutor
 from scipy.sparse.linalg import MatrixRankWarning
 from Pynite import FEModel3D
@@ -14,6 +15,24 @@ from strength_checks import (
     member_design,
 )
 from frame_model import load_portal_frame, PortalFrame
+from haunch_design import (
+    HaunchProfile,
+    TaperedPhysMember,
+    composite_haunch_properties,
+    haunch_extra_mass_kg,
+)
+from haunch_geometry import (
+    governing_specified_haunch_cut_depth_mm,
+    governing_requested_haunch_cut_depth_mm,
+    haunch_cut_depth_check,
+    haunch_cut_error,
+    resolve_haunch_cut_depths,
+)
+from serviceability_deflection import (
+    add_permanent_baseline_combinations,
+    serviceability_deflection_rows,
+    uses_permanent_deflection_baseline,
+)
 
 # Weight-ordered batches retain the lightest-pair guarantee while limiting the
 # number of PyNite worker processes.
@@ -32,10 +51,79 @@ def import_data(file: str) -> PortalFrame:
     """Load ``file`` and return a :class:`PortalFrame` instance."""
     return load_portal_frame(file)
 
+
+def _project_haunch_point_to_rafter(
+    x_value: float,
+    y_value: float,
+    data: PortalFrame,
+) -> tuple[float, float]:
+    """Project an ideal haunch point onto the nearest generated rafter segment.
+
+    The input generator rounds intermediate roof nodes to two decimals. An
+    ideal point calculated from the overall roof slope can therefore miss a
+    segmented physical member by a few thousandths of a millimetre. PyNite
+    then leaves that node disconnected and reports an instability.
+    """
+
+    closest = None
+    for member in data.members:
+        if member.type.lower() != "rafter":
+            continue
+        i_node = data.nodes[member.i_node]
+        j_node = data.nodes[member.j_node]
+        axis_x = float(j_node.x) - float(i_node.x)
+        axis_y = float(j_node.y) - float(i_node.y)
+        length_squared = axis_x ** 2 + axis_y ** 2
+        if length_squared <= 1e-12:
+            continue
+        fraction = (
+            (x_value - float(i_node.x)) * axis_x
+            + (y_value - float(i_node.y)) * axis_y
+        ) / length_squared
+        if fraction < -1e-9 or fraction > 1 + 1e-9:
+            continue
+        fraction = max(0.0, min(1.0, fraction))
+        projected_x = float(i_node.x) + fraction * axis_x
+        projected_y = float(i_node.y) + fraction * axis_y
+        distance = math.hypot(x_value - projected_x, y_value - projected_y)
+        if closest is None or distance < closest[0]:
+            closest = (distance, projected_x, projected_y)
+    if closest is None or closest[0] > 1.0:
+        raise ValueError(
+            "A haunch discretisation point could not be placed on a rafter."
+        )
+    return closest[1], closest[2]
+
+
+def _vertical_deflection_limit_applies(
+    frame_data: dict,
+    combination_name: str,
+) -> bool:
+    """Return whether vertical deflection is an automatic-selection gate."""
+
+    ignored = (
+        str(
+            frame_data.get(
+                "ignore_1_1_dl_1_0_ll_vertical_deflection_limit", "No"
+            )
+        ).lower()
+        == "yes"
+    )
+    return not (ignored and combination_name == "1.1 DL + 1.0 LL")
+
+
 def build_model(r_mem, c_mem, data: PortalFrame):
     """
     Builds and returns the FE model based on the imported JSON data.
     """
+    requested_cut = governing_requested_haunch_cut_depth_mm(data.frame_data[0])
+    if requested_cut > 0.0:
+        cut_check = haunch_cut_depth_check(r_mem, requested_cut)
+        if not cut_check.is_valid:
+            raise ValueError(
+                haunch_cut_error(str(r_mem["Designation"]), cut_check)
+            )
+
     # Create a new model
     frame = FEModel3D()
 
@@ -59,6 +147,28 @@ def build_model(r_mem, c_mem, data: PortalFrame):
     for name, node in data.nodes.items():
         frame.add_node(name, node.x, node.y, node.z)
 
+    haunch_profile = HaunchProfile(data.frame_data[0])
+    if haunch_profile.enabled:
+        existing = [
+            (float(node.X), float(node.Y)) for node in frame.nodes.values()
+        ]
+        for index, (x_value, y_value) in enumerate(
+            haunch_profile.discretisation_points(), 1
+        ):
+            x_value, y_value = _project_haunch_point_to_rafter(
+                x_value, y_value, data
+            )
+            if any(
+                math.hypot(x_value - x, y_value - y) <= 1e-4
+                for x, y in existing
+            ):
+                continue
+            name = f"HN{index}"
+            while name in frame.nodes:
+                name += "A"
+            frame.add_node(name, x_value, y_value, 0.0)
+            existing.append((x_value, y_value))
+
     # Define supports
     for node, support in data.supports.items():
         frame.def_support(
@@ -81,7 +191,28 @@ def build_model(r_mem, c_mem, data: PortalFrame):
 
         # Select properties based on member-type
         if member_type == 'rafter':
-            frame.add_member(name, i_node, j_node, material, r_mem["Designation"])
+            if haunch_profile.enabled:
+                def select_properties(x_value, y_value, *, base=r_mem):
+                    added_depth = haunch_profile.added_depth_at(
+                        x_value, y_value
+                    )
+                    if added_depth <= 1e-6:
+                        return None
+                    return composite_haunch_properties(base, added_depth)
+
+                frame.members[name] = TaperedPhysMember(
+                    frame,
+                    name,
+                    frame.nodes[i_node],
+                    frame.nodes[j_node],
+                    material,
+                    r_mem["Designation"],
+                    property_selector=select_properties,
+                )
+            else:
+                frame.add_member(
+                    name, i_node, j_node, material, r_mem["Designation"]
+                )
 
         elif member_type == 'column':
             frame.add_member(name, i_node, j_node, material, c_mem["Designation"])
@@ -124,6 +255,50 @@ def build_model(r_mem, c_mem, data: PortalFrame):
                 load.case,
             )
 
+    # Add the steel added by the haunch. The parent rafter self-weight is still
+    # applied through PyNite below; this load is only the composite increment.
+    if haunch_profile.enabled:
+        for data_member in data.members:
+            if data_member.type.lower() != "rafter":
+                continue
+            physical = frame.members[data_member.name]
+            physical.descritize()
+            axis_x = physical.j_node.X - physical.i_node.X
+            axis_y = physical.j_node.Y - physical.i_node.Y
+            length = physical.L()
+            unit_x = axis_x / length
+            unit_y = axis_y / length
+            for sub_member in physical.sub_members.values():
+                properties = getattr(
+                    sub_member, "portal_properties", None
+                )
+                if not properties:
+                    continue
+                extra_area = float(
+                    properties.get("haunch_extra_area_mm2", 0.0)
+                )
+                if extra_area <= 1e-9:
+                    continue
+                x1 = (
+                    (sub_member.i_node.X - physical.i_node.X) * unit_x
+                    + (sub_member.i_node.Y - physical.i_node.Y) * unit_y
+                )
+                x2 = (
+                    (sub_member.j_node.X - physical.i_node.X) * unit_x
+                    + (sub_member.j_node.Y - physical.i_node.Y) * unit_y
+                )
+                density = float(physical.material.rho)
+                added_weight = -extra_area * density
+                frame.add_member_dist_load(
+                    data_member.name,
+                    "FY",
+                    added_weight,
+                    added_weight,
+                    min(x1, x2),
+                    max(x1, x2),
+                    "D",
+                )
+
     # Add member self-weight (optional, adjust as needed)
     frame.add_member_self_weight('FY', -1, 'D')  # Example: Adding self-weight in FY direction
 
@@ -136,6 +311,19 @@ def build_model(r_mem, c_mem, data: PortalFrame):
 
 
     return frame
+
+
+def resolve_candidate_haunch_data(
+    data: PortalFrame,
+    r_mem,
+) -> PortalFrame:
+    """Return analysis input with Cut-Depth resolved for ``r_mem``."""
+
+    resolved_frame = resolve_haunch_cut_depths(data.frame_data[0], r_mem)
+    return replace(
+        data,
+        frame_data=[resolved_frame, *data.frame_data[1:]],
+    )
 
 def analyze_combination(args):
     """
@@ -157,12 +345,17 @@ def analyze_combination(args):
     if r_mem['b'] > c_mem['b'] + 3.5 and not allow_failed_checks:
         return None
 
+    data = resolve_candidate_haunch_data(data, r_mem)
+
     # --- build and analyse FE model ----------------------------------------
     frame = build_model(r_mem, c_mem, data)
 
     # add serviceability and ultimate combos
     for SLS_combo in data.serviceability_load_combinations:
         frame.add_load_combo(SLS_combo['name'], SLS_combo['factors'])
+    add_permanent_baseline_combinations(
+        frame, data.serviceability_load_combinations
+    )
 
     for ULS_combo in data.load_combinations:
         frame.add_load_combo(ULS_combo['name'], ULS_combo['factors'])
@@ -179,33 +372,57 @@ def analyze_combination(args):
         raise
 
     # --- deflection checks --------------------------------------------------
-    worst_v = worst_h = 0.0
-    worst_v_combo = worst_h_combo = ""
-
-    for combo in data.serviceability_load_combinations:
-        cn = combo['name']
-        for nd in frame.nodes.values():
-            dx = abs(nd.DX[cn])
-            dy = abs(nd.DY[cn])
-            # PyNite can complete a singular analysis with NaN results. Since
-            # comparisons with NaN are false, those models previously appeared
-            # to have zero deflection and were incorrectly accepted.
-            if not math.isfinite(float(dx)) or not math.isfinite(float(dy)):
-                return None
-            if dy > worst_v:
-                worst_v, worst_v_combo = dy, cn
-            if dx > worst_h:
-                worst_h, worst_h_combo = dx, cn
+    try:
+        deflection_rows = serviceability_deflection_rows(frame, data)
+    except ValueError:
+        # PyNite can complete a singular analysis with NaN results. Do not let
+        # those trials appear to have zero serviceability demand.
+        return None
+    worst_v_row = max(
+        deflection_rows,
+        key=lambda item: float(item["max_dy"]),
+        default={"max_dy": 0.0, "load_combination": ""},
+    )
+    worst_h_row = max(
+        deflection_rows,
+        key=lambda item: float(item["max_dx"]),
+        default={"max_dx": 0.0, "load_combination": ""},
+    )
+    checked_vertical = [
+        item
+        for item in deflection_rows
+        if _vertical_deflection_limit_applies(
+            data.frame_data[0], str(item["load_combination"])
+        )
+    ]
+    worst_checked_v = max(
+        (float(item["max_dy"]) for item in checked_vertical),
+        default=0.0,
+    )
+    ponding_failures = [
+        item
+        for item in deflection_rows
+        if item["roof_drainage"]["status"] != "PASS"
+    ]
+    worst_v = float(worst_v_row["max_dy"])
+    worst_v_combo = str(worst_v_row["load_combination"])
+    worst_h = float(worst_h_row["max_dx"])
+    worst_h_combo = str(worst_h_row["load_combination"])
 
     if not allow_failed_checks:
-        if worst_v > v_lim or worst_h > h_lim:
+        if worst_checked_v > v_lim or worst_h > h_lim or ponding_failures:
             return None   # automatic sizing rejects serviceability failures
 
         if not member_design_checks(frame, r_type, r_mem, c_type, c_mem, data, member_db):
             return None   # automatic sizing rejects strength failures
 
     # --- weight (kN) --------------------------------------------------------
-    weight = round(r_mem['m'] * r_total_m + c_mem['m'] * c_total_m, 1)
+    weight = round(
+        r_mem['m'] * r_total_m
+        + c_mem['m'] * c_total_m
+        + haunch_extra_mass_kg(r_mem, data.frame_data[0]),
+        1,
+    )
 
     return (weight,          # 0  – used for min()
             r_name,          # 1
@@ -304,10 +521,14 @@ def directional_search(primary, r_list, c_list, r_section_type, c_section_type,
     # --- rebuild the FE model for the best pair ------------------------
     r_mem = mdb.member_properties(r_section_type, r_name, member_db)
     c_mem = mdb.member_properties(c_section_type, c_name, member_db)
-    best_frame = build_model(r_mem, c_mem, data)
+    resolved_data = resolve_candidate_haunch_data(data, r_mem)
+    best_frame = build_model(r_mem, c_mem, resolved_data)
 
     for combo in data.serviceability_load_combinations:
         best_frame.add_load_combo(combo['name'], combo['factors'])
+    add_permanent_baseline_combinations(
+        best_frame, data.serviceability_load_combinations
+    )
 
     for combo in data.load_combinations:  # e.g. '1.1 DL + 1.0 LL'
         best_frame.add_load_combo(combo['name'], combo['factors'])
@@ -315,6 +536,9 @@ def directional_search(primary, r_list, c_list, r_section_type, c_section_type,
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=MatrixRankWarning)
         best_frame.analyze(check_statics=False)
+    best_frame._portal_resolved_frame_data = dict(
+        resolved_data.frame_data[0]
+    )
 
     return {
         'weight': wt,
@@ -378,6 +602,43 @@ def sls_check(
         raise ValueError(f"No sections flagged as Preferred='{preferred_section}' found.")
 
     data = import_data(str(input_path))
+    requested_cut = governing_specified_haunch_cut_depth_mm(
+        data.frame_data[0]
+    )
+    if requested_cut > 0.0:
+        compatible_rafters = [
+            name
+            for name in r_list
+            if haunch_cut_depth_check(
+                member_db[r_section_type][name],
+                requested_cut,
+            ).is_valid
+        ]
+        if not compatible_rafters:
+            best_name = max(
+                r_list,
+                key=lambda name: haunch_cut_depth_check(
+                    member_db[r_section_type][name],
+                    0.0,
+                ).maximum_cut_depth_mm,
+            )
+            check = haunch_cut_depth_check(
+                member_db[r_section_type][best_name],
+                requested_cut,
+            )
+            forced_rafter = str(selected_rafter_section or "").strip()
+            if (
+                forced_rafter
+                and not forced_rafter.lower().startswith("automatic")
+            ):
+                raise ValueError(haunch_cut_error(best_name, check))
+            raise ValueError(
+                f"No Preferred {r_section_type} rafter can supply a "
+                f"{requested_cut:.1f} mm haunch cut. Family maximum is "
+                f"{best_name}: {check.equation}."
+            )
+        r_list = compatible_rafters
+
     r_total_m, c_total_m = get_member_lengths(data)
     vert_limit = data.frame_data[0]['gable_width'] / 180
     horiz_limit = data.frame_data[0]['eaves_height'] / 180
@@ -419,34 +680,36 @@ def sls_check(
     print(f"   dx Load Combination: {best['dx_comb']}")
     print(f"   Search time: {time.time() - start:.3f} s")
 
+    resolved_frame_data = getattr(
+        best["frame"],
+        "_portal_resolved_frame_data",
+        None,
+    )
+    if resolved_frame_data is not None:
+        data.frame_data[0] = dict(resolved_frame_data)
+
     # --- Output the worst deflections for each SLS load case ---------------------
-    table_data = []
-    for combo in data.serviceability_load_combinations:
-        cn = combo['name']
-        worst_dx = 0.0
-        worst_dx_node = ''
-        worst_dy = 0.0
-        worst_dy_node = ''
-        for nd in best['frame'].nodes.values():
-            dx = abs(nd.DX[cn])
-            dy = abs(nd.DY[cn])
-            if dx > worst_dx:
-                worst_dx = dx
-                worst_dx_node = nd.name
-            if dy > worst_dy:
-                worst_dy = dy
-                worst_dy_node = nd.name
-        table_data.append([
-            cn,
-            round(worst_dx, 2),
-            worst_dx_node,
-            round(worst_dy, 2),
-            worst_dy_node
-        ])
+    table_data = [
+        [
+            row["load_combination"],
+            round(float(row["max_dx"]), 2),
+            row["dx_node"],
+            round(float(row["max_dy"]), 2),
+            row["dy_node"],
+            round(float(row["permanent_max_dy"]), 2),
+            row["roof_drainage"]["status"],
+        ]
+        for row in serviceability_deflection_rows(best["frame"], data)
+    ]
 
     print(tabulate(table_data,
                    headers=['Load Case', 'Deflection in X', 'Node',
-                            'Deflection in Y', 'Node'],
+                            (
+                                'Variable Deflection in Y'
+                                if uses_permanent_deflection_baseline(data)
+                                else 'Total Deflection in Y'
+                            ), 'Node',
+                            'Permanent baseline', 'Roof drainage'],
                    tablefmt='pretty'))
 
     # A direction can legitimately have zero displacement in every combination,
@@ -469,41 +732,95 @@ def extract_member_actions(frame, r_type, r_mem, c_type, c_mem,
     internal_loads = []
 
     for mem in data.members:
-        l = mem.length
-        sec_type = r_type if mem.type == "rafter" else c_type
-        mem_type = mem.type
-        t_sec = r_mem['Designation'] if mem.type == 'rafter' else c_mem['Designation']
-        Cu = round(frame.members[mem.name].max_axial(combo), 3)
-        Mx_max = round(max(frame.members[mem.name].max_moment('Mz', combo),
-                          abs(frame.members[mem.name].min_moment('Mz', combo)))/1000, 3)
-        Mx_top = round(frame.members[mem.name].moment('Mz', 0, combo)/1000, 3)
-        Mx_bot = round(frame.members[mem.name].moment('Mz', l * 999, combo)/1000, 3)
+        physical = frame.members[mem.name]
+        base_properties = r_mem if mem.type == "rafter" else c_mem
+        design_segments = []
+        if mem.type == "rafter":
+            haunched = [
+                (name, sub_member)
+                for name, sub_member in physical.sub_members.items()
+                if hasattr(sub_member, "portal_properties")
+            ]
+            if haunched:
+                design_segments = list(physical.sub_members.items())
+        if not design_segments:
+            design_segments = [(mem.name, physical)]
 
-        w1, w2 = element_properties(Mx_max, Mx_top, Mx_bot)
-        lx = (raf_kx if mem_type == 'rafter' else data.frame_data[0]['eaves_height']) / 1000
-        kx = 1.0 if mem_type == 'rafter' else 1.2
-        ly = l
-        ky = 1.0
+        for segment_index, (segment_name, analysis_member) in enumerate(
+            design_segments, 1
+        ):
+            properties = getattr(
+                analysis_member, "portal_properties", base_properties
+            )
+            is_haunch = properties is not base_properties
+            result_name = (
+                f"{mem.name}[H{segment_index}]"
+                if is_haunch
+                else (
+                    f"{mem.name}[R{segment_index}]"
+                    if len(design_segments) > 1
+                    else mem.name
+                )
+            )
+            member_length_mm = analysis_member.L()
+            end_position = max(member_length_mm - 1e-6, 0.0)
+            Cu = round(analysis_member.max_axial(combo), 3)
+            Mx_max = round(
+                max(
+                    analysis_member.max_moment('Mz', combo),
+                    abs(analysis_member.min_moment('Mz', combo)),
+                ) / 1000,
+                3,
+            )
+            Mx_top = round(
+                analysis_member.moment('Mz', 0, combo) / 1000, 3
+            )
+            Mx_bot = round(
+                analysis_member.moment('Mz', end_position, combo) / 1000, 3
+            )
 
-        internal_loads.append({
-            'Name': mem.name,
-            'kly': ky * ly,
-            'klx': kx * lx,
-            'kx': kx,
-            'lx': lx,
-            'ky': ky,
-            'ly': ly,
-            'type': mem_type,
-            'section_type': sec_type,
-            'section': t_sec,
-            'Cu': Cu,
-            'Class': member_class_check(Cu, r_mem if mem.type == 'rafter' else c_mem, steel_grade),
-            'Mx_max': Mx_max,
-            'Mx_top': Mx_top,
-            'Mx_bot': Mx_bot,
-            'w1': w1,
-            'w2': w2
-        })
+            w1, w2 = element_properties(Mx_max, Mx_top, Mx_bot)
+            mem_type = mem.type
+            lx = (
+                raf_kx
+                if mem_type == 'rafter'
+                else data.frame_data[0]['eaves_height']
+            ) / 1000
+            kx = 1.0 if mem_type == 'rafter' else 1.2
+            # Stability lengths remain the physical brace-panel length; the
+            # numerical haunch sub-elements are not additional restraints.
+            ly = mem.length
+            ky = 1.0
+
+            action = {
+                'Name': result_name,
+                'parent_member': mem.name,
+                'kly': ky * ly,
+                'klx': kx * lx,
+                'kx': kx,
+                'lx': lx,
+                'ky': ky,
+                'ly': ly,
+                'type': mem_type,
+                'section_type': (
+                    "Haunched rafter"
+                    if is_haunch
+                    else (r_type if mem.type == "rafter" else c_type)
+                ),
+                'section': properties['Designation'],
+                'Cu': Cu,
+                'Class': member_class_check(
+                    Cu, properties, steel_grade
+                ),
+                'Mx_max': Mx_max,
+                'Mx_top': Mx_top,
+                'Mx_bot': Mx_bot,
+                'w1': w1,
+                'w2': w2,
+            }
+            if is_haunch:
+                action['section_properties'] = dict(properties)
+            internal_loads.append(action)
 
     return internal_loads
 
@@ -516,7 +833,11 @@ def internal_forces(frame, r_type, r_mem, c_type, c_mem, data: PortalFrame, comb
     mat_props = data.steel_grade
 
     for memb in internal_loads:
-        mem_props = mdb.member_properties(memb['section_type'], memb['section'], md)
+        mem_props = memb.get('section_properties')
+        if mem_props is None:
+            mem_props = mdb.member_properties(
+                memb['section_type'], memb['section'], md
+            )
         CSS, OMS, LTB = member_design(mem_props, memb, mat_props[0])
         member_des.append({
             'Name': memb['Name'],
@@ -734,6 +1055,13 @@ def main(
 
 
     if frame is not None:
+        resolved_frame_data = getattr(
+            frame,
+            "_portal_resolved_frame_data",
+            None,
+        )
+        if resolved_frame_data is not None:
+            data.frame_data[0] = dict(resolved_frame_data)
         r_mem = mdb.member_properties(r_section_typ, best_section[0], member_db)
         c_mem = mdb.member_properties(c_section_typ, best_section[1], member_db)
         actions_by_combination = {
@@ -786,6 +1114,3 @@ def main(
     else:
         print("Unable to find acceptable sections.")
         return None
-
-if __name__ == "__main__":
-    main()

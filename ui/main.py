@@ -6,18 +6,31 @@ import asyncio
 import json
 import math
 from typing import Any
+from urllib.parse import quote
 
 import flet as ft
+import flet_webview as fwv
 import httpx
 
+from connection_viewer import list_connection_views
+from foundation_design import (
+    FOUNDATION_PASSIVE_RESISTANCE_OPTIONS,
+    FOUNDATION_SLIDING_OPTIONS,
+    FOUNDATION_STANDARDS,
+)
+from haunch_geometry import HAUNCH_DEPTH_AUTO, HAUNCH_DEPTH_CUT
 from preview_geometry import build_preview_geometry
+from truss_design import preview_truss
 from ui.analysis_render import combination_names, load_case_svg
 from ui.input_model import (
+    AUTOMATIC_GABLE_SECTION,
     AUTOMATIC_SECTION,
     BASE_SUPPORTS,
     BUILDING_TYPES,
     COLUMN_BRACING_TYPES,
     CRAWL_APPLICATIONS,
+    GABLE_SECTION_ORDERS,
+    HAUNCH_DEPTH_OPTIONS,
     HOIST_CLASSES,
     DEFAULT_VALUES,
     LIPPED_CHANNEL_SECTIONS,
@@ -26,15 +39,32 @@ from ui.input_model import (
     PORTAL_SECTIONS_BY_FAMILY,
     ROOF_ACCESSIBILITY,
     ROOF_TYPES,
+    STRUCTURAL_SYSTEMS,
     STEEL_GRADES,
     TERRAIN_CATEGORIES,
+    TRUSS_CHORD_FORMS,
+    TRUSS_CENTRE_COLUMN_MATERIALS,
+    TRUSS_MEMBER_SECTION_ORDERS,
+    TRUSS_STEEL_SECTION_ORDERS,
+    TRUSS_INTERNAL_SUPPORTS,
+    TRUSS_TYPES,
     WIND_DESIGN_MODES,
     InputValidationError,
     build_analysis_payload,
+    rafter_haunch_cut_limit,
+)
+from ui.project_file import (
+    ProjectInputFileError,
+    dump_project_inputs,
+    load_project_inputs,
 )
 from ui.preview_render import (
     frame_elevation_svg,
     roof_plan_svg,
+    truss_girder_elevation_svg,
+    truss_elevation_svg,
+    truss_roof_plan_svg,
+    truss_type_reference_svg,
     wall_elevation_svg,
 )
 
@@ -52,7 +82,7 @@ ERROR_BG = "#FCE8E6"
 
 
 def main(page: ft.Page) -> None:
-    page.title = "PortalFrame Designer"
+    page.title = "Portal Frame and Truss Designer"
     page.padding = 0
     page.bgcolor = PAGE_BG
     page.theme = ft.Theme(
@@ -67,6 +97,8 @@ def main(page: ft.Page) -> None:
     )
 
     controls: dict[str, Any] = {}
+    input_file_picker = ft.FilePicker()
+    page.services.append(input_file_picker)
 
     def dropdown(
         key: str,
@@ -200,6 +232,13 @@ def main(page: ft.Page) -> None:
         "project_number", "Project number", col=6
     )
     designer = text_field("designer", "Designer", col=6)
+    structural_system = dropdown(
+        "structural_system",
+        "Structural system",
+        STRUCTURAL_SYSTEMS,
+        helper="Select one engineering system for this project.",
+        col=12,
+    )
     building_type = dropdown(
         "building_type",
         "Building type",
@@ -253,6 +292,30 @@ def main(page: ft.Page) -> None:
             eaves = float(controls["eaves_height_m"].value)
             apex = float(controls["apex_height_m"].value)
             width = float(controls["gable_width_m"].value)
+            if structural_system.value == "Truss":
+                bays = [
+                    float(value.strip())
+                    for value in controls["truss_transverse_bay_spans_m"].value.split(",")
+                ]
+                if not bays or any(value <= 0 for value in bays):
+                    raise ValueError
+                truss_total_width_text.value = f"{sum(bays):g} m"
+                minimum_depth = float(controls["truss_minimum_depth_m"].value)
+                maximum_depth = float(controls["truss_maximum_depth_m"].value)
+                pitch_text.value = f"{minimum_depth:.2f}–{maximum_depth:.2f} m"
+                longest_span = max(bays)
+                truss_depth_suggestion.value = (
+                    f"Suggested starting depths using the longest transverse span "
+                    f"({longest_span:g} m): span/14 = {longest_span / 14:.2f} m; "
+                    f"span/18 = {longest_span / 18:.2f} m."
+                )
+                spacing = float(controls["truss_spacing_m"].value)
+                frame_summary.value = (
+                    f"{controls['truss_type'].value} • {sum(bays):g} m total width • "
+                    f"{len(bays)} span(s) • "
+                    f"trusses at {spacing:g} m • purlins define panel points"
+                )
+                return
             span = width / 2 if building_roof.value == "Duo Pitched" else width
             pitch = math.degrees(math.atan((apex - eaves) / span))
             if width <= 0 or apex <= eaves:
@@ -265,6 +328,9 @@ def main(page: ft.Page) -> None:
         except (TypeError, ValueError):
             pitch_text.value = "—"
             frame_summary.value = "Enter valid geometry to calculate pitch and frame quantity."
+            if structural_system.value == "Truss":
+                truss_total_width_text.value = "—"
+                truss_depth_suggestion.value = "Enter valid transverse spans to calculate suggested depths."
 
     eaves_height = number_field(
         "eaves_height_m", "Eaves height", unit="m", on_change=update_pitch
@@ -284,6 +350,38 @@ def main(page: ft.Page) -> None:
     building_length = number_field(
         "building_length_m", "Building length", unit="m", on_change=update_pitch
     )
+    truss_bay_spans = text_field(
+        "truss_transverse_bay_spans_m",
+        "Transverse span lengths",
+        helper="Comma-separated in metres, for example 26, 24, 24, 26. Building width and span count are calculated automatically.",
+        col={"sm": 12, "md": 9},
+    )
+    truss_total_width_text = ft.Text(
+        "—", size=20, weight=ft.FontWeight.W_600, color=ACCENT_DARK
+    )
+    truss_total_width = ft.Container(
+        col={"sm": 12, "md": 3},
+        padding=ft.Padding.only(left=12, top=3),
+        content=ft.Column(
+            spacing=2,
+            controls=[
+                ft.Text("Total building width", size=12, color=TEXT_MUTED),
+                truss_total_width_text,
+            ],
+        ),
+    )
+    truss_building_length = number_field(
+        "truss_building_length_m", "Building length", unit="m"
+    )
+    truss_spacing = number_field(
+        "truss_spacing_m", "Truss spacing", unit="m"
+    )
+    truss_eaves_height = number_field(
+        "truss_eaves_height_m", "Eave-column height", unit="m"
+    )
+    truss_roof_pitch = number_field(
+        "truss_roof_pitch_deg", "Roof pitch", unit="°"
+    )
 
     # Design basis and wind controls.
     wind_design_mode = dropdown(
@@ -300,6 +398,32 @@ def main(page: ft.Page) -> None:
         "Load-combination standard",
         LOAD_COMBINATION_STANDARDS,
     )
+    use_permanent_deflection_baseline = ft.Switch(
+        key="use_permanent_deflection_baseline",
+        label="Use permanent-load deflection as the vertical baseline",
+        value=bool(
+            DEFAULT_VALUES["use_permanent_deflection_baseline"]
+        ),
+        active_color=ACCENT,
+        col=12,
+    )
+    controls[
+        "use_permanent_deflection_baseline"
+    ] = use_permanent_deflection_baseline
+    ignore_dead_live_vertical_limit = ft.Switch(
+        key="ignore_1_1_dl_1_0_ll_vertical_deflection_limit",
+        label="Ignore vertical span/deflection limit for 1.1 DL + 1.0 LL",
+        value=bool(
+            DEFAULT_VALUES[
+                "ignore_1_1_dl_1_0_ll_vertical_deflection_limit"
+            ]
+        ),
+        active_color=ACCENT,
+        col=12,
+    )
+    controls[
+        "ignore_1_1_dl_1_0_ll_vertical_deflection_limit"
+    ] = ignore_dead_live_vertical_limit
     steel_grade = dropdown("steel_grade", "Steel grade", STEEL_GRADES)
     wind_speed = number_field(
         "fundamental_basic_wind_speed", "Basic wind speed", unit="m/s"
@@ -335,7 +459,7 @@ def main(page: ft.Page) -> None:
         "rafter_section",
         "Rafter section",
         (AUTOMATIC_SECTION,) + PORTAL_SECTIONS_BY_FAMILY["I-Sections"],
-        helper="Automatic selects the lightest passing section; otherwise the chosen size is checked.",
+        helper="Manual choices are ordered by section height, width and mass; Automatic selects the lightest passing section.",
         searchable=True,
     )
     column_section_type = dropdown(
@@ -348,8 +472,93 @@ def main(page: ft.Page) -> None:
         "column_section",
         "Column section",
         (AUTOMATIC_SECTION,) + PORTAL_SECTIONS_BY_FAMILY["I-Sections"],
-        helper="Automatic selects the lightest passing section; otherwise the chosen size is checked.",
+        helper="Manual choices are ordered by section height, width and mass; Automatic selects the lightest passing section.",
         searchable=True,
+    )
+    use_eaves_haunch = ft.Switch(
+        key="use_eaves_haunch",
+        label="Use eaves haunches",
+        value=bool(DEFAULT_VALUES["use_eaves_haunch"]),
+        active_color=ACCENT,
+        col=6,
+    )
+    controls["use_eaves_haunch"] = use_eaves_haunch
+    eaves_haunch_length = number_field(
+        "eaves_haunch_length_m",
+        "Eaves haunch length",
+        unit="m",
+        helper="Length along each roof slope from the eaves.",
+    )
+    eaves_haunch_depth_mode = dropdown(
+        "eaves_haunch_depth_mode",
+        "Eaves haunch sizing basis",
+        HAUNCH_DEPTH_OPTIONS,
+        helper="Auto Size uses span/15 and the donor maximum cut depth (hw + tf).",
+    )
+    eaves_haunch_depth = number_field(
+        "eaves_haunch_depth_mm",
+        "Maximum eaves haunch depth",
+        unit="mm",
+        helper="Additional depth below the selected rafter at the eaves.",
+    )
+    eaves_haunch_length.disabled = (
+        DEFAULT_VALUES["eaves_haunch_depth_mode"] == HAUNCH_DEPTH_AUTO
+    )
+    eaves_haunch_depth.disabled = (
+        DEFAULT_VALUES["eaves_haunch_depth_mode"] == HAUNCH_DEPTH_AUTO
+    )
+    eaves_haunch_fields = ft.ResponsiveRow(
+        controls=[
+            eaves_haunch_length,
+            eaves_haunch_depth_mode,
+            eaves_haunch_depth,
+        ],
+        visible=bool(DEFAULT_VALUES["use_eaves_haunch"]),
+    )
+    use_apex_haunch = ft.Switch(
+        key="use_apex_haunch",
+        label="Use apex haunches",
+        value=bool(DEFAULT_VALUES["use_apex_haunch"]),
+        active_color=ACCENT,
+        col=6,
+    )
+    controls["use_apex_haunch"] = use_apex_haunch
+    apex_haunch_length = number_field(
+        "apex_haunch_length_m",
+        "Apex haunch length per slope",
+        unit="m",
+        helper="Length from the apex along each adjoining roof slope.",
+    )
+    apex_haunch_depth_mode = dropdown(
+        "apex_haunch_depth_mode",
+        "Apex haunch sizing basis",
+        HAUNCH_DEPTH_OPTIONS,
+        helper="Auto Size uses span/15 and the donor maximum cut depth (hw + tf).",
+    )
+    apex_haunch_depth = number_field(
+        "apex_haunch_depth_mm",
+        "Maximum apex haunch depth",
+        unit="mm",
+        helper="Additional depth below the selected rafter at the apex.",
+    )
+    apex_haunch_length.disabled = (
+        DEFAULT_VALUES["apex_haunch_depth_mode"] == HAUNCH_DEPTH_AUTO
+    )
+    apex_haunch_depth.disabled = (
+        DEFAULT_VALUES["apex_haunch_depth_mode"] == HAUNCH_DEPTH_AUTO
+    )
+    apex_haunch_fields = ft.ResponsiveRow(
+        controls=[
+            apex_haunch_length,
+            apex_haunch_depth_mode,
+            apex_haunch_depth,
+        ],
+        visible=bool(DEFAULT_VALUES["use_apex_haunch"]),
+    )
+    haunch_cut_guidance = ft.Text(
+        "",
+        size=12,
+        color=TEXT_MUTED,
     )
 
     def sync_portal_section_options() -> None:
@@ -401,7 +610,7 @@ def main(page: ft.Page) -> None:
     gable_column_count = number_field(
         "gable_column_count",
         "Internal gable columns per end",
-        helper="Positive odd number: 1, 3, 5, ...",
+        helper="Any positive whole number; columns are spaced evenly.",
         integer=True,
     )
     gable_brace_intervals = number_field(
@@ -410,6 +619,42 @@ def main(page: ft.Page) -> None:
         helper="Equal unbraced intervals over each pinned gable column.",
         integer=True,
     )
+    gable_section_type = dropdown(
+        "gable_column_section_type",
+        "Gable column section family",
+        PORTAL_SECTION_FAMILIES,
+        helper="Select the I- or H-section database family.",
+    )
+    gable_section = dropdown(
+        "gable_column_section",
+        "Gable column section",
+        (AUTOMATIC_GABLE_SECTION,)
+        + PORTAL_SECTIONS_BY_FAMILY["I-Sections"],
+        helper="Manual choices are ordered by section height, width and mass; Automatic uses the design-order setting.",
+        searchable=True,
+    )
+    gable_section_order = dropdown(
+        "gable_column_section_order",
+        "Gable steel section order",
+        GABLE_SECTION_ORDERS,
+        helper="Choose lightest passing or preferred database sections first.",
+        col=12,
+    )
+
+    def sync_gable_section_options() -> None:
+        family = str(gable_section_type.value)
+        values = (AUTOMATIC_GABLE_SECTION,) + PORTAL_SECTIONS_BY_FAMILY.get(
+            family, ()
+        )
+        gable_section.options = [
+            ft.DropdownOption(
+                key=value,
+                content=ft.Text(value, color=TEXT_PRIMARY),
+            )
+            for value in values
+        ]
+        if gable_section.value not in values:
+            gable_section.value = AUTOMATIC_GABLE_SECTION
     purlin_section = dropdown(
         "purlin_section",
         "Purlin section",
@@ -432,6 +677,201 @@ def main(page: ft.Page) -> None:
     )
     girt_spacing = number_field(
         "girt_max_spacing_mm", "Maximum girt spacing", unit="mm"
+    )
+    truss_type = dropdown(
+        "truss_type", "Truss type", TRUSS_TYPES, col=6
+    )
+    truss_chord_form = dropdown(
+        "truss_chord_form", "Chord form", TRUSS_CHORD_FORMS, col=6
+    )
+    truss_member_section_order = dropdown(
+        "truss_member_section_order",
+        "Truss member section order",
+        TRUSS_MEMBER_SECTION_ORDERS,
+        helper=(
+            "Controls the real equal-angle candidate search used for chords "
+            "and ordinary webs."
+        ),
+        col=12,
+    )
+    truss_internal_support = dropdown(
+        "truss_internal_support", "Internal support", TRUSS_INTERNAL_SUPPORTS,
+        helper="Used only when more than one transverse span is entered.", col=12,
+    )
+    truss_design_centre_columns = ft.Checkbox(
+        key="truss_design_centre_columns",
+        label="Design centre columns",
+        value=bool(DEFAULT_VALUES["truss_design_centre_columns"]),
+        fill_color=ACCENT,
+        check_color="#FFFFFF",
+    )
+    controls["truss_design_centre_columns"] = truss_design_centre_columns
+    truss_centre_column_material = dropdown(
+        "truss_centre_column_material",
+        "Centre-column material",
+        TRUSS_CENTRE_COLUMN_MATERIALS,
+        helper="Steel is checked axially; concrete tilt-up is captured as a design hold point.",
+        col=6,
+    )
+    truss_centre_column_bracing_spacing = number_field(
+        "truss_centre_column_bracing_spacing_m",
+        "Centre-column brace spacing",
+        unit="m",
+        helper="Weak-axis effective length assumption for axial steel columns.",
+        col=6,
+    )
+    truss_centre_column_section_order = dropdown(
+        "truss_centre_column_steel_section_order",
+        "Steel section order",
+        TRUSS_STEEL_SECTION_ORDERS,
+        helper="Choose lightest passing or preferred database sections first.",
+        col=6,
+    )
+    truss_centre_column_concrete_width = number_field(
+        "truss_centre_column_concrete_width_mm",
+        "Tilt-up column width",
+        unit="mm",
+        col=6,
+    )
+    truss_centre_column_concrete_thickness = number_field(
+        "truss_centre_column_concrete_thickness_mm",
+        "Tilt-up column thickness",
+        unit="mm",
+        col=6,
+    )
+    truss_centre_column_concrete_bracing_spacing = number_field(
+        "truss_centre_column_concrete_bracing_spacing_m",
+        "Tilt-up brace/effective length spacing",
+        unit="m",
+        helper="Captured for the future concrete stability check and erection design.",
+        col=6,
+    )
+    truss_centre_column_concrete_fck = number_field(
+        "truss_centre_column_concrete_fck_mpa",
+        "Concrete strength fck",
+        unit="MPa",
+        col=6,
+    )
+    truss_centre_column_concrete_rebar_area = number_field(
+        "truss_centre_column_concrete_rebar_area_mm2",
+        "Longitudinal reinforcement area",
+        unit="mm²",
+        helper="Input only; capacity and detailing remain a hold point until the concrete design basis is confirmed.",
+        col=6,
+    )
+    truss_centre_column_steel_controls = ft.Column(
+        controls=[ft.ResponsiveRow(controls=[
+            truss_centre_column_bracing_spacing,
+            truss_centre_column_section_order,
+        ])],
+        spacing=12,
+    )
+    truss_centre_column_concrete_controls = ft.Column(
+        controls=[ft.ResponsiveRow(controls=[
+            truss_centre_column_concrete_width,
+            truss_centre_column_concrete_thickness,
+            truss_centre_column_concrete_bracing_spacing,
+            truss_centre_column_concrete_fck,
+            truss_centre_column_concrete_rebar_area,
+        ])],
+        spacing=12,
+        visible=False,
+    )
+    truss_centre_column_card = card(
+        "Centre-column design",
+        "Centre columns always use the internal bearing reactions for axial-only checking. Enable design to include steel column mass and a real section; concrete tilt-up is intentionally reported as a hold point until its design standard and erection basis are confirmed.",
+        ft.Column(controls=[
+            ft.ResponsiveRow(controls=[truss_design_centre_columns, truss_centre_column_material]),
+            truss_centre_column_steel_controls,
+            truss_centre_column_concrete_controls,
+        ], spacing=12),
+    )
+    truss_centre_column_card.visible = False
+    truss_type_reference = ft.Image(
+        src=truss_type_reference_svg(str(DEFAULT_VALUES["truss_type"])),
+        fit=ft.BoxFit.CONTAIN,
+        width=600,
+        height=390,
+        semantics_label="Warren, Pratt and Howe truss type reference",
+    )
+    truss_minimum_depth = number_field(
+        "truss_minimum_depth_m", "Minimum truss depth", unit="m"
+    )
+    truss_maximum_depth = number_field(
+        "truss_maximum_depth_m", "Maximum truss depth", unit="m"
+    )
+    truss_depth_increment = number_field(
+        "truss_depth_increment_m", "Depth search increment", unit="m"
+    )
+    truss_solution_count = number_field(
+        "truss_ranked_solution_count", "Ranked solutions", integer=True
+    )
+    truss_depth_suggestion = ft.Text(
+        "Suggested starting depths will be calculated from the entered span(s).",
+        size=12,
+        color=TEXT_MUTED,
+    )
+    truss_girder_span_bays = number_field(
+        "truss_girder_span_bays", "Girder span", unit="building bays", integer=True
+    )
+    truss_girder_minimum_depth = number_field(
+        "truss_girder_minimum_depth_m", "Minimum girder depth", unit="m"
+    )
+    truss_girder_maximum_depth = number_field(
+        "truss_girder_maximum_depth_m", "Maximum girder depth", unit="m"
+    )
+    truss_girder_depth_increment = number_field(
+        "truss_girder_depth_increment_m", "Girder depth increment", unit="m"
+    )
+    truss_girder_deflection = number_field(
+        "truss_girder_deflection_denominator", "Girder deflection: Span /"
+    )
+    girder_span_summary = ft.Text("", size=12, color=TEXT_MUTED)
+    girder_depth_suggestion = ft.Text(
+        "Suggested girder depth will be calculated from the girder span.",
+        size=12,
+        color=TEXT_MUTED,
+    )
+
+    def update_girder_depth_suggestion() -> None:
+        try:
+            girder_bays = int(float(truss_girder_span_bays.value))
+            grid_spacing = float(truss_spacing.value)
+            girder_depth_suggestion.value = (
+                f"Suggested starting girder depth: span/10 = "
+                f"{girder_bays * grid_spacing / 10:.2f} m."
+            )
+        except (TypeError, ValueError):
+            girder_depth_suggestion.value = (
+                "Enter valid bay count and truss spacing to calculate the suggested depth."
+            )
+    truss_top_brace_panels = number_field(
+        "truss_top_chord_brace_every_n_purlins", "Top chord: every Nth purlin",
+        helper="1 = every purlin, 2 = every second purlin, etc.",
+        integer=True,
+    )
+    truss_bottom_brace_panels = number_field(
+        "truss_bottom_chord_brace_every_n_purlins", "Bottom chord: every Nth purlin",
+        helper="Restraint is assumed across the entire building length.",
+        integer=True,
+    )
+    truss_deflection_limit = number_field(
+        "truss_deflection_denominator", "Vertical deflection: Span /"
+    )
+    truss_services_load = number_field(
+        "truss_services_load_kpa", "Services load", unit="kPa"
+    )
+    truss_ceiling_load = number_field(
+        "truss_ceiling_load_kpa", "Ceiling load", unit="kPa"
+    )
+    truss_solar_load = number_field(
+        "truss_solar_load_kpa", "Solar load", unit="kPa"
+    )
+    truss_fire_load = number_field(
+        "truss_fire_load_kpa", "Fire-services load", unit="kPa"
+    )
+    truss_hvac_load = number_field(
+        "truss_hvac_load_kpa", "HVAC load", unit="kPa"
     )
     use_crawl_beams = ft.Switch(
         key="use_crawl_beams",
@@ -634,6 +1074,129 @@ def main(page: ft.Page) -> None:
     )
     refresh_crawl_editor()
 
+    # Foundation design is deliberately post-analysis. These controls are not
+    # included in the portal-analysis request fingerprint.
+    foundation_standard = dropdown(
+        "foundation_standard",
+        "Concrete design standard",
+        FOUNDATION_STANDARDS,
+        col=12,
+    )
+    foundation_length = number_field(
+        "foundation_length_m",
+        "Footing length (frame direction)",
+        unit="m",
+    )
+    foundation_width = number_field(
+        "foundation_width_m",
+        "Footing width (transverse)",
+        unit="m",
+    )
+    foundation_thickness = number_field(
+        "foundation_thickness_mm", "Footing thickness", unit="mm"
+    )
+    foundation_loaded_length = number_field(
+        "foundation_loaded_length_mm",
+        "Loaded length / pedestal",
+        unit="mm",
+    )
+    foundation_loaded_width = number_field(
+        "foundation_loaded_width_mm",
+        "Loaded width / pedestal",
+        unit="mm",
+    )
+    foundation_concrete = number_field(
+        "foundation_concrete_strength_mpa",
+        "Concrete strength",
+        unit="MPa",
+        helper="Fixed design assumption: 25 MPa for all foundation designs.",
+    )
+    foundation_concrete.disabled = True
+    foundation_rebar = number_field(
+        "foundation_rebar_strength_mpa",
+        "Reinforcement yield strength",
+        unit="MPa",
+    )
+    foundation_bar_diameter = number_field(
+        "foundation_bar_diameter_mm", "Bottom bar diameter", unit="mm"
+    )
+    foundation_bar_spacing = number_field(
+        "foundation_bar_spacing_mm", "Bottom bar spacing", unit="mm"
+    )
+    foundation_cover = number_field(
+        "foundation_cover_mm", "Nominal bottom cover", unit="mm"
+    )
+    foundation_bearing = number_field(
+        "foundation_permissible_bearing_kpa",
+        "Permissible soil bearing pressure",
+        unit="kPa",
+        helper="Project-specific value confirmed by the geotechnical engineer.",
+    )
+    foundation_base_depth = number_field(
+        "foundation_base_depth_m",
+        "Depth to footing base",
+        unit="m",
+    )
+    foundation_soil_weight = number_field(
+        "foundation_soil_unit_weight_kn_m3",
+        "Soil unit weight",
+        unit="kN/m³",
+    )
+    foundation_friction = number_field(
+        "foundation_friction_coefficient",
+        "Base friction coefficient",
+        helper="Interface coefficient used for base friction: Rf = mu x normal force.",
+    )
+    foundation_soil_cover = number_field(
+        "foundation_soil_cover_depth_m",
+        "Soil cover above footing",
+        unit="m",
+        helper="Depth of soil cover contributing to stabilising weight.",
+    )
+    foundation_sliding = dropdown(
+        "foundation_sliding_resistance",
+        "Sliding resistance",
+        FOUNDATION_SLIDING_OPTIONS,
+        helper=(
+            "Sliding Resisted means a separate restraint is provided, so pad sliding "
+            "does not govern sizing. Sliding Not Resisted designs the pad using base "
+            "friction and optional passive resistance."
+        ),
+    )
+    foundation_soil_friction_angle = number_field(
+        "foundation_soil_friction_angle_deg",
+        "Soil friction angle",
+        unit="degrees",
+        helper="Used to calculate Rankine Kp when passive resistance is included.",
+    )
+    foundation_passive_resistance = dropdown(
+        "foundation_passive_resistance",
+        "Passive soil resistance",
+        FOUNDATION_PASSIVE_RESISTANCE_OPTIONS,
+        helper="Include only where retained, compacted soil can be relied upon.",
+    )
+    foundation_passive_mobilisation = number_field(
+        "foundation_passive_mobilisation_factor",
+        "Passive mobilisation factor",
+        helper="Fraction from 0 to 1 applied to characteristic passive resistance.",
+    )
+    foundation_uls_sliding_required_sf = number_field(
+        "foundation_uls_sliding_required_sf",
+        "Required ULS sliding SF",
+        helper="Use 1.0 with factored ULS actions unless the project basis requires more.",
+    )
+    foundation_control_keys = {
+        "foundation_permissible_bearing_kpa",
+        "foundation_soil_unit_weight_kn_m3",
+        "foundation_soil_cover_depth_m",
+        "foundation_friction_coefficient",
+        "foundation_sliding_resistance",
+        "foundation_soil_friction_angle_deg",
+        "foundation_passive_resistance",
+        "foundation_passive_mobilisation_factor",
+        "foundation_uls_sliding_required_sf",
+    }
+
     api_status_text = ft.Text(
         "API not checked", size=12, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY
     )
@@ -675,6 +1238,7 @@ def main(page: ft.Page) -> None:
     )
     last_payload: dict[str, Any] | None = None
     submitted_payload_fingerprint: str | None = None
+    current_analysis_id: str | None = None
 
     analysis_status_text = ft.Text(
         "No analysis has been run for these inputs.",
@@ -706,6 +1270,265 @@ def main(page: ft.Page) -> None:
         ],
     )
     current_visualisation: dict[str, Any] = {}
+    connection_status_text = ft.Text(
+        "Run a portal-frame analysis to calculate its connections.",
+        size=12,
+        weight=ft.FontWeight.W_600,
+        color=TEXT_PRIMARY,
+    )
+    connection_status_card = ft.Container(
+        bgcolor=WARNING_BG,
+        border_radius=10,
+        padding=12,
+        content=ft.Row(
+            spacing=9,
+            controls=[
+                ft.Icon(ft.Icons.INFO_OUTLINE, size=18, color="#B87900"),
+                connection_status_text,
+            ],
+        ),
+    )
+    connection_result_summary = ft.Column(
+        spacing=9,
+        controls=[
+            ft.Text(
+                "No connection calculations are available.",
+                size=12,
+                color=TEXT_MUTED,
+            )
+        ],
+    )
+    current_connection_design: dict[str, Any] = {}
+    connection_view_status = ft.Text(
+        "Run a portal-frame analysis to load the display-only 3D model.",
+        size=12,
+        color=TEXT_MUTED,
+    )
+    connection_3d_viewer = ft.Container(
+        height=610,
+        expand=True,
+        visible=False,
+        bgcolor="#F7FAF9",
+    )
+    connection_3d_viewer_generation = 0
+
+    def build_connection_3d_viewer(url: str) -> ft.Container:
+        """Create a keyed wrapper that forces a fresh web platform view."""
+
+        nonlocal connection_3d_viewer_generation
+        connection_3d_viewer_generation += 1
+        return ft.Container(
+            key=f"connection-viewer-host-{connection_3d_viewer_generation}",
+            height=610,
+            expand=True,
+            content=fwv.WebView(
+                url=url,
+                height=610,
+                expand=True,
+                bgcolor="#F7FAF9",
+            ),
+        )
+
+    foundation_status_text = ft.Text(
+        "Run a portal-frame analysis before designing foundations.",
+        size=12,
+        weight=ft.FontWeight.W_600,
+        color=TEXT_PRIMARY,
+    )
+    foundation_status_card = ft.Container(
+        bgcolor=WARNING_BG,
+        border_radius=10,
+        padding=12,
+        content=ft.Row(
+            spacing=9,
+            controls=[
+                ft.Icon(ft.Icons.INFO_OUTLINE, size=18, color="#B87900"),
+                foundation_status_text,
+            ],
+        ),
+    )
+    foundation_result_summary = ft.Column(
+        spacing=9,
+        controls=[
+            ft.Text(
+                "No foundation design has been run.",
+                size=12,
+                color=TEXT_MUTED,
+            )
+        ],
+    )
+
+    def show_foundation_results(result: dict[str, Any]) -> None:
+        status = str(result.get("status", "FAIL"))
+        foundation_status_card.bgcolor = (
+            SUCCESS_BG if status == "PASS" else ERROR_BG
+        )
+        foundation_status_card.content.controls[0].name = (
+            ft.Icons.CHECK_CIRCLE
+            if status == "PASS"
+            else ft.Icons.ERROR_OUTLINE
+        )
+        foundation_status_card.content.controls[0].color = (
+            "#1C8C62" if status == "PASS" else "#C43D34"
+        )
+        foundation_status_text.value = (
+            f"Foundation design {status}. Review every support and the listed hold points."
+        )
+        derived = result["derived"]
+        automatic = result.get("automatic_design", {})
+        rows: list[ft.Control] = [
+            analysis_summary_line(
+                "Automatic pad size",
+                f"{float(automatic.get('length_m', 0)):.2f} m long Ã— "
+                f"{float(automatic.get('width_m', 0)):.2f} m wide Ã— "
+                f"{float(automatic.get('height_mm', 0)):.0f} mm high",
+                ft.Icons.STRAIGHTEN,
+            ),
+            analysis_summary_line(
+                "Design basis",
+                f"{result['standard']} | effective depth "
+                f"{float(derived['effective_depth_mm']):.0f} mm | "
+                f"provided steel {float(derived['provided_steel_mm2_per_m']):.0f} mm²/m",
+                ft.Icons.GAVEL,
+            ),
+            analysis_summary_line(
+                "Stabilising permanent weight",
+                f"Footing {float(derived['footing_self_weight_kN']):.1f} kN | "
+                f"soil cover {float(derived['soil_cover_weight_kN']):.1f} kN",
+                ft.Icons.SCALE_OUTLINED,
+            ),
+            analysis_summary_line(
+                "Sliding basis",
+                f"{result['inputs'].get('sliding_resistance', 'Sliding Not Resisted')} | "
+                f"soil cover {float(result['inputs'].get('soil_cover_depth_m', 0.0)):.2f} m | "
+                f"friction coefficient {float(result['inputs'].get('friction_coefficient', 0.0)):.2f} | "
+                f"{result['inputs'].get('passive_resistance', 'Passive Resistance Excluded')} | "
+                f"phi {float(result['inputs'].get('soil_friction_angle_deg', 0.0)):.1f} degrees | "
+                f"mobilisation {float(result['inputs'].get('passive_mobilisation_factor', 0.0)):.2f}",
+                ft.Icons.SWAP_HORIZ,
+            ),
+        ]
+        for support in result.get("supports", []):
+            bearing = support["serviceability"]["bearing"]
+            service_sliding = support["serviceability"]["sliding"]
+            uplift = support["serviceability"]["uplift"]
+            structural = support["structural"]
+            stability = support["uls_stability"]
+            sliding = stability["sliding"]
+            governing_check = max(
+                structural["checks"],
+                key=lambda item: float(item["utilisation"]),
+            )
+            rows.extend([
+                analysis_summary_line(
+                    f"Support {support['node']} - {support['status']}",
+                    f"Bearing {bearing['status']} {float(bearing['q_max_kpa']):.1f} kPa "
+                    f"(util {float(bearing['utilisation']):.3f}, {bearing['contact']} contact) | "
+                    f"ULS sliding {sliding.get('status', 'PASS')} "
+                    + (
+                        f"SF {float(sliding['safety_factor']):.2f} "
+                        f"(required {float(stability.get('required_sliding_safety_factor', 1.0)):.2f})"
+                        if sliding.get('status') not in {'NOT_CHECKED', 'RESISTED_EXTERNALLY'}
+                        else "(separate external restraint)"
+                    ) + " | "
+                    f"ULS overturning SF {float(stability['overturning']['safety_factor']):.2f} | "
+                    f"uplift {uplift['status']} ({float(uplift['net_vertical_kN']):.1f} kN net)",
+                    ft.Icons.FOUNDATION,
+                ),
+                analysis_summary_line(
+                    f"Support {support['node']} - sliding resistance",
+                    f"ULS normal {float(sliding.get('normal_force_kN', 0.0)):.1f} kN | "
+                    f"friction {float(sliding.get('friction_resistance_kN', 0.0)):.1f} kN | "
+                    f"passive {float(sliding.get('passive_resistance_kN', 0.0)):.1f} kN | "
+                    f"total {float(sliding.get('total_resistance_kN', 0.0)):.1f} kN | "
+                    f"{sliding.get('combination', '-')}",
+                    ft.Icons.SWAP_HORIZ,
+                ),
+                analysis_summary_line(
+                    f"Support {support['node']} - SLS sliding",
+                    f"{service_sliding.get('status', 'NOT_CHECKED')} | "
+                    f"SF {float(service_sliding.get('safety_factor', 0.0)):.2f} | "
+                    f"demand {float(service_sliding.get('horizontal_demand_kN', 0.0)):.1f} kN | "
+                    f"friction {float(service_sliding.get('friction_resistance_kN', 0.0)):.1f} kN | "
+                    f"passive {float(service_sliding.get('passive_resistance_kN', 0.0)):.1f} kN | "
+                    f"{service_sliding.get('combination', '-')}",
+                    ft.Icons.SWAP_HORIZ,
+                ),
+                analysis_summary_line(
+                    f"Support {support['node']} - governing RC check",
+                    f"{governing_check['name']} | {structural['combination']} | "
+                    f"utilisation {float(governing_check['utilisation']):.3f} | "
+                    f"{governing_check['status']}",
+                    ft.Icons.FACT_CHECK,
+                ),
+            ])
+        rows.append(
+            analysis_summary_line(
+                "Engineering hold points",
+                "Geotechnical bearing/settlement, anchors and base plate, pedestal/dowels, "
+                "development length, exposure detailing, whole-building stability and adjacent-footing interaction.",
+                ft.Icons.REPORT_PROBLEM_OUTLINED,
+            )
+        )
+        foundation_result_summary.controls = rows
+        page.update()
+
+    async def run_foundation_design(_=None) -> None:
+        if current_analysis_id is None:
+            return
+        for key in foundation_control_keys:
+            control = controls[key]
+            if isinstance(control, ft.TextField):
+                control.error = None
+            elif isinstance(control, ft.Dropdown):
+                control.error_text = None
+        payload = {
+            key: controls[key].value for key in foundation_control_keys
+        }
+        foundation_design_button.disabled = True
+        foundation_design_button.content = "Designing foundations..."
+        foundation_status_card.bgcolor = WARNING_BG
+        foundation_status_text.value = "Checking service bearing and ULS reinforced concrete design..."
+        page.update()
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{API_URL}/api/analysis/{current_analysis_id}/foundation",
+                    json=payload,
+                )
+                if response.status_code == 422:
+                    detail = response.json().get("detail", {})
+                    if isinstance(detail, dict):
+                        for key, message in (detail.get("errors") or {}).items():
+                            control = controls.get(key)
+                            if isinstance(control, ft.TextField):
+                                control.error = str(message)
+                            elif isinstance(control, ft.Dropdown):
+                                control.error_text = str(message)
+                    raise ValueError(
+                        detail.get("message", "Foundation inputs are invalid.")
+                        if isinstance(detail, dict)
+                        else str(detail)
+                    )
+                response.raise_for_status()
+                show_foundation_results(response.json())
+        except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
+            foundation_status_card.bgcolor = ERROR_BG
+            foundation_status_card.content.controls[0].name = ft.Icons.ERROR_OUTLINE
+            foundation_status_card.content.controls[0].color = "#C43D34"
+            foundation_status_text.value = f"Foundation design error: {exc}"
+            page.update()
+        finally:
+            foundation_design_button.disabled = current_analysis_id is None
+            foundation_design_button.content = "Design foundations"
+            page.update()
+
+    foundation_design_button = ft.FilledButton(
+        "Design foundations",
+        icon=ft.Icons.FOUNDATION,
+        disabled=True,
+        on_click=run_foundation_design,
+    )
     analysis_view_dropdown = ft.Dropdown(
         label="Engineering view",
         value="Loading",
@@ -733,6 +1556,25 @@ def main(page: ft.Page) -> None:
         focused_border_color=ACCENT,
         menu_style=ft.MenuStyle(bgcolor="#FFFFFF", shadow_color="#607472"),
     )
+
+    def set_analysis_view_options(*, truss_deflection_only: bool) -> None:
+        option_values = (
+            (("Deflection", "Deflection (SLS)"),)
+            if truss_deflection_only
+            else (
+                ("Loading", "Loading"),
+                ("Deflection", "Deflection (SLS)"),
+                ("Internal forces", "Internal forces"),
+                ("Utilisation", "Utilisation (ULS)"),
+            )
+        )
+        analysis_view_dropdown.options = [
+            ft.DropdownOption(key=key, content=ft.Text(label, color=TEXT_PRIMARY))
+            for key, label in option_values
+        ]
+        valid_values = {key for key, _ in option_values}
+        if analysis_view_dropdown.value not in valid_values:
+            analysis_view_dropdown.value = option_values[0][0]
     analysis_component_dropdown = ft.Dropdown(
         label="Component",
         options=[],
@@ -915,7 +1757,31 @@ def main(page: ft.Page) -> None:
                 "entries. Magnitudes, axes and source cases are labelled directly at the arrows."
             )
         elif view == "deflection":
-            if component == "total deflection":
+            if current_visualisation.get("structural_system") == "Truss":
+                movements = selected.get("node_displacements_mm", {}).values()
+                if component == "total deflection":
+                    node_maximum = max(
+                        (
+                            math.hypot(
+                                float(movement.get("dx", 0.0)),
+                                float(movement.get("dy", 0.0)),
+                            )
+                            for movement in movements
+                        ),
+                        default=0.0,
+                    )
+                    component_label = "total"
+                else:
+                    movement_key = "dx" if component == "dx" else "dy"
+                    node_maximum = max(
+                        (
+                            abs(float(movement.get(movement_key, 0.0)))
+                            for movement in movements
+                        ),
+                        default=0.0,
+                    )
+                    component_label = str(component).upper()
+            elif component == "total deflection":
                 node_maximum = max(
                     (
                         math.hypot(
@@ -1007,6 +1873,180 @@ def main(page: ft.Page) -> None:
         disabled=True,
     )
 
+    def show_connection_results(result: dict[str, Any]) -> None:
+        detailed = result.get("detailed_checks", {})
+        status = str(detailed.get("status", result.get("status", "FAIL")))
+        passed = status == "PASS"
+        connection_status_card.bgcolor = (
+            SUCCESS_BG if passed else (ERROR_BG if status == "FAIL" else WARNING_BG)
+        )
+        connection_status_card.content.controls[0].name = (
+            ft.Icons.CHECK_CIRCLE
+            if passed
+            else (
+                ft.Icons.ERROR_OUTLINE
+                if status == "FAIL"
+                else ft.Icons.WARNING_AMBER
+            )
+        )
+        connection_status_card.content.controls[0].color = (
+            "#1C8C62" if passed else ("#C43D34" if status == "FAIL" else "#B87900")
+        )
+        connection_status_text.value = (
+            f"Post-analysis connection status: {status}. "
+            "Review failed and input-required checks before fabrication."
+        )
+        rows: list[ft.Control] = []
+
+        def add_connection(label: str, item: dict[str, Any], weld_key: str) -> None:
+            checks = list(item.get("checks", []))
+            checks.extend(item.get("local_member_checks", []))
+            stiffener = item.get("stiffener_checks", {})
+            checks.extend(stiffener.get("checks", []))
+            completed = [
+                check
+                for check in checks
+                if check.get("utilisation") is not None
+            ]
+            governing = max(
+                completed,
+                key=lambda check: float(check.get("utilisation", 0.0)),
+                default=None,
+            )
+            weld = item.get(weld_key, {})
+            selected_weld = weld.get("selected_weld", weld)
+            weld_size = selected_weld.get(
+                "provided_size_mm",
+                selected_weld.get(
+                    "weld_size_mm",
+                    selected_weld.get("equivalent_fillet_size_mm", 0),
+                ),
+            )
+            rows.append(
+                analysis_summary_line(
+                    f"{label} - {item.get('status', 'FAIL')}",
+                    (
+                        f"Governing {governing.get('reference', '-')}: "
+                        f"{governing.get('name', '')} | utilisation "
+                        f"{float(governing.get('utilisation', 0)):.3f} | "
+                        f"{governing.get('status', '')}"
+                        if governing
+                        else "No completed checks."
+                    ),
+                    ft.Icons.FACT_CHECK,
+                )
+            )
+            if weld:
+                rows.append(
+                    analysis_summary_line(
+                        f"{label} - weld",
+                        f"{selected_weld.get('type', selected_weld.get('weld_type', 'Weld'))} "
+                        f"{float(weld_size or 0):.0f} mm | utilisation "
+                        f"{float(selected_weld.get('utilisation', 0)):.3f} | "
+                        f"{selected_weld.get('status', weld.get('status', ''))}",
+                        ft.Icons.HARDWARE,
+                    )
+                )
+            if stiffener:
+                rows.append(
+                    analysis_summary_line(
+                        f"{label} - stiffeners",
+                        (
+                            f"{stiffener.get('status', '')} | "
+                            f"governing utilisation "
+                            f"{float(stiffener.get('governing_utilisation', 0) or 0):.3f}"
+                        ),
+                        ft.Icons.CALL_MERGE,
+                    )
+                )
+            anchor = item.get("anchor_concrete")
+            if anchor:
+                anchor_check = next(iter(anchor.get("checks", [])), {})
+                rows.append(
+                    analysis_summary_line(
+                        f"{label} - concrete anchorage",
+                        f"{anchor.get('status', 'INPUT_REQUIRED')} | "
+                        f"{anchor_check.get('note', '')}",
+                        ft.Icons.REPORT_PROBLEM_OUTLINED,
+                    )
+                )
+
+        for support in detailed.get("base_plates", {}).get("supports", []):
+            add_connection(
+                f"Base plate {support.get('support', '')}",
+                support,
+                "column_to_base_plate_weld",
+            )
+        for location in detailed.get("haunch_connections", {}).get("locations", []):
+            add_connection(
+                str(location.get("location", "Haunch")),
+                location,
+                "end_plate_weld",
+            )
+        rows.append(
+            analysis_summary_line(
+                "Calculation boundary",
+                "Steel plates, bolts, prying, weld groups, stiffeners and local "
+                "member effects are calculated. HD-bolt anchorage is estimated "
+                "from Red Book Table 4.6 for 25 MPa concrete; pedestal geometry, "
+                "7d edge distance and reinforcement require confirmation.",
+                ft.Icons.INFO_OUTLINE,
+            )
+        )
+        connection_result_summary.controls = rows
+    connection_markup_button = ft.OutlinedButton(
+        "View 2D PDF",
+        icon=ft.Icons.PICTURE_AS_PDF,
+        disabled=True,
+    )
+    connection_dxf_button = ft.OutlinedButton(
+        "Download DXF",
+        icon=ft.Icons.DOWNLOAD,
+        disabled=True,
+    )
+    connection_dwg_button = ft.OutlinedButton(
+        "Download DWG",
+        icon=ft.Icons.DOWNLOAD,
+        disabled=True,
+    )
+    connection_export_status_text = ft.Text(
+        "The 2D PDF and DXF will be created after analysis; DWG conversion "
+        "will be attempted when AutoCAD is available.",
+        size=12,
+        color=TEXT_MUTED,
+    )
+    connection_report_button = ft.OutlinedButton(
+        "View calculation report",
+        icon=ft.Icons.DESCRIPTION_OUTLINED,
+        disabled=True,
+    )
+    connection_outputs_card = card(
+        "Connection outputs",
+        "Open the calculation report or export the same checked, "
+        "dimensioned 2D connection sheets as PDF, DXF or DWG.",
+        ft.Column(
+            spacing=10,
+            controls=[
+                connection_export_status_text,
+                ft.Row(
+                    wrap=True,
+                    controls=[
+                        connection_report_button,
+                        connection_markup_button,
+                        connection_dxf_button,
+                        connection_dwg_button,
+                    ],
+                ),
+            ],
+        ),
+    )
+    open_connections_button = ft.OutlinedButton(
+        "Open connection design",
+        icon=ft.Icons.HARDWARE,
+        disabled=True,
+        on_click=lambda _: go_to(6),
+    )
+
     def clear_errors() -> None:
         for control in controls.values():
             if isinstance(control, ft.TextField):
@@ -1027,6 +2067,135 @@ def main(page: ft.Page) -> None:
             for row in crawl_rows
         ]
         return values
+
+    def additional_roof_load_text(building: dict[str, Any]) -> str:
+        load_items = (
+            ("services_load_kpa", "services"),
+            ("ceiling_load_kpa", "ceiling"),
+            ("solar_load_kpa", "solar"),
+            ("fire_load_kpa", "fire services"),
+            ("hvac_load_kpa", "HVAC"),
+        )
+        values = [
+            (label, float(building.get(key, 0.0) or 0.0))
+            for key, label in load_items
+        ]
+        maximum_total = sum(value for _, value in values)
+        minimum_total = sum(
+            value
+            for label, value in values
+            if label not in {"services", "solar"}
+        )
+        included = ", ".join(
+            f"{label} {value:g}" for label, value in values if value > 0
+        )
+        return (
+            f"D_MAX +{maximum_total:g} kPa; D_MIN +{minimum_total:g} kPa "
+            f"(services and solar excluded from D_MIN). Entered: {included}"
+            if included
+            else "D_MAX +0 kPa; D_MIN +0 kPa (no additional permanent roof load)"
+        )
+
+    def show_input_file_message(message: str, *, error: bool = False) -> None:
+        page.show_dialog(
+            ft.SnackBar(
+                ft.Text(message, color="#FFFFFF"),
+                bgcolor="#A92F28" if error else ACCENT_DARK,
+                show_close_icon=True,
+                close_icon_color="#FFFFFF",
+            )
+        )
+        page.update()
+
+    async def save_inputs(_=None) -> None:
+        project_name_value = str(controls["project_name"].value or "portalframe")
+        safe_name = "".join(
+            character if character.isalnum() or character in "-_" else "-"
+            for character in project_name_value.strip()
+        ).strip("-") or "portalframe"
+        try:
+            destination = await input_file_picker.save_file(
+                dialog_title="Save PortalFrame inputs",
+                file_name=f"{safe_name}.portalframe.json",
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["json"],
+                src_bytes=dump_project_inputs(raw_values()),
+            )
+        except (OSError, ValueError) as exc:
+            show_input_file_message(f"Inputs could not be saved: {exc}", error=True)
+            return
+        if destination is not None:
+            show_input_file_message(
+                "Inputs saved. The file can be loaded later on this or another run."
+            )
+
+    def apply_loaded_inputs(inputs: dict[str, Any]) -> None:
+        nonlocal crawl_row_counter
+        for key, value in inputs.items():
+            control = controls.get(key)
+            if control is None or key == "crawl_beams":
+                continue
+            if isinstance(control, (ft.Checkbox, ft.Switch)):
+                control.value = bool(value)
+            elif isinstance(control, (ft.TextField, ft.Dropdown)):
+                control.value = str(value)
+
+        for row in crawl_rows:
+            for field in row["fields"].values():
+                controls.pop(field.key, None)
+        crawl_rows.clear()
+        crawl_row_counter = 0
+        refresh_crawl_editor()
+
+        for saved_row in inputs.get("crawl_beams", []):
+            add_crawl_beam()
+            fields = crawl_rows[-1]["fields"]
+            family = str(saved_row.get("section_type", "I-Sections"))
+            section_values = PORTAL_SECTIONS_BY_FAMILY.get(family, ())
+            fields["section"].options = [
+                ft.DropdownOption(
+                    key=item, content=ft.Text(item, color=TEXT_PRIMARY)
+                )
+                for item in section_values
+            ]
+            for field_name, control in fields.items():
+                if field_name not in saved_row:
+                    continue
+                value = saved_row[field_name]
+                if isinstance(control, (ft.TextField, ft.Dropdown)):
+                    control.value = str(value)
+
+        controls["use_crawl_beams"].value = bool(inputs["use_crawl_beams"])
+        clear_errors()
+        update_conditionals()
+        validate_form()
+
+    async def load_inputs(_=None) -> None:
+        try:
+            files = await input_file_picker.pick_files(
+                dialog_title="Load PortalFrame inputs",
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["json"],
+                allow_multiple=False,
+                with_data=True,
+            )
+            if not files:
+                return
+            if files[0].bytes is None:
+                raise ProjectInputFileError("The selected file contents were not available.")
+            inputs = load_project_inputs(files[0].bytes)
+            build_analysis_payload(inputs)
+        except (InputValidationError, ProjectInputFileError, OSError, ValueError) as exc:
+            if isinstance(exc, InputValidationError):
+                detail = f"{len(exc.errors)} saved input(s) are no longer valid."
+            else:
+                detail = str(exc)
+            show_input_file_message(f"Inputs could not be loaded: {detail}", error=True)
+            return
+        apply_loaded_inputs(inputs)
+        show_input_file_message(
+            f"Loaded {files[0].name}. Review the inputs, then run the analysis."
+        )
 
     def set_validation_error(key: str, message: str) -> None:
         control = controls.get(key)
@@ -1160,7 +2329,11 @@ def main(page: ft.Page) -> None:
         clear_errors()
         try:
             payload = build_analysis_payload(raw_values())
-            preview = build_preview_geometry(payload)
+            preview = (
+                preview_truss(payload)
+                if payload["structural_system"] == "Truss"
+                else build_preview_geometry(payload)
+            )
         except (InputValidationError, ValueError) as exc:
             error_count = len(exc.errors) if isinstance(exc, InputValidationError) else 1
             if isinstance(exc, InputValidationError):
@@ -1185,6 +2358,89 @@ def main(page: ft.Page) -> None:
 
         building = payload["building_data"]
         wind = payload["wind_data"]
+        if payload["structural_system"] == "Truss":
+            geometry = preview["geometry"]
+            restraint = preview["chord_restraint_layout"]
+            frame_preview_image.src = truss_elevation_svg(preview)
+            roof_preview_image.src = truss_roof_plan_svg(preview)
+            wall_preview_image.src = truss_girder_elevation_svg(preview)
+            frame_preview_image.visible = True
+            roof_preview_image.visible = True
+            wall_preview_image.visible = True
+            preview_status.bgcolor = WARNING_BG
+            preview_status.content.controls[0].name = ft.Icons.WARNING_AMBER
+            preview_status.content.controls[0].color = "#B87900"
+            preview_status_text.value = "Generated preliminary truss layout"
+            preview_description.value = (
+                f"Middle search depth {geometry['depth_mm'] / 1000:g} m; "
+                f"{geometry['panel_count']} panels at {geometry['panel_width_mm']:.0f} mm. "
+                f"Calculated maximum restraint spacing: top "
+                f"{restraint['top_chord']['maximum_spacing_mm'] / 1000:.2f} m, "
+                f"bottom {restraint['bottom_chord']['maximum_spacing_mm'] / 1000:.2f} m. "
+                f"The plan contains {preview['building_layout']['columns']['eave_count']} main columns and "
+                f"{preview['building_layout']['columns']['internal_count']} internal support columns."
+            )
+            live_validation.bgcolor = WARNING_BG
+            live_validation.content.controls[0].name = ft.Icons.WARNING_AMBER
+            live_validation.content.controls[0].color = "#B87900"
+            live_validation.content.controls[1].value = (
+                "Inputs are ready for preliminary optimisation; project-specific engineering validation remains required."
+            )
+            live_summary.controls = [
+                compact_summary_line("Project", payload["project"]["name"], ft.Icons.FOLDER_OUTLINED),
+                compact_summary_line(
+                    "Structural system",
+                    f"{geometry['topology']} • {geometry['chord_form']} • pinned joints",
+                    ft.Icons.ACCOUNT_TREE_OUTLINED,
+                ),
+                compact_summary_line(
+                    "Search envelope",
+                    f"{payload['truss_data']['minimum_depth_mm'] / 1000:g} to "
+                    f"{payload['truss_data']['maximum_depth_mm'] / 1000:g} m • "
+                    f"{payload['truss_data']['depth_increment_mm']:.0f} mm increments",
+                    ft.Icons.TUNE,
+                ),
+                compact_summary_line(
+                    "Geometry",
+                    f"{building['gable_width'] / 1000:g} m span • "
+                    f"{building['rafter_spacing'] / 1000:g} m truss spacing • "
+                    f"{payload['truss_data']['span_count']} span(s) • "
+                    f"purlins/panels ≤ {payload['truss_data']['maximum_panel_width_mm']:.0f} mm",
+                    ft.Icons.STRAIGHTEN,
+                ),
+                compact_summary_line(
+                    "Chord restraint",
+                    f"Top every {payload['truss_data']['top_chord_brace_every_n_purlins']} purlin(s) • "
+                    f"bottom every {payload['truss_data']['bottom_chord_brace_every_n_purlins']} • full length",
+                    ft.Icons.SWAP_VERT,
+                ),
+                compact_summary_line(
+                    "Wind inputs",
+                    f"{wind['fundamental_basic_wind_speed']:g} m/s • terrain {wind['terrain_category']} • "
+                    f"{wind['return_period']} years",
+                    ft.Icons.AIR,
+                ),
+                compact_summary_line(
+                    "Additional permanent roof load",
+                    additional_roof_load_text(building),
+                    ft.Icons.VERTICAL_ALIGN_BOTTOM,
+                ),
+            ]
+            if submitted_payload_fingerprint is not None:
+                current_fingerprint = json.dumps(payload, sort_keys=True)
+                if current_fingerprint != submitted_payload_fingerprint:
+                    analysis_status_card.bgcolor = WARNING_BG
+                    analysis_status_icon.name = ft.Icons.WARNING_AMBER
+                    analysis_status_icon.color = "#B87900"
+                    analysis_status_text.value = "Inputs changed after analysis; run again before using outputs."
+                    view_report_button.disabled = True
+            if update_page:
+                page.update()
+            return
+
+        frame_preview_image.visible = True
+        roof_preview_image.visible = True
+        wall_preview_image.visible = True
         counts = preview["counts"]
         layout = preview["roof_layout"]
         frame_preview_image.src = frame_elevation_svg(preview)
@@ -1234,10 +2490,53 @@ def main(page: ft.Page) -> None:
                 ft.Icons.AIR,
             ),
             compact_summary_line(
+                "Additional permanent roof load",
+                additional_roof_load_text(building),
+                ft.Icons.VERTICAL_ALIGN_BOTTOM,
+            ),
+            compact_summary_line(
                 "Portal member selection",
                 f"Rafter {building['rafter_section']} | "
                 f"Column {building['column_section']}",
                 ft.Icons.VIEW_WEEK_OUTLINED,
+            ),
+            compact_summary_line(
+                "Rafter haunches",
+                " | ".join([
+                    (
+                        f"Eaves {building['eaves_haunch_length'] / 1000:g} m x "
+                        + (
+                            (
+                                "Auto Size (span/15 x max cut)"
+                                if building.get("eaves_haunch_depth_mode")
+                                == HAUNCH_DEPTH_AUTO
+                                else "Cut-Depth (hw + tf)"
+                            )
+                            if building.get("eaves_haunch_depth_mode")
+                            in (HAUNCH_DEPTH_CUT, HAUNCH_DEPTH_AUTO)
+                            else f"{building['eaves_haunch_depth']:.0f} mm"
+                        )
+                        if building["use_eaves_haunch"] == "Yes"
+                        else "Eaves none"
+                    ),
+                    (
+                        f"Apex {building['apex_haunch_length'] / 1000:g} m/slope x "
+                        + (
+                            (
+                                "Auto Size (span/15 x max cut)"
+                                if building.get("apex_haunch_depth_mode")
+                                == HAUNCH_DEPTH_AUTO
+                                else "Cut-Depth (hw + tf)"
+                            )
+                            if building.get("apex_haunch_depth_mode")
+                            in (HAUNCH_DEPTH_CUT, HAUNCH_DEPTH_AUTO)
+                            else f"{building['apex_haunch_depth']:.0f} mm"
+                        )
+                        if building["use_apex_haunch"] == "Yes"
+                        else "Apex none"
+                    ),
+                ]),
+                ft.Icons.CALL_MERGE,
             ),
             compact_summary_line(
                 "Purlins",
@@ -1257,7 +2556,8 @@ def main(page: ft.Page) -> None:
                 "Not included for canopy"
                 if building["building_type"] == "Canopy"
                 else f"{building['gable_column_count']} columns/end | "
-                f"{building['gable_column_brace_intervals']} restraint intervals",
+                f"{building['gable_column_brace_intervals']} restraint intervals | "
+                f"{building['gable_column_section'] if building['gable_column_section'] != AUTOMATIC_GABLE_SECTION else building['gable_column_section_order']}",
                 ft.Icons.CELL_TOWER,
             ),
         ]
@@ -1273,7 +2573,15 @@ def main(page: ft.Page) -> None:
                 view_report_button.disabled = True
                 open_analysis_button.disabled = True
                 analysis_destination.disabled = True
+                connection_destination.disabled = True
+                foundation_destination.disabled = True
+                foundation_design_button.disabled = True
                 download_markup_button.disabled = True
+                connection_markup_button.disabled = True
+                connection_dxf_button.disabled = True
+                connection_dwg_button.disabled = True
+                connection_report_button.disabled = True
+                open_connections_button.disabled = True
                 load_case_dropdown.disabled = True
                 analysis_view_dropdown.disabled = True
                 analysis_component_dropdown.disabled = True
@@ -1315,6 +2623,11 @@ def main(page: ft.Page) -> None:
         )
 
     def show_analysis_failure(message: str) -> None:
+        nonlocal current_analysis_id, current_visualisation
+        nonlocal current_connection_design
+        current_analysis_id = None
+        current_visualisation = {}
+        current_connection_design = {}
         analysis_progress.visible = False
         analysis_status_card.bgcolor = ERROR_BG
         analysis_status_icon.visible = True
@@ -1323,13 +2636,263 @@ def main(page: ft.Page) -> None:
         analysis_status_text.value = message
         run_analysis_button.disabled = False
         run_analysis_button.content = "Run analysis"
+        analysis_result_summary.controls = [
+            ft.Text(
+                "No current analysis results are available. Correct the inputs "
+                "or design settings and run the analysis again.",
+                size=13,
+                color=TEXT_MUTED,
+            )
+        ]
+        view_report_button.disabled = True
+        open_analysis_button.disabled = True
+        download_markup_button.disabled = True
+        connection_markup_button.disabled = True
+        connection_dxf_button.disabled = True
+        connection_dwg_button.disabled = True
+        connection_report_button.disabled = True
+        open_connections_button.disabled = True
+        connection_3d_viewer.content = None
+        connection_3d_viewer.visible = False
+        connection_view_status.value = (
+            "Run a portal-frame analysis to load the display-only 3D model."
+        )
+        connection_export_status_text.value = (
+            "The 2D PDF and DXF will be created after analysis; DWG conversion "
+            "will be attempted when AutoCAD is available."
+        )
+        load_case_dropdown.disabled = True
+        previous_load_case_button.disabled = True
+        next_load_case_button.disabled = True
+        expand_load_case_button.disabled = True
+        load_case_image.visible = False
         analysis_destination.disabled = True
+        connection_destination.disabled = True
+        foundation_destination.disabled = True
+        foundation_design_button.disabled = True
         page.update()
 
     def show_analysis_results(result: dict[str, Any]) -> None:
-        nonlocal current_visualisation
+        nonlocal current_visualisation, current_analysis_id
+        nonlocal current_connection_design
         summary = result["design_summary"]
+        if summary.get("structural_system") == "Truss":
+            current_analysis_id = None
+            current_connection_design = {}
+            connection_3d_viewer.content = None
+            connection_3d_viewer.visible = False
+            connection_view_status.value = (
+                "Connection 3D models are currently available for portal "
+                "frames only."
+            )
+            connection_export_status_text.value = (
+                "Portal-frame connection exports are not available for truss "
+                "analysis."
+            )
+            connection_destination.disabled = True
+            foundation_destination.disabled = True
+            foundation_design_button.disabled = True
+            ranked = list(summary.get("ranked_solutions", []))
+            best = ranked[0]
+            current_visualisation = dict(
+                best.get("load_case_visualisation", {})
+            )
+            set_analysis_view_options(truss_deflection_only=True)
+            analysis_view_dropdown.value = "Deflection"
+            ranked_text = " | ".join(
+                f"#{item['rank']}: {item['geometry']['depth_mm'] / 1000:g} m, "
+                f"{item['arrangement_mass_kg']:,.0f} kg total steel, "
+                f"{item['practical_cost_equivalent_kg']:,.0f} kg-eq practical, "
+                f"util {item['governing_strength']['utilisation']:.3f}"
+                for item in ranked
+            )
+            chord_text = " | ".join(
+                f"Span {item['span']} {str(item['role']).replace('_', ' ')}: "
+                f"{item['section']} (util {item['governing_utilisation']:.3f})"
+                for item in best.get("chord_fabrication_groups", [])
+            )
+            web_groups = list(best.get("web_fabrication_groups", []))
+            web_sections = sorted({
+                str(item["section"]) for item in web_groups
+            })
+            web_text = (
+                f"{len(web_groups)} groups using {len(web_sections)} section(s): "
+                f"{', '.join(web_sections)}. Minimum group "
+                f"{min((item['member_count'] for item in web_groups), default=0)} panels; "
+                "smaller sections introduced only below 75% retained utilisation."
+            )
+            bearing_text = " | ".join(
+                f"{item['bearing_node']}: {item['section']['designation']} "
+                f"from {item['source']}"
+                for item in best.get("bearing_support_verticals", [])
+            )
+            analysis_result_summary.controls = [
+                analysis_summary_line(
+                    "Validation status", summary["validation_status"], ft.Icons.WARNING_AMBER
+                ),
+                analysis_summary_line(
+                    "Practical ranked solutions", ranked_text, ft.Icons.FORMAT_LIST_NUMBERED
+                ),
+                analysis_summary_line(
+                    "Lightest-member comparison",
+                    f"{best['lightest_member_arrangement_mass_kg']:,.0f} kg with individually "
+                    f"optimised webs versus {best['arrangement_mass_kg']:,.0f} kg using "
+                    "practical fabrication groups; both totals include purlins",
+                    ft.Icons.SCALE_OUTLINED,
+                ),
+                analysis_summary_line(
+                    "Purlins included in total",
+                    f"{best['purlins']['section']} | "
+                    f"{best['purlins']['line_count']} lines × "
+                    f"{best['purlins']['building_length_m']:.1f} m | "
+                    f"{best['purlins']['mass_kg']:,.1f} kg",
+                    ft.Icons.HORIZONTAL_RULE,
+                ),
+                analysis_summary_line(
+                    "Rank 1 geometry",
+                    f"{best['geometry']['topology']} • {best['geometry']['chord_form']} • "
+                    f"{best['geometry']['panel_count']} panels at "
+                    f"{best['geometry']['panel_width_mm']:.0f} mm • depth "
+                    f"{best['geometry']['depth_mm'] / 1000:g} m",
+                    ft.Icons.ACCOUNT_TREE_OUTLINED,
+                ),
+                analysis_summary_line(
+                    "Truss section search order",
+                    str(
+                        summary.get("design_basis", {})
+                        .get("member_section_order", {})
+                        .get("selected", "")
+                    ),
+                    ft.Icons.SORT,
+                ),
+                analysis_summary_line(
+                    "Rank 1 chord restraint",
+                    f"Top every {best['chord_restraint_layout']['top_chord']['brace_every_n_purlins']} purlin(s) "
+                    f"(max {best['chord_restraint_layout']['top_chord']['maximum_spacing_mm'] / 1000:.2f} m) • "
+                    f"bottom every {best['chord_restraint_layout']['bottom_chord']['brace_every_n_purlins']} "
+                    f"(max {best['chord_restraint_layout']['bottom_chord']['maximum_spacing_mm'] / 1000:.2f} m)",
+                    ft.Icons.SWAP_VERT,
+                ),
+                analysis_summary_line(
+                    "Common chord sections by span",
+                    chord_text or "No chord groups returned",
+                    ft.Icons.HORIZONTAL_RULE,
+                ),
+                analysis_summary_line(
+                    "Practical web groups",
+                    web_text or "No ordinary web groups returned",
+                    ft.Icons.GRID_VIEW,
+                ),
+                analysis_summary_line(
+                    "Bearing support verticals",
+                    bearing_text or "No bearing support verticals returned",
+                    ft.Icons.VERTICAL_ALIGN_CENTER,
+                ),
+                analysis_summary_line(
+                    "Rank 1 strength",
+                    f"{best['governing_strength']['member']} • "
+                    f"{best['governing_strength']['section']} • utilisation "
+                    f"{best['governing_strength']['utilisation']:.3f} • "
+                    f"{best['governing_strength']['check'].replace('_', ' ')}",
+                    ft.Icons.FACT_CHECK,
+                ),
+                analysis_summary_line(
+                    "Rank 1 serviceability",
+                    f"{best['serviceability']['maximum_vertical_deflection_mm']:.1f} mm / "
+                    f"{best['serviceability']['limit_mm']:.1f} mm "
+                    f"({best['serviceability']['governing_combination']})",
+                    ft.Icons.SWAP_VERT,
+                ),
+                analysis_summary_line(
+                    "Eave columns",
+                    f"{best['eave_column_design']['column_count']} × {best['eave_column_design']['section']} • "
+                    f"ULS utilisation {best['eave_column_design']['governing_strength']['utilisation']:.3f} • "
+                    f"SLS utilisation {best['eave_column_design']['serviceability']['utilisation']:.3f}",
+                    ft.Icons.VIEW_WEEK_OUTLINED,
+                ),
+                analysis_summary_line(
+                    "Longitudinal girder",
+                    (
+                        "Not required"
+                        if best["girder_design"]["status"] == "NOT_REQUIRED"
+                        else f"{best['girder_design']['geometry']['span_mm'] / 1000:g} m span • "
+                             f"{best['girder_design']['geometry']['depth_mm'] / 1000:g} m lightest depth • "
+                             f"utilisation {best['girder_design']['governing_strength']['utilisation']:.3f}"
+                    ),
+                    ft.Icons.ACCOUNT_TREE_OUTLINED,
+                ),
+                analysis_summary_line(
+                    "Centre columns",
+                    (
+                        "Not designed; main eave-column section used as a preliminary stiffness proxy"
+                        if best.get("centre_column_design", {}).get("status") == "NOT_DESIGNED"
+                        else (
+                            f"{best['centre_column_design'].get('column_count', 0)} Ã— "
+                            f"{best['centre_column_design'].get('section', 'steel section')} â€¢ "
+                            f"axial utilisation {best['centre_column_design'].get('governing_strength', {}).get('utilisation', 0):.3f}"
+                            if best.get("centre_column_design", {}).get("status") == "PASS"
+                            else "Concrete tilt-up inputs captured; concrete capacity is a hold point"
+                        )
+                    ),
+                    ft.Icons.VERTICAL_ALIGN_CENTER,
+                ),
+                analysis_summary_line(
+                    "Exclusions",
+                    "Independent validation, connections, restraint capacity and concrete tilt-up capacity/detailing",
+                    ft.Icons.REPORT_PROBLEM_OUTLINED,
+                ),
+            ]
+            artifacts = result.get("artifacts", {})
+            report = artifacts.get("truss-report-html")
+            truss_markup = artifacts.get("truss-markup-html")
+            if report:
+                view_report_button.url = ft.Url(
+                    url=f"{API_URL}{report['download_url']}", target=ft.UrlTarget.SELF
+                )
+                view_report_button.disabled = False
+            if truss_markup:
+                download_markup_button.url = (
+                    f"{API_URL}{truss_markup['download_url']}"
+                )
+                download_markup_button.disabled = False
+            else:
+                download_markup_button.disabled = True
+            connection_markup_button.disabled = True
+            connection_dxf_button.disabled = True
+            connection_dwg_button.disabled = True
+            connection_report_button.disabled = True
+            open_connections_button.disabled = True
+            all_names = combination_names(current_visualisation, "SLS")
+            analysis_view_dropdown.disabled = not all_names
+            open_analysis_button.disabled = not all_names
+            analysis_destination.disabled = not all_names
+            if all_names:
+                governing = str(best["serviceability"].get("governing_combination", ""))
+                load_case_dropdown.value = (
+                    governing if governing in all_names else all_names[0]
+                )
+                refresh_analysis_controls()
+            else:
+                load_case_description.value = (
+                    "This truss result does not contain SLS displacement data."
+                )
+            analysis_progress.visible = False
+            analysis_status_icon.visible = True
+            analysis_status_icon.name = ft.Icons.WARNING_AMBER
+            analysis_status_icon.color = "#B87900"
+            analysis_status_card.bgcolor = WARNING_BG
+            analysis_status_text.value = (
+                f"Truss calculation draft {result['analysis_id']} complete; "
+                "connections and independent project verification remain outstanding."
+            )
+            run_analysis_button.disabled = False
+            run_analysis_button.content = "Run analysis again"
+            page.update()
+            return
+        set_analysis_view_options(truss_deflection_only=False)
+        current_analysis_id = str(result["analysis_id"])
         sections = summary["portal_sections"]
+        haunches = summary.get("haunches", {})
         strength = summary["governing_strength"]
         serviceability = summary["serviceability"]
         mass = summary.get("steel_mass_breakdown", {})
@@ -1355,9 +2918,43 @@ def main(page: ft.Page) -> None:
             f"{item['member_type']}: {item['section']} ({float(item['utilisation']):.3f})"
             for item in summary.get("bracing_members", [])
         ) or "No gable or longitudinal bracing design required."
+        gable_text = ", ".join(
+            f"{item['name']}: {item['section']} | "
+            f"{item['status']} {float(item['utilisation']):.3f}"
+            for item in summary.get("gable_columns", [])
+        ) or "No gable columns required."
         current_visualisation = dict(
             summary.get("load_case_visualisation", {})
         )
+        connections = summary.get("connection_design", {})
+        current_connection_design = dict(connections)
+        base_plates = connections.get("base_plates", {})
+        base_supports = list(base_plates.get("supports", []))
+        base_plate_text = "No base-plate result."
+        if base_supports and base_supports[0].get("plate"):
+            plate = base_supports[0]["plate"]
+            bolt_layout = (
+                base_supports[0]
+                .get("holding_down_bolts", {})
+                .get("layout", {})
+            )
+            stiffeners = base_supports[0].get("stiffeners", {})
+            base_plate_text = (
+                f"{base_plates.get('status', 'HOLD_POINT')} | typical "
+                f"{float(plate['length_mm']):.0f} Ã— "
+                f"{float(plate['width_mm']):.0f} Ã— "
+                f"{float(plate['provided_thickness_mm']):.0f} mm | "
+                f"{int(bolt_layout.get('bolt_count', 0))} x "
+                f"M{float(bolt_layout.get('diameter_mm', 0)):.0f}, "
+                f"pitch/gauge {float(bolt_layout.get('pitch_mm', 0)):.0f}/"
+                f"{float(bolt_layout.get('gauge_mm', 0)):.0f} mm | "
+                + (
+                    f"{int(stiffeners.get('count', 0))} stiffeners"
+                    if stiffeners.get("required")
+                    else "stiffeners not required"
+                )
+            )
+        haunch_connection = connections.get("haunch_connections", {})
 
         analysis_result_summary.controls = [
             analysis_summary_line(
@@ -1372,6 +2969,35 @@ def main(page: ft.Page) -> None:
                 ft.Icons.VIEW_WEEK_OUTLINED,
             ),
             analysis_summary_line(
+                "Selected rafter haunch-cut limit",
+                (
+                    f"{haunches.get('source_rafter_section', sections['rafter'])}: "
+                    f"hw + tf = "
+                    f"{float(haunches.get('source_clear_web_depth_mm', 0)):.1f} + "
+                    f"{float(haunches.get('source_flange_thickness_mm', 0)):.1f} = "
+                    f"{float(haunches.get('maximum_cut_depth_mm', 0)):.1f} mm"
+                ),
+                ft.Icons.STRAIGHTEN,
+            ),
+            analysis_summary_line(
+                "Modelled haunches",
+                " | ".join([
+                    (
+                        f"Eaves {float(haunches.get('eaves', {}).get('length_mm', 0)) / 1000:g} m x "
+                        f"{float(haunches.get('eaves', {}).get('depth_mm', 0)):.0f} mm"
+                        if haunches.get("eaves", {}).get("used")
+                        else "Eaves none"
+                    ),
+                    (
+                        f"Apex {float(haunches.get('apex', {}).get('length_mm', 0)) / 1000:g} m/slope x "
+                        f"{float(haunches.get('apex', {}).get('depth_mm', 0)):.0f} mm"
+                        if haunches.get("apex", {}).get("used")
+                        else "Apex none"
+                    ),
+                ]),
+                ft.Icons.CALL_MERGE,
+            ),
+            analysis_summary_line(
                 "Governing strength check",
                 f"{strength['member']} | {strength['combination']} | "
                 f"{strength['check']}",
@@ -1380,7 +3006,26 @@ def main(page: ft.Page) -> None:
             analysis_summary_line(
                 "Serviceability results",
                 f"Horizontal {deflection_text(serviceability['max_horizontal_deflection_mm'], serviceability.get('horizontal_deflection_ratio'), 'Eaves')} | "
-                f"Vertical {deflection_text(serviceability['max_vertical_deflection_mm'], serviceability.get('vertical_deflection_ratio'), 'Span')}",
+                + (
+                    f"Variable vertical {deflection_text(serviceability['max_vertical_deflection_mm'], serviceability.get('vertical_deflection_ratio'), 'Span')} "
+                    f"from permanent baseline {float(serviceability.get('permanent_baseline_deflection_mm', 0)):.2f} mm; "
+                    if serviceability.get(
+                        "uses_permanent_deflection_baseline",
+                        True,
+                    )
+                    else
+                    f"Total vertical {deflection_text(serviceability['max_vertical_deflection_mm'], serviceability.get('vertical_deflection_ratio'), 'Span')}; "
+                )
+                +
+                f"total at that node {float(serviceability.get('total_vertical_deflection_mm', 0)):.2f} mm | "
+                f"roof drainage {serviceability.get('roof_drainage_status', 'PASS')}"
+                + (
+                    " | Ignored 1.1 DL + 1.0 LL vertical "
+                    f"{float(serviceability['ignored_vertical_deflections'][0]['max_dy']):.2f} mm "
+                    "(still reported)"
+                    if serviceability.get("ignored_vertical_deflections")
+                    else ""
+                ),
                 ft.Icons.SWAP_VERT,
             ),
             analysis_summary_line(
@@ -1391,15 +3036,38 @@ def main(page: ft.Page) -> None:
                 ft.Icons.SCALE_OUTLINED,
             ),
             analysis_summary_line(
+                "Gable columns (selected section and utilisation)",
+                gable_text,
+                ft.Icons.VERTICAL_ALIGN_CENTER,
+            ),
+            analysis_summary_line(
                 "Bracing members (section and utilisation)",
                 brace_text,
                 ft.Icons.ACCOUNT_TREE_OUTLINED,
+            ),
+            analysis_summary_line(
+                "Base-plate connection checks",
+                base_plate_text,
+                ft.Icons.FOUNDATION,
+            ),
+            analysis_summary_line(
+                "Haunch connection design",
+                (
+                    f"{haunch_connection.get('status', 'NOT_REQUIRED')} | "
+                    "bolt geometry, prying, end-plate, weld-group, stiffener "
+                    "and supporting member checks calculated"
+                ),
+                ft.Icons.CALL_MERGE,
             ),
         ]
 
         artifacts = result.get("artifacts", {})
         report = artifacts.get("design-report-html")
         markup = artifacts.get("markup-pdf") or artifacts.get("markup-html")
+        connection_report = artifacts.get("connection-report-html")
+        connection_markup = artifacts.get("connection-markup-pdf")
+        connection_dxf = artifacts.get("connection-markup-dxf")
+        connection_dwg = artifacts.get("connection-markup-dwg")
         if report:
             view_report_button.url = ft.Url(
                 url=f"{API_URL}{report['download_url']}",
@@ -1409,11 +3077,91 @@ def main(page: ft.Page) -> None:
         if markup:
             download_markup_button.url = f"{API_URL}{markup['download_url']}"
             download_markup_button.disabled = False
+        if connection_markup:
+            connection_markup_button.url = ft.Url(
+                url=f"{API_URL}{connection_markup['download_url']}",
+                target=ft.UrlTarget.BLANK,
+            )
+            connection_markup_button.disabled = False
+        if connection_dxf:
+            connection_dxf_button.url = (
+                f"{API_URL}{connection_dxf['download_url']}"
+            )
+            connection_dxf_button.disabled = False
+        if connection_dwg:
+            connection_dwg_button.url = (
+                f"{API_URL}{connection_dwg['download_url']}"
+            )
+            connection_dwg_button.disabled = False
+        export_status = summary.get("connection_exports", {})
+        formats = ", ".join(export_status.get("formats", []))
+        dwg_status = export_status.get("dwg", {})
+        connection_export_status_text.value = (
+            f"Calculated 2D exports ready: {formats}. "
+            "The interactive 3D model remains in-app only."
+            if connection_dwg
+            else (
+                f"Calculated 2D exports ready: {formats}. "
+                f"{dwg_status.get('reason', 'DWG conversion is unavailable.')}"
+            )
+        )
+        if connection_report:
+            connection_report_button.url = ft.Url(
+                url=f"{API_URL}{connection_report['download_url']}",
+                target=ft.UrlTarget.BLANK,
+            )
+            connection_report_button.disabled = False
+        show_connection_results(connections)
+        connection_views = list_connection_views(current_connection_design)
+        if connection_views:
+            preferred_view = next(
+                (
+                    item
+                    for item in connection_views
+                    if item["available"]
+                ),
+                connection_views[0],
+            )
+            if preferred_view["available"]:
+                connection_3d_viewer.content = build_connection_3d_viewer(
+                    f"{API_URL}/api/analysis/{current_analysis_id}/"
+                    "connection-viewer?view="
+                    f"{quote(preferred_view['key'], safe='')}"
+                )
+                connection_3d_viewer.visible = True
+                connection_view_status.value = (
+                    "Select a connection in the viewer, drag to orbit and "
+                    "scroll to zoom. The model is in-app only and has no "
+                    "3D export."
+                )
+            else:
+                connection_3d_viewer.content = None
+                connection_3d_viewer.visible = False
+                connection_view_status.value = (
+                    f"3D view unavailable: {preferred_view['reason']}"
+                )
+        else:
+            connection_3d_viewer.content = None
+            connection_3d_viewer.visible = False
+            connection_view_status.value = (
+                "No connection geometry is available for this analysis."
+            )
+        open_connections_button.disabled = False
 
         all_names = combination_names(current_visualisation)
         analysis_view_dropdown.disabled = not all_names
         open_analysis_button.disabled = not all_names
         analysis_destination.disabled = not all_names
+        connection_destination.disabled = False
+        foundation_destination.disabled = False
+        foundation_design_button.disabled = False
+        foundation_status_card.bgcolor = WARNING_BG
+        foundation_status_card.content.controls[0].name = ft.Icons.INFO_OUTLINE
+        foundation_status_card.content.controls[0].color = "#B87900"
+        foundation_status_text.value = (
+            "Portal reactions are ready. Enter soil unit weight and permissible "
+            "bearing pressure, then run the automatic foundation design."
+        )
         if all_names:
             governing = str(strength.get("combination", ""))
             load_case_dropdown.value = (
@@ -1438,17 +3186,35 @@ def main(page: ft.Page) -> None:
         page.update()
 
     async def run_analysis(_=None) -> None:
-        nonlocal submitted_payload_fingerprint
+        nonlocal submitted_payload_fingerprint, current_analysis_id
+        nonlocal current_connection_design
         if not validate_form() or last_payload is None:
             return
 
+        current_analysis_id = None
+        current_connection_design = {}
         submitted_payload_fingerprint = json.dumps(last_payload, sort_keys=True)
         run_analysis_button.disabled = True
         run_analysis_button.content = "Analysis running..."
         view_report_button.disabled = True
         open_analysis_button.disabled = True
         analysis_destination.disabled = True
+        connection_destination.disabled = True
+        foundation_destination.disabled = True
+        foundation_design_button.disabled = True
         download_markup_button.disabled = True
+        connection_markup_button.disabled = True
+        connection_dxf_button.disabled = True
+        connection_dwg_button.disabled = True
+        connection_report_button.disabled = True
+        open_connections_button.disabled = True
+        connection_3d_viewer.content = None
+        connection_3d_viewer.visible = False
+        connection_view_status.value = "Connection model will load after analysis."
+        connection_export_status_text.value = (
+            "The 2D PDF and DXF are being prepared; AutoCAD DWG conversion "
+            "will be attempted if available."
+        )
         load_case_dropdown.disabled = True
         analysis_view_dropdown.disabled = True
         analysis_component_dropdown.disabled = True
@@ -1544,9 +3310,26 @@ def main(page: ft.Page) -> None:
                 ft.Icons.GAVEL,
             ),
             summary_line(
+                "Vertical deflection acceptance",
+                (
+                    "1.1 DL + 1.0 LL limit ignored; result still reported"
+                    if building[
+                        "ignore_1_1_dl_1_0_ll_vertical_deflection_limit"
+                    ]
+                    == "Yes"
+                    else "All SLS combinations checked"
+                ),
+                ft.Icons.SWAP_VERT,
+            ),
+            summary_line(
                 "Wind",
                 f"{wind['fundamental_basic_wind_speed']:g} m/s • terrain {wind['terrain_category']} • {wind['return_period']} years",
                 ft.Icons.WIND_POWER,
+            ),
+            summary_line(
+                "Additional permanent roof load",
+                additional_roof_load_text(building),
+                ft.Icons.VERTICAL_ALIGN_BOTTOM,
             ),
             summary_line(
                 "Portal sections",
@@ -1554,17 +3337,173 @@ def main(page: ft.Page) -> None:
                 ft.Icons.VIEW_WEEK_OUTLINED,
             ),
             summary_line(
+                "Haunches",
+                " | ".join([
+                    (
+                        f"Eaves {building['eaves_haunch_length'] / 1000:g} m x "
+                        + (
+                            (
+                                "Auto Size (span/15 x max cut)"
+                                if building.get("eaves_haunch_depth_mode")
+                                == HAUNCH_DEPTH_AUTO
+                                else "Cut-Depth (hw + tf)"
+                            )
+                            if building.get("eaves_haunch_depth_mode")
+                            in (HAUNCH_DEPTH_CUT, HAUNCH_DEPTH_AUTO)
+                            else f"{building['eaves_haunch_depth']:.0f} mm"
+                        )
+                        if building["use_eaves_haunch"] == "Yes"
+                        else "Eaves none"
+                    ),
+                    (
+                        f"Apex {building['apex_haunch_length'] / 1000:g} m/slope x "
+                        + (
+                            (
+                                "Auto Size (span/15 x max cut)"
+                                if building.get("apex_haunch_depth_mode")
+                                == HAUNCH_DEPTH_AUTO
+                                else "Cut-Depth (hw + tf)"
+                            )
+                            if building.get("apex_haunch_depth_mode")
+                            in (HAUNCH_DEPTH_CUT, HAUNCH_DEPTH_AUTO)
+                            else f"{building['apex_haunch_depth']:.0f} mm"
+                        )
+                        if building["use_apex_haunch"] == "Yes"
+                        else "Apex none"
+                    ),
+                ]),
+                ft.Icons.CALL_MERGE,
+            ),
+            summary_line(
                 "Bracing",
-                f"{building['column_bracing_type']}-bracing • {building['gable_column_count']} gable columns/end",
+                f"{building['column_bracing_type']}-bracing • "
+                f"{building['gable_column_count']} evenly spaced gable columns/end • "
+                f"{building['gable_column_section'] if building['gable_column_section'] != AUTOMATIC_GABLE_SECTION else building['gable_column_section_order']}",
                 ft.Icons.CALL_SPLIT,
             ),
         ]
+        if payload["structural_system"] == "Truss":
+            truss = payload["truss_data"]
+            extra_load = sum(
+                float(building.get(key, 0.0) or 0.0)
+                for key in (
+                    "services_load_kpa", "ceiling_load_kpa", "solar_load_kpa",
+                    "fire_load_kpa", "hvac_load_kpa",
+                )
+            )
+            review_summary.controls = [
+                summary_line(
+                    "System",
+                    f"{truss['topology']} • {truss['chord_form']} • {building['building_roof']}",
+                    ft.Icons.ACCOUNT_TREE_OUTLINED,
+                ),
+                summary_line(
+                    "Geometry search",
+                    f"{building['gable_width'] / 1000:g} m width • {truss['span_count']} span(s) • "
+                    f"{truss['minimum_depth_mm'] / 1000:g} to {truss['maximum_depth_mm'] / 1000:g} m depth",
+                    ft.Icons.STRAIGHTEN,
+                ),
+                summary_line(
+                    "Supports",
+                    (
+                        "Main column left • Main column right"
+                        if truss["span_count"] == 1
+                        else f"Main column left • {truss['internal_support']} • Main column right"
+                    ),
+                    ft.Icons.VIEW_WEEK_OUTLINED,
+                ),
+                summary_line(
+                    "Sections",
+                    "Common chords per span • independent web angles • minimum 50x50x5 • S355JR",
+                    ft.Icons.VIEW_WEEK_OUTLINED,
+                ),
+                summary_line(
+                    "Loads",
+                    f"PortalFrame environmental actions + {extra_load:g} kPa additional permanent load",
+                    ft.Icons.WIND_POWER,
+                ),
+                summary_line(
+                    "Hold point", "Project-specific validation and SANS editions pending",
+                    ft.Icons.WARNING_AMBER,
+                ),
+            ]
         json_preview.value = json.dumps(payload, indent=2)
         page.update()
         return True
 
+    def entered_truss_span_count() -> int:
+        return len([
+            value for value in str(truss_bay_spans.value).split(",")
+            if value.strip()
+        ])
+
+    def sync_auto_haunch_values() -> None:
+        """Keep disabled Auto Size fields visibly tied to the current span."""
+
+        try:
+            auto_length = float(gable_width.value) / 15.0
+        except (TypeError, ValueError):
+            return
+        if eaves_haunch_depth_mode.value == HAUNCH_DEPTH_AUTO:
+            eaves_haunch_length.value = f"{auto_length:g}"
+            eaves_haunch_depth.value = ""
+        if apex_haunch_depth_mode.value == HAUNCH_DEPTH_AUTO:
+            apex_haunch_length.value = f"{auto_length:g}"
+            apex_haunch_depth.value = ""
+
     def update_conditionals(_=None) -> None:
         sync_portal_section_options()
+        sync_gable_section_options()
+        sync_auto_haunch_values()
+        is_truss = structural_system.value == "Truss"
+        if is_truss:
+            building_type.value = "Normal"
+            steel_grade.value = "Steel_S355"
+        building_type.disabled = is_truss
+        building_roof.disabled = False
+        steel_grade.disabled = is_truss
+        portal_system_controls.visible = not is_truss
+        truss_system_controls.visible = is_truss
+        portal_dimensions.visible = not is_truss
+        truss_dimensions.visible = is_truss
+        truss_additional_loads_card.visible = True
+        apex_height.disabled = is_truss
+        span_count = entered_truss_span_count()
+        has_internal_support = is_truss and span_count > 1
+        truss_internal_support.disabled = not has_internal_support
+        uses_girder = (
+            has_internal_support
+            and truss_internal_support.value == "Longitudinal girders"
+        )
+        truss_girder_card.visible = uses_girder
+        uses_centre_columns = (
+            has_internal_support
+            and truss_internal_support.value == "Centre columns"
+        )
+        truss_centre_column_card.visible = uses_centre_columns
+        centre_design_enabled = uses_centre_columns and bool(
+            truss_design_centre_columns.value
+        )
+        truss_centre_column_material.disabled = not centre_design_enabled
+        is_concrete_centre = (
+            centre_design_enabled
+            and truss_centre_column_material.value == "Concrete tilt-up"
+        )
+        truss_centre_column_steel_controls.visible = (
+            centre_design_enabled and not is_concrete_centre
+        )
+        truss_centre_column_concrete_controls.visible = is_concrete_centre
+        try:
+            girder_bays = int(float(truss_girder_span_bays.value))
+            grid_spacing = float(truss_spacing.value)
+            girder_span_summary.value = (
+                f"Calculated girder span: {girder_bays} bays × "
+                f"{grid_spacing:g} m = {girder_bays * grid_spacing:g} m."
+            )
+        except (TypeError, ValueError):
+            girder_span_summary.value = "Enter valid bay count and truss spacing."
+        truss_type_reference.src = truss_type_reference_svg(str(truss_type.value))
+        update_girder_depth_suggestion()
         is_canopy = building_type.value == "Canopy"
         is_final_normal = not is_canopy and wind_design_mode.value == "Final design"
         blocking.disabled = not is_canopy
@@ -1577,9 +3516,105 @@ def main(page: ft.Page) -> None:
             else "Opening areas are only used for a normal building in Final design mode."
         )
         spring_stiffness.disabled = base_support.value != "Spring"
+        use_eaves_haunch.disabled = is_truss
+        use_apex_haunch.disabled = is_truss
+        ignore_dead_live_vertical_limit.disabled = is_truss
+        use_permanent_deflection_baseline.disabled = is_truss
+        eaves_haunch_fields.visible = (
+            not is_truss and bool(use_eaves_haunch.value)
+        )
+        apex_haunch_fields.visible = (
+            not is_truss and bool(use_apex_haunch.value)
+        )
+        eaves_auto_size = eaves_haunch_depth_mode.value == HAUNCH_DEPTH_AUTO
+        apex_auto_size = apex_haunch_depth_mode.value == HAUNCH_DEPTH_AUTO
+        eaves_haunch_length.disabled = eaves_auto_size
+        apex_haunch_length.disabled = apex_auto_size
+        eaves_haunch_depth.disabled = eaves_haunch_depth_mode.value in (
+            HAUNCH_DEPTH_CUT,
+            HAUNCH_DEPTH_AUTO,
+        )
+        apex_haunch_depth.disabled = apex_haunch_depth_mode.value in (
+            HAUNCH_DEPTH_CUT,
+            HAUNCH_DEPTH_AUTO,
+        )
+        cut_limit = rafter_haunch_cut_limit(
+            str(rafter_section_type.value),
+            str(rafter_section.value),
+        )
+        cut_properties = cut_limit.get("properties", {})
+        cut_formula = (
+            f"hw + tf = {float(cut_properties.get('hw', 0)):.1f} + "
+            f"{float(cut_properties.get('tf', 0)):.1f} = "
+            f"{float(cut_limit.get('maximum_cut_depth_mm', 0)):.1f} mm"
+        )
+        uses_auto_size = (
+            bool(use_eaves_haunch.value)
+            and eaves_haunch_depth_mode.value == HAUNCH_DEPTH_AUTO
+        ) or (
+            bool(use_apex_haunch.value)
+            and apex_haunch_depth_mode.value == HAUNCH_DEPTH_AUTO
+        )
+        uses_cut_depth = (
+            bool(use_eaves_haunch.value)
+            and eaves_haunch_depth_mode.value == HAUNCH_DEPTH_CUT
+        ) or (
+            bool(use_apex_haunch.value)
+            and apex_haunch_depth_mode.value == HAUNCH_DEPTH_CUT
+        )
+        try:
+            auto_length_m = float(gable_width.value) / 15.0
+            auto_length_text = f"{auto_length_m:.3f} m"
+        except (TypeError, ValueError):
+            auto_length_text = "span/15"
+        if uses_auto_size and cut_limit.get("mode") == "automatic":
+            haunch_cut_guidance.value = (
+                f"Auto Size sets each haunch length to {auto_length_text} "
+                "and resolves the maximum cut depth (hw + tf) for every "
+                "trial rafter. The selected values are reported after analysis."
+            )
+        elif uses_auto_size and cut_limit.get("mode") == "manual":
+            haunch_cut_guidance.value = (
+                f"Auto Size sets each haunch length to {auto_length_text}. "
+                f"Maximum cut depth for {cut_limit.get('section', '-')}: "
+                f"{cut_formula}."
+            )
+        elif uses_cut_depth and cut_limit.get("mode") == "automatic":
+            haunch_cut_guidance.value = (
+                "Cut-Depth is resolved for every trial rafter as hw + tf, so "
+                "it does not impose a fixed-depth section filter. The selected "
+                "value is reported after analysis."
+            )
+        elif uses_cut_depth and cut_limit.get("mode") == "manual":
+            haunch_cut_guidance.value = (
+                f"Cut-Depth for selected donor "
+                f"{cut_limit.get('section', '-')}: {cut_formula}."
+            )
+        elif cut_limit.get("mode") == "automatic":
+            haunch_cut_guidance.value = (
+                "Automatic sizing treats the entered haunch depth as a "
+                "section filter and excludes every trial rafter whose usable "
+                "donor depth (hw + tf) is too small. The selected rafter and "
+                "its actual cut limit are reported after analysis."
+            )
+        elif cut_limit.get("mode") == "manual":
+            haunch_cut_guidance.value = (
+                f"Selected donor {cut_limit.get('section', '-')}: maximum "
+                f"fabricable cut {cut_formula}."
+            )
+        else:
+            haunch_cut_guidance.value = (
+                "Select a valid rafter section to calculate its haunch cut limit."
+            )
+        haunch_cut_guidance.visible = not is_truss
         gable_column_count.disabled = is_canopy
         gable_brace_intervals.disabled = is_canopy
-        crawl_application.disabled = not use_crawl_beams.value
+        gable_section_type.disabled = is_canopy
+        gable_section.disabled = is_canopy
+        gable_section_order.disabled = (
+            is_canopy or gable_section.value != AUTOMATIC_GABLE_SECTION
+        )
+        crawl_application.disabled = is_truss or not use_crawl_beams.value
         crawl_slope_values = (
             ("left", "right") if building_roof.value == "Duo Pitched" else ("single", "left")
         )
@@ -1597,23 +3632,80 @@ def main(page: ft.Page) -> None:
 
     building_type.on_select = update_conditionals
     building_roof.on_select = update_conditionals
+    structural_system.on_select = update_conditionals
     wind_design_mode.on_select = update_conditionals
     base_support.on_select = update_conditionals
+    rafter_section_type.on_select = update_conditionals
+    rafter_section.on_select = update_conditionals
+    use_eaves_haunch.on_change = update_conditionals
+    use_apex_haunch.on_change = update_conditionals
+    eaves_haunch_depth_mode.on_select = update_conditionals
+    apex_haunch_depth_mode.on_select = update_conditionals
+    ignore_dead_live_vertical_limit.on_change = update_conditionals
+    use_permanent_deflection_baseline.on_change = update_conditionals
     use_crawl_beams.on_change = update_conditionals
+    truss_internal_support.on_select = update_conditionals
+    truss_design_centre_columns.on_change = update_conditionals
+    truss_centre_column_material.on_select = update_conditionals
+    gable_section_type.on_select = update_conditionals
+    gable_section.on_select = update_conditionals
 
     def update_live_input(_=None) -> None:
+        sync_auto_haunch_values()
+        if structural_system.value == "Truss":
+            span_count = entered_truss_span_count()
+            truss_internal_support.disabled = span_count <= 1
+            truss_girder_card.visible = (
+                span_count > 1
+                and truss_internal_support.value == "Longitudinal girders"
+            )
+            truss_centre_column_card.visible = (
+                span_count > 1
+                and truss_internal_support.value == "Centre columns"
+            )
+            centre_design_enabled = (
+                truss_centre_column_card.visible
+                and bool(truss_design_centre_columns.value)
+            )
+            is_concrete_centre = (
+                centre_design_enabled
+                and truss_centre_column_material.value == "Concrete tilt-up"
+            )
+            truss_centre_column_material.disabled = not centre_design_enabled
+            truss_centre_column_steel_controls.visible = (
+                centre_design_enabled and not is_concrete_centre
+            )
+            truss_centre_column_concrete_controls.visible = is_concrete_centre
+            try:
+                girder_bays = int(float(truss_girder_span_bays.value))
+                grid_spacing = float(truss_spacing.value)
+                girder_span_summary.value = (
+                    f"Calculated girder span: {girder_bays} bays × "
+                    f"{grid_spacing:g} m = {girder_bays * grid_spacing:g} m."
+                )
+            except (TypeError, ValueError):
+                girder_span_summary.value = "Enter valid bay count and truss spacing."
+            truss_type_reference.src = truss_type_reference_svg(str(truss_type.value))
+            update_girder_depth_suggestion()
         update_pitch()
         refresh_workspace()
 
     conditional_dropdowns = {
         building_type,
         building_roof,
+        structural_system,
         wind_design_mode,
         base_support,
         rafter_section_type,
         column_section_type,
+        gable_section_type,
+        gable_section,
+        truss_internal_support,
+        truss_centre_column_material,
     }
-    for live_control in controls.values():
+    for control_key, live_control in controls.items():
+        if control_key in foundation_control_keys:
+            continue
         if isinstance(live_control, ft.TextField):
             live_control.on_change = update_live_input
         elif isinstance(live_control, ft.Dropdown) and live_control not in conditional_dropdowns:
@@ -1637,6 +3729,147 @@ def main(page: ft.Page) -> None:
             )
         return ft.Row(alignment=ft.MainAxisAlignment.END, controls=buttons)
 
+    secondary_steel_card = card(
+        "Purlins and girts",
+        "Portal purlins follow the roof layout; truss purlins coincide with calculated vertical panel points. Sections come from the lipped-channel database.",
+        ft.ResponsiveRow(controls=[
+            purlin_section, purlin_spacing, girt_section, girt_spacing
+        ]),
+    )
+    portal_system_controls = ft.Column(
+        spacing=18,
+        controls=[
+            card(
+                "Portal member sections",
+                "Choose automatic mass-ordered sizing or force a database section for checking.",
+                ft.ResponsiveRow(controls=[
+                    rafter_section_type, rafter_section,
+                    column_section_type, column_section,
+                ]),
+            ),
+            card(
+                "Rafter haunches",
+                "Haunches are cut from the selected rafter. The tapered composite "
+                "stiffness is discretised internally; welds and connection detailing "
+                "remain separate design checks. For a like-for-like deflection "
+                "comparison, keep the rafter and column sections fixed; Automatic "
+                "sizing can exchange the added stiffness for lighter members.",
+                ft.Column(
+                    spacing=10,
+                    controls=[
+                        ft.ResponsiveRow(
+                            controls=[use_eaves_haunch, use_apex_haunch]
+                        ),
+                        eaves_haunch_fields,
+                        apex_haunch_fields,
+                        haunch_cut_guidance,
+                    ],
+                ),
+            ),
+            card(
+                "Portal support and bracing",
+                "Integer fields represent counts of modelled intervals or panels.",
+                ft.ResponsiveRow(controls=[
+                    base_support, spring_stiffness, col_bracing_spacing,
+                    column_bracing_type, rafter_bracing_spacing,
+                ]),
+            ),
+            card(
+                "Gable columns",
+                "Pinned columns are spaced evenly across the gable; the brace interval count controls their unbraced length.",
+                ft.ResponsiveRow(
+                    controls=[
+                        gable_column_count,
+                        gable_brace_intervals,
+                        gable_section_type,
+                        gable_section,
+                        gable_section_order,
+                    ]
+                ),
+            ),
+            card(
+                "Crawl beam loading",
+                "Add each crawl beam, its roof position and hoist data.",
+                ft.Column(spacing=12, controls=[
+                    ft.ResponsiveRow(controls=[use_crawl_beams, crawl_application]),
+                    ft.Row(controls=[add_crawl_beam_button]),
+                    crawl_editor,
+                ]),
+            ),
+        ],
+    )
+    truss_additional_loads_card = card(
+        "Additional permanent roof actions",
+        "Applied to portal-frame rafters or truss panel points as permanent load. Enter characteristic area loads; zero excludes an action.",
+        ft.ResponsiveRow(controls=[
+            truss_services_load, truss_ceiling_load, truss_solar_load,
+            truss_fire_load, truss_hvac_load,
+        ]),
+    )
+    truss_additional_loads_card.visible = True
+
+    truss_system_controls = ft.Column(
+        spacing=18,
+        visible=False,
+        controls=[
+            card(
+                "Truss form",
+                "Choose the web arrangement and chord geometry; the diagrams show the diagonal directions used by the model.",
+                ft.Column(controls=[
+                    ft.ResponsiveRow(controls=[
+                        truss_type, truss_chord_form, truss_internal_support,
+                        truss_member_section_order,
+                    ]),
+                    truss_type_reference,
+                ]),
+            ),
+            truss_centre_column_card,
+            card(
+                "Truss depth search",
+                "Every depth within the limits is designed; passing arrangements are ranked by total modelled mass.",
+                ft.Column(controls=[
+                    truss_depth_suggestion,
+                    ft.ResponsiveRow(controls=[
+                        truss_minimum_depth, truss_maximum_depth,
+                        truss_depth_increment, truss_solution_count,
+                    ]),
+                ]),
+            ),
+            truss_girder_card := card(
+                "Longitudinal girder search",
+                "Column positions and girder length are calculated from the selected number of building bays.",
+                ft.Column(controls=[
+                    girder_span_summary,
+                    girder_depth_suggestion,
+                    ft.ResponsiveRow(controls=[
+                        truss_girder_span_bays,
+                        truss_girder_minimum_depth,
+                        truss_girder_maximum_depth,
+                        truss_girder_depth_increment,
+                        truss_girder_deflection,
+                    ]),
+                ]),
+            ),
+            card(
+                "Chord restraint and serviceability",
+                "Restraint is assumed across the full building length at every selected Nth purlin; vertical truss deflection defaults to Span/180.",
+                ft.ResponsiveRow(controls=[
+                    truss_top_brace_panels, truss_bottom_brace_panels,
+                    truss_deflection_limit,
+                ]),
+            ),
+            ft.Container(
+                bgcolor=ERROR_BG,
+                border_radius=10,
+                padding=14,
+                content=ft.Text(
+                    "CALCULATION SCOPE: member forces, axial resistance, slenderness and vertical deflection are calculated. Gussets, bolts, welds, bearings and restraint-member capacity still require separate design and an independent project check.",
+                    color="#9C3C16", weight=ft.FontWeight.BOLD,
+                ),
+            ),
+        ],
+    )
+
     sections: list[ft.Control] = [
         ft.Column(
             spacing=18,
@@ -1653,9 +3886,10 @@ def main(page: ft.Page) -> None:
                 card(
                     "Building configuration",
                     "These are finite model choices, so they are controlled selections.",
-                    ft.ResponsiveRow(
-                        controls=[building_type_field, building_roof_field]
-                    ),
+                    ft.Column(controls=[
+                        ft.ResponsiveRow(controls=[structural_system]),
+                        ft.ResponsiveRow(controls=[building_type_field, building_roof_field]),
+                    ]),
                 ),
                 footer_buttons(None, 1),
             ],
@@ -1667,7 +3901,7 @@ def main(page: ft.Page) -> None:
                     "Geometry",
                     "Enter measured dimensions in metres; the analysis payload converts them to millimetres.",
                 ),
-                card(
+                portal_dimensions := card(
                     "Portal dimensions",
                     "Apex/high-side height must be greater than eaves height.",
                     ft.ResponsiveRow(
@@ -1694,6 +3928,14 @@ def main(page: ft.Page) -> None:
                         ]
                     ),
                 ),
+                truss_dimensions := card(
+                    "Truss building geometry",
+                    "Enter each transverse span length; their count and total establish the span arrangement and building width.",
+                    ft.ResponsiveRow(controls=[
+                        truss_bay_spans, truss_total_width, truss_building_length,
+                        truss_spacing, truss_eaves_height, truss_roof_pitch,
+                    ]),
+                ),
                 footer_buttons(0, 2),
             ],
         ),
@@ -1701,14 +3943,42 @@ def main(page: ft.Page) -> None:
             spacing=18,
             controls=[
                 section_heading(
-                    "Design basis & wind",
-                    "Select code-defined choices and enter site-specific numerical values.",
+                    "Design and Loading",
+                    "Select the design basis and enter the loading inputs shared by portal-frame and truss buildings.",
                 ),
                 card(
                     "Design basis",
                     "Selections map directly to implemented calculation branches.",
-                    ft.ResponsiveRow(
-                        controls=[wind_design_mode, roof_accessibility, load_standard, steel_grade]
+                    ft.Column(
+                        spacing=10,
+                        controls=[
+                            ft.ResponsiveRow(
+                                controls=[
+                                    wind_design_mode,
+                                    roof_accessibility,
+                                    load_standard,
+                                    steel_grade,
+                                ]
+                            ),
+                            use_permanent_deflection_baseline,
+                            ft.Text(
+                                "When enabled, vertical section sizing uses the "
+                                "variable-action displacement relative to the "
+                                "matching dead/permanent baseline. Roof fall is "
+                                "always checked under total SLS loading to reject "
+                                "contraflexure and ponding risk.",
+                                size=12,
+                                color=TEXT_MUTED,
+                            ),
+                            ignore_dead_live_vertical_limit,
+                            ft.Text(
+                                "When enabled, this combination is still analysed "
+                                "and reported, but its vertical deflection does not "
+                                "reject an automatically selected portal section.",
+                                size=12,
+                                color=TEXT_MUTED,
+                            ),
+                        ],
                     ),
                 ),
                 card(
@@ -1725,6 +3995,7 @@ def main(page: ft.Page) -> None:
                         ]
                     ),
                 ),
+                truss_additional_loads_card,
                 card(
                     "Wall openings",
                     "Used to resolve internal pressure for a normal building in Final design mode.",
@@ -1742,58 +4013,12 @@ def main(page: ft.Page) -> None:
             spacing=18,
             controls=[
                 section_heading(
-                    "Frame & secondary steel",
-                    "Configure restraints, bracing topology, gables, purlins, girts and crawl loading.",
+                    "Structural system design",
+                    "Configure the selected portal-frame or preliminary truss design workflow.",
                 ),
-                card(
-                    "Portal member sections",
-                    "Choose automatic mass-ordered sizing or force a database section for checking.",
-                    ft.ResponsiveRow(
-                        controls=[
-                            rafter_section_type,
-                            rafter_section,
-                            column_section_type,
-                            column_section,
-                        ]
-                    ),
-                ),
-                card(
-                    "Portal support and bracing",
-                    "Integer fields represent counts of modelled intervals or panels.",
-                    ft.ResponsiveRow(
-                        controls=[
-                            base_support,
-                            spring_stiffness,
-                            col_bracing_spacing,
-                            column_bracing_type,
-                            rafter_bracing_spacing,
-                        ]
-                    ),
-                ),
-                card(
-                    "Gable columns",
-                    "Gables are pinned; the brace interval count controls their unbraced length.",
-                    ft.ResponsiveRow(controls=[gable_column_count, gable_brace_intervals]),
-                ),
-                card(
-                    "Purlins and girts",
-                    "Sections are searchable dropdowns sourced from the Lipped Channels database.",
-                    ft.ResponsiveRow(
-                        controls=[purlin_section, purlin_spacing, girt_section, girt_spacing]
-                    ),
-                ),
-                card(
-                    "Crawl beam loading",
-                    "Add each crawl beam, its roof position and hoist data. The marker is shown on the live frame preview.",
-                    ft.Column(
-                        spacing=12,
-                        controls=[
-                            ft.ResponsiveRow(controls=[use_crawl_beams, crawl_application]),
-                            ft.Row(controls=[add_crawl_beam_button]),
-                            crawl_editor,
-                        ],
-                    ),
-                ),
+                secondary_steel_card,
+                portal_system_controls,
+                truss_system_controls,
                 footer_buttons(2, 4),
             ],
         ),
@@ -1838,6 +4063,7 @@ def main(page: ft.Page) -> None:
                                     view_report_button,
                                     open_analysis_button,
                                     download_markup_button,
+                                    open_connections_button,
                                 ],
                             ),
                             ft.Text(
@@ -1893,8 +4119,8 @@ def main(page: ft.Page) -> None:
                     ),
                 ),
                 card(
-                    "Portal frame",
-                    "The selected engineering quantity is labelled directly on a dedicated frame diagram.",
+                    "Structural model",
+                    "The selected engineering quantity is labelled directly on the portal-frame or truss diagram.",
                     ft.Column(
                         spacing=10,
                         controls=[
@@ -1920,6 +4146,148 @@ def main(page: ft.Page) -> None:
                             icon=ft.Icons.ARROW_BACK,
                             on_click=lambda _: go_to(4),
                         ),
+                    ],
+                ),
+            ],
+        ),
+        ft.Column(
+            spacing=18,
+            controls=[
+                section_heading(
+                    "Connection design",
+                    "Post-analysis steel connection calculations using the final "
+                    "frame sections and governing connection actions.",
+                ),
+                connection_status_card,
+                card(
+                    "Calculated connection checks",
+                    "The governing utilisation remains visible for each base plate "
+                    "and haunch connection, including failed checks.",
+                    connection_result_summary,
+                ),
+                connection_outputs_card,
+                card(
+                    "Interactive 3D connection model",
+                    "Inspect the calculated members, plates, bolts and flat "
+                    "stiffeners in the app. The model is display-only; all "
+                    "exported deliverables remain two-dimensional.",
+                    ft.Column(
+                        spacing=10,
+                        controls=[
+                            connection_view_status,
+                            connection_3d_viewer,
+                        ],
+                    ),
+                ),
+                ft.Container(
+                    bgcolor=WARNING_BG,
+                    border_radius=10,
+                    padding=14,
+                    content=ft.Text(
+                        "DETAIL CONFIRMATION REQUIRED: Red Book HD-bolt anchorage "
+                        "is estimated for 25 MPa concrete. Confirm the specified "
+                        "embedment, anchor plate, 7d concrete edge distance, "
+                        "pedestal geometry and reinforcement. All outputs require "
+                        "competent-engineer review.",
+                        color="#745B2B",
+                        weight=ft.FontWeight.BOLD,
+                    ),
+                ),
+                ft.Row(
+                    alignment=ft.MainAxisAlignment.END,
+                    wrap=True,
+                    controls=[
+                        ft.OutlinedButton(
+                            "Back to analysis",
+                            icon=ft.Icons.ARROW_BACK,
+                            on_click=lambda _: go_to(5),
+                        ),
+                        ft.FilledButton(
+                            "Continue to foundations",
+                            icon=ft.Icons.ARROW_FORWARD,
+                            on_click=lambda _: go_to(7),
+                        ),
+                    ],
+                ),
+            ],
+        ),
+        ft.Column(
+            spacing=18,
+            controls=[
+                section_heading(
+                    "Foundation design",
+                    "Automatically size identical isolated pads from the completed "
+                    "portal-frame support reactions.",
+                ),
+                foundation_status_card,
+                card(
+                    "Required soil inputs",
+                    "Enter the project-specific soil parameters. The program calculates "
+                    "pad length, width and height while reporting the selected sliding basis.",
+                    ft.Column(
+                        spacing=10,
+                        controls=[
+                            ft.ResponsiveRow(
+                                controls=[
+                                    foundation_bearing,
+                                    foundation_soil_weight,
+                                    foundation_soil_cover,
+                                    foundation_friction,
+                                    foundation_sliding,
+                                    foundation_soil_friction_angle,
+                                    foundation_passive_resistance,
+                                    foundation_passive_mobilisation,
+                                    foundation_uls_sliding_required_sf,
+                                ]
+                            ),
+                        ],
+                    ),
+                ),
+                card(
+                    "Automatic design assumptions",
+                    "Concrete, reinforcement and loaded-area assumptions remain fixed. "
+                    "When the pad must resist sliding, the calculation uses the entered "
+                    "base-friction and optional passive-pressure inputs. A selected "
+                    "external restraint is excluded from pad sizing and remains a design hold point.",
+                    ft.Text(
+                        "SANS 10100-1 | 25 MPa concrete | 500 MPa reinforcement | "
+                        "T16@150 bottom mesh | 75 mm cover | 400 Ã— 400 mm loaded area | "
+                        "ULS reactions are already factored | required sliding SF is user-entered | "
+                        "ULS overturning SF remains 1.5." if True else ""
+                        "ULS sliding and overturning safety factors â‰¥ 1.5.",
+                        size=12,
+                        color=TEXT_MUTED,
+                    ),
+                ),
+                card(
+                    "Foundation results",
+                    "The common pad passes service bearing/uplift, ULS sliding and "
+                    "overturning, flexure, one-way shear and punching shear.",
+                    foundation_result_summary,
+                ),
+                ft.Container(
+                    bgcolor=WARNING_BG,
+                    border_radius=10,
+                    padding=14,
+                    content=ft.Text(
+                        "HOLD POINTS: geotechnical bearing and settlement, anchors/base "
+                        "plate, pedestal and dowels, development length, exposure "
+                        "detailing, whole-building stability and adjacent-foundation interaction "
+                        "require separate project checks.",
+                        color="#745B2B",
+                        weight=ft.FontWeight.BOLD,
+                    ),
+                ),
+                ft.Row(
+                    alignment=ft.MainAxisAlignment.END,
+                    wrap=True,
+                    controls=[
+                        ft.OutlinedButton(
+                            "Back to connections",
+                            icon=ft.Icons.ARROW_BACK,
+                            on_click=lambda _: go_to(6),
+                        ),
+                        foundation_design_button,
                     ],
                 ),
             ],
@@ -2042,6 +4410,18 @@ def main(page: ft.Page) -> None:
         label="Analysis",
         disabled=True,
     )
+    connection_destination = ft.NavigationRailDestination(
+        icon=ft.Icon(ft.Icons.HARDWARE_OUTLINED, color="#506A67"),
+        selected_icon=ft.Icon(ft.Icons.HARDWARE, color=ACCENT_DARK),
+        label="Connections",
+        disabled=True,
+    )
+    foundation_destination = ft.NavigationRailDestination(
+        icon=ft.Icon(ft.Icons.FOUNDATION_OUTLINED, color="#506A67"),
+        selected_icon=ft.Icon(ft.Icons.FOUNDATION, color=ACCENT_DARK),
+        label="Foundations",
+        disabled=True,
+    )
 
     rail = ft.NavigationRail(
         extended=True,
@@ -2092,7 +4472,7 @@ def main(page: ft.Page) -> None:
             ft.NavigationRailDestination(
                 icon=ft.Icon(ft.Icons.AIR_OUTLINED, color="#506A67"),
                 selected_icon=ft.Icon(ft.Icons.AIR, color=ACCENT_DARK),
-                label="Design & wind",
+                label="Design & loading",
             ),
             ft.NavigationRailDestination(
                 icon=ft.Icon(ft.Icons.ACCOUNT_TREE_OUTLINED, color="#506A67"),
@@ -2105,6 +4485,8 @@ def main(page: ft.Page) -> None:
                 label="Review",
             ),
             analysis_destination,
+            connection_destination,
+            foundation_destination,
         ],
     )
 
@@ -2119,8 +4501,8 @@ def main(page: ft.Page) -> None:
         current_index = index
         rail.selected_index = index
         content_host.controls = [sections[index]]
-        visual_builder.visible = index != 5
-        running_summary_panel.visible = index != 5
+        visual_builder.visible = index not in (5, 6, 7)
+        running_summary_panel.visible = index not in (5, 6, 7)
         page.update()
         page.run_task(content_host.scroll_to, offset=0, duration=0)
 
@@ -2139,7 +4521,7 @@ def main(page: ft.Page) -> None:
                     spacing=1,
                     controls=[
                         ft.Text(
-                            "Portal frame design",
+                            "Portal frame and truss design",
                             size=18,
                             weight=ft.FontWeight.BOLD,
                             color=TEXT_PRIMARY,
@@ -2149,6 +4531,16 @@ def main(page: ft.Page) -> None:
                 ),
                 ft.Row(
                     controls=[
+                        ft.OutlinedButton(
+                            "Load inputs",
+                            icon=ft.Icons.UPLOAD_FILE,
+                            on_click=load_inputs,
+                        ),
+                        ft.OutlinedButton(
+                            "Save inputs",
+                            icon=ft.Icons.SAVE_OUTLINED,
+                            on_click=save_inputs,
+                        ),
                         api_status,
                         ft.OutlinedButton(
                             "Check API", icon=ft.Icons.SYNC, on_click=check_api
@@ -2193,7 +4585,3 @@ def main(page: ft.Page) -> None:
     update_conditionals()
     update_pitch()
     refresh_workspace()
-
-
-if __name__ == "__main__":
-    ft.run(main)

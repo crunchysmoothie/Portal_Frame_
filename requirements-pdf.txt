@@ -1,3 +1,3 @@
-# PDF calculation-sheet export (ReportLab 5.0.0 corrupts the current math tables)
+# Legacy PDF extras; ReportLab is also required by the main 2D connection export
 reportlab==4.4.9
 matplotlib==3.10.8

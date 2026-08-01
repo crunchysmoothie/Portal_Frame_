@@ -671,7 +671,3 @@ def wind_out(input_path="input_data.json"):
         elif data['building_roof'] == 'Mono Pitched':
             return wind_data_mono_c(input_path)
 
-if __name__ == "__main__":
-    wind_out()
-    # print_zones(zones_normal())
-

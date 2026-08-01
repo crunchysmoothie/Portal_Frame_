@@ -8,7 +8,6 @@ building a PyNite model or searching sections again.
 
 from __future__ import annotations
 
-import argparse
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from enum import Enum
@@ -22,6 +21,8 @@ from typing import Any, Iterable, Mapping, Sequence
 import member_database as mdb
 from analysis_visualisation import build_analysis_visualisation
 from analysis_snapshot import load_analysis_snapshot, validate_snapshot_input
+from haunch_geometry import maximum_haunch_cut_depth_mm
+from serviceability_deflection import serviceability_deflection_rows
 from strength_checks import (
     element_property_details,
     member_class_details,
@@ -590,7 +591,11 @@ def collect_member_calculations(
                 if actions["type"] == "rafter"
                 else column_section_type
             )
-            properties = mdb.member_properties(section_type, actions["section"], member_db)
+            properties = actions.get("section_properties")
+            if properties is None:
+                properties = mdb.member_properties(
+                    section_type, actions["section"], member_db
+                )
             result = calculate_member_design(properties, actions, material, name)
             if not math.isfinite(result.governing_ratio):
                 raise ValueError(
@@ -647,6 +652,50 @@ def collect_deflections(
     return results
 
 
+def governing_serviceability_deflections(
+    deflections: list[dict[str, Any]],
+    frame_data: Mapping[str, Any],
+) -> tuple[
+    dict[str, Any] | None,
+    dict[str, Any] | None,
+    list[dict[str, Any]],
+]:
+    """Select governing checked deflections and retain ignored vertical rows."""
+
+    governing_dx = max(
+        deflections,
+        key=lambda item: abs(float(item["max_dx"])),
+        default=None,
+    )
+    ignore_dead_live_vertical = (
+        str(
+            frame_data.get(
+                "ignore_1_1_dl_1_0_ll_vertical_deflection_limit", "No"
+            )
+        ).lower()
+        == "yes"
+    )
+    ignored_names = (
+        {"1.1 DL + 1.0 LL"} if ignore_dead_live_vertical else set()
+    )
+    ignored_vertical = [
+        dict(item)
+        for item in deflections
+        if item["load_combination"] in ignored_names
+    ]
+    checked_vertical = [
+        item
+        for item in deflections
+        if item["load_combination"] not in ignored_names
+    ]
+    governing_dy = max(
+        checked_vertical,
+        key=lambda item: abs(float(item["max_dy"])),
+        default=None,
+    )
+    return governing_dx, governing_dy, ignored_vertical
+
+
 def build_frame_summary(data, member_db, rafter_section_type, column_section_type,
                         rafter_section, column_section, member_results,
                         reactions, deflections, bracing_design=None):
@@ -659,7 +708,14 @@ def build_frame_summary(data, member_db, rafter_section_type, column_section_typ
     column_members = [member for member in data.members if member.type == "column"]
     rafter_length = sum(float(member.length) for member in rafter_members)
     column_length = sum(float(member.length) for member in column_members)
-    steel_mass = rafter_length * float(rafter["m"]) + column_length * float(column["m"])
+    from haunch_design import haunch_extra_mass_kg
+
+    haunch_mass = haunch_extra_mass_kg(rafter, frame_data)
+    steel_mass = (
+        rafter_length * float(rafter["m"])
+        + column_length * float(column["m"])
+        + haunch_mass
+    )
     mass_breakdown = _build_steel_mass_breakdown(
         data, member_db, steel_mass, dict(bracing_design or {})
     )
@@ -668,10 +724,16 @@ def build_frame_summary(data, member_db, rafter_section_type, column_section_typ
         member_results,
         key=lambda item: item.governing_ratio if math.isfinite(item.governing_ratio) else math.inf,
     )
-    governing_dx = max(deflections, key=lambda item: abs(item["max_dx"]), default=None)
-    governing_dy = max(deflections, key=lambda item: abs(item["max_dy"]), default=None)
+    governing_dx, governing_dy, ignored_vertical = (
+        governing_serviceability_deflections(deflections, frame_data)
+    )
     governing_fx = max(reactions, key=lambda item: abs(item.fx), default=None)
     governing_fy = max(reactions, key=lambda item: abs(item.fy), default=None)
+    roof_drainage_failures = [
+        item
+        for item in deflections
+        if item.get("roof_drainage", {}).get("status") != "PASS"
+    ]
 
     return {
         "node_count": len(data.nodes),
@@ -680,6 +742,7 @@ def build_frame_summary(data, member_db, rafter_section_type, column_section_typ
         "rafter_count": len(rafter_members),
         "column_length_m": column_length,
         "rafter_length_m": rafter_length,
+        "haunch_mass_per_frame_kg": haunch_mass,
         "estimated_frame_steel_mass_kg": steel_mass,
         "steel_mass_breakdown": mass_breakdown,
         "roof_pitch_deg": float(frame_data.get("roof_pitch", 0.0)),
@@ -701,6 +764,66 @@ def build_frame_summary(data, member_db, rafter_section_type, column_section_typ
         "vertical_deflection_ratio": governing_dy.get("vertical_ratio") if governing_dy else None,
         "vertical_deflection_node": governing_dy["dy_node"] if governing_dy else "",
         "vertical_deflection_combination": governing_dy["load_combination"] if governing_dy else "",
+        "vertical_deflection_basis": (
+            governing_dy.get("vertical_deflection_basis", "")
+            if governing_dy
+            else ""
+        ),
+        "permanent_baseline_deflection_mm": (
+            abs(float(governing_dy.get(
+                "permanent_dy_at_checked_node",
+                governing_dy.get("permanent_dy_at_variable_node", 0.0),
+            )))
+            if governing_dy
+            else 0.0
+        ),
+        "total_vertical_deflection_mm": (
+            abs(float(governing_dy.get(
+                "total_dy_at_checked_node",
+                governing_dy.get("total_dy_at_variable_node", 0.0),
+            )))
+            if governing_dy
+            else 0.0
+        ),
+        "signed_permanent_baseline_deflection_mm": (
+            governing_dy.get(
+                "permanent_dy_at_checked_node",
+                governing_dy.get("permanent_dy_at_variable_node", 0.0),
+            )
+            if governing_dy
+            else 0.0
+        ),
+        "signed_total_vertical_deflection_mm": (
+            governing_dy.get(
+                "total_dy_at_checked_node",
+                governing_dy.get("total_dy_at_variable_node", 0.0),
+            )
+            if governing_dy
+            else 0.0
+        ),
+        "signed_variable_vertical_deflection_mm": (
+            governing_dy.get(
+                "variable_dy_at_checked_node",
+                governing_dy.get("variable_dy_at_variable_node", 0.0),
+            )
+            if governing_dy
+            else 0.0
+        ),
+        "uses_permanent_deflection_baseline": (
+            bool(
+                governing_dy.get(
+                    "uses_permanent_deflection_baseline",
+                    True,
+                )
+            )
+            if governing_dy
+            else True
+        ),
+        "roof_drainage_status": (
+            "FAIL" if roof_drainage_failures else "PASS"
+        ),
+        "roof_drainage_failures": roof_drainage_failures,
+        "ignored_vertical_deflections": ignored_vertical,
         "max_abs_horizontal_reaction_kN": abs(governing_fx.fx) if governing_fx else 0.0,
         "horizontal_reaction_node": governing_fx.node if governing_fx else "",
         "horizontal_reaction_combination": governing_fx.load_combination if governing_fx else "",
@@ -878,22 +1001,45 @@ def build_calculation_sheet_data_from_frame(
         column_section_type,
         data.steel_grade[0],
     )
-    combo_names = [item["name"] for item in data.load_combinations]
+    combo_names = list(dict.fromkeys(
+        item["name"]
+        for item in (
+            list(data.load_combinations)
+            + list(data.serviceability_load_combinations)
+        )
+    ))
     reactions = collect_reactions(frame, combo_names, data.supports.keys())
     frame_data = dict(data.frame_data[0])
     wind_data = dict(data.wind_data[0]) if data.wind_data else {}
     internal_pressure = dict(wind_data.get("internal_pressure", {}))
     cpi_directions = internal_pressure.get("directions", {})
-    deflections = collect_deflections(
-        frame,
-        data.serviceability_load_combinations,
-        horizontal_reference_mm=frame_data.get("eaves_height", 0.0),
-        vertical_reference_mm=frame_data.get("gable_width", 0.0),
-    )
+    deflections = serviceability_deflection_rows(frame, data)
+    for item in deflections:
+        item["horizontal_ratio"] = _deflection_ratio(
+            frame_data.get("eaves_height", 0.0), item["max_dx"]
+        )
+        item["vertical_ratio"] = _deflection_ratio(
+            frame_data.get("gable_width", 0.0), item["max_dy"]
+        )
     frame_summary = build_frame_summary(
         data, member_db, rafter_section_type, column_section_type,
         rafter_section, column_section, all_members, reactions, deflections,
         bracing_design,
+    )
+    additional_permanent_roof_loads = {
+        key: float(frame_data.get(key, 0.0) or 0.0)
+        for key in (
+            "services_load_kpa",
+            "ceiling_load_kpa",
+            "solar_load_kpa",
+            "fire_load_kpa",
+            "hvac_load_kpa",
+        )
+    }
+    selected_rafter_properties = mdb.member_properties(
+        rafter_section_type,
+        rafter_section,
+        member_db,
     )
     project = {
         "generated": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -902,6 +1048,23 @@ def build_calculation_sheet_data_from_frame(
         "roof_type": frame_data.get("building_roof", ""),
         "roof_accessibility": frame_data.get("roof_accessibility", ""),
         "load_combination_standard": frame_data.get("load_combination_standard", ""),
+        "use_permanent_deflection_baseline": (
+            str(
+                frame_data.get(
+                    "use_permanent_deflection_baseline",
+                    "Yes",
+                )
+            ).lower()
+            == "yes"
+        ),
+        "ignore_1_1_dl_1_0_ll_vertical_deflection_limit": (
+            str(
+                frame_data.get(
+                    "ignore_1_1_dl_1_0_ll_vertical_deflection_limit", "No"
+                )
+            ).lower()
+            == "yes"
+        ),
         "wind_design_mode": internal_pressure.get(
             "mode", frame_data.get("wind_design_mode", "Prelim")
         ),
@@ -921,7 +1084,27 @@ def build_calculation_sheet_data_from_frame(
         "rafter_spacing_mm": frame_data.get("rafter_spacing", 0),
         "building_length_mm": frame_data.get("building_length", 0),
         "roof_pitch_deg": frame_data.get("roof_pitch", 0),
+        "additional_permanent_roof_loads_kpa": additional_permanent_roof_loads,
+        "additional_permanent_roof_load_total_kpa": sum(
+            additional_permanent_roof_loads.values()
+        ),
+        "minimum_additional_permanent_roof_load_total_kpa": sum(
+            additional_permanent_roof_loads[key]
+            for key in (
+                "ceiling_load_kpa",
+                "fire_load_kpa",
+                "hvac_load_kpa",
+            )
+        ),
         "rafter_section": rafter_section,
+        "rafter_section_depth_mm": selected_rafter_properties["h"],
+        "rafter_flange_width_mm": selected_rafter_properties["b"],
+        "rafter_clear_web_depth_mm": selected_rafter_properties["hw"],
+        "rafter_flange_thickness_mm": selected_rafter_properties["tf"],
+        "rafter_flange_thickness_mm": selected_rafter_properties["tf"],
+        "maximum_haunch_cut_depth_mm": maximum_haunch_cut_depth_mm(
+            selected_rafter_properties
+        ),
         "column_section": column_section,
         "column_bracing_type": frame_data.get("column_bracing_type", "X"),
         "purlin_section": frame_data.get("purlin_section", ""),
@@ -932,6 +1115,18 @@ def build_calculation_sheet_data_from_frame(
         "actual_purlin_spacing_mm": frame_data.get("actual_purlin_spacing_mm", 0),
         "girt_section": frame_data.get("girt_section", ""),
         "girt_max_spacing_mm": frame_data.get("girt_max_spacing_mm", 0),
+        "use_eaves_haunch": frame_data.get("use_eaves_haunch", "No"),
+        "eaves_haunch_length_mm": frame_data.get("eaves_haunch_length", 0),
+        "eaves_haunch_depth_mode": frame_data.get(
+            "eaves_haunch_depth_mode", "Specified Depth"
+        ),
+        "eaves_haunch_depth_mm": frame_data.get("eaves_haunch_depth", 0),
+        "use_apex_haunch": frame_data.get("use_apex_haunch", "No"),
+        "apex_haunch_length_mm": frame_data.get("apex_haunch_length", 0),
+        "apex_haunch_depth_mode": frame_data.get(
+            "apex_haunch_depth_mode", "Specified Depth"
+        ),
+        "apex_haunch_depth_mm": frame_data.get("apex_haunch_depth", 0),
     }
     if project_metadata:
         project.update(
@@ -945,6 +1140,8 @@ def build_calculation_sheet_data_from_frame(
         "Two-dimensional transverse portal-frame analysis.",
         "Member self-weight is applied in load case D.",
         "Roof permanent actions are represented by D_MIN and D_MAX.",
+        "Every total-load serviceability roof profile is checked so each generated rafter segment retains its original drainage direction. A reversed or zero fall is rejected as a ponding risk.",
+        "Project-specific services, ceiling, solar, fire-services and HVAC area loads are added to D_MAX; D_MIN excludes services and solar.",
         "Utilisation ratios are calculated using the existing strength_checks.py design model.",
         "SANS 10162-1:2011, including Amendment No. 1, is used for the reported steel resistance equations.",
         "The current in-plane effective-length factors are Kx = 1.2 for columns and Kx = 1.0 for rafters; Ky = 1.0 between modeled brace points.",
@@ -953,6 +1150,32 @@ def build_calculation_sheet_data_from_frame(
         "For tension-bending, both clause 13.9 checks are retained. The additive Tu/Tr term prevents axial tension from reducing the governing utilisation.",
         "Results must be independently reviewed by the responsible competent engineer.",
     ]
+    if project["use_permanent_deflection_baseline"]:
+        assumptions.extend([
+            "Vertical serviceability acceptance uses the algebraic incremental displacement from variable actions after subtracting the matching permanent-action baseline at each node.",
+            "The permanent baseline uses the same D, D_MIN and D_CRAWL factors as each serviceability combination; total deflection remains reported.",
+        ])
+    else:
+        assumptions.append(
+            "Vertical serviceability acceptance uses total SLS displacement; permanent and variable components remain reported separately."
+        )
+    if (
+        str(frame_data.get("use_eaves_haunch", "No")).lower() == "yes"
+        or str(frame_data.get("use_apex_haunch", "No")).lower() == "yes"
+    ):
+        assumptions.extend([
+            "Rafter haunches are modelled as cut from the selected rafter and welded below it.",
+            "The entered haunch cut cannot exceed the selected donor usable depth hw + tf: clear web plus the retained bottom-flange thickness.",
+            "Each tapered haunch zone uses eight constant-property PyNite sub-elements with composite properties sampled at each sub-element midpoint.",
+            "The inclined haunch flange is numerically tapered over its final flange thickness so area and Ixx converge to the parent rafter at the toe.",
+            "Haunch sub-elements retain the parent rafter brace-panel stability length; numerical subdivision is not treated as lateral restraint.",
+        ])
+    if project["ignore_1_1_dl_1_0_ll_vertical_deflection_limit"]:
+        assumptions.append(
+            "The 1.1 DL + 1.0 LL combination is analysed and reported, but "
+            "its vertical span/deflection result is excluded from automatic "
+            "portal-section acceptance."
+        )
     if internal_pressure.get("uniform_opening_distribution_assumed"):
         assumptions.append(
             "Wall openings are assumed uniformly distributed over each entered face when determining representative external pressure."
@@ -977,6 +1200,27 @@ def build_calculation_sheet_data_from_frame(
         bracing_design=dict(bracing_design or {}),
         warnings=[
             "Tension-member net-section fracture and connection resistance are outside the current input model.",
+            *(
+                [
+                    "Haunch welds, end plates, bolts, local web/flange checks and tapered-member connection detailing require separate design."
+                ]
+                if (
+                    str(frame_data.get("use_eaves_haunch", "No")).lower() == "yes"
+                    or str(frame_data.get("use_apex_haunch", "No")).lower() == "yes"
+                )
+                else []
+            ),
+            *(
+                [
+                    "The vertical deflection limit for 1.1 DL + 1.0 LL was "
+                    "ignored for automatic section selection; its calculated "
+                    "deflection remains in the results."
+                ]
+                if project[
+                    "ignore_1_1_dl_1_0_ll_vertical_deflection_limit"
+                ]
+                else []
+            ),
         ],
         visualisation=visualisation,
     )
@@ -1050,6 +1294,14 @@ def _deflection_display(value, ratio, reference_label):
         else ""
     )
     return f"{_fmt(value)} mm{suffix}"
+
+
+def _checked_vertical_label(summary: Mapping[str, Any]) -> str:
+    return (
+        "Variable-action vertical deflection"
+        if summary.get("uses_permanent_deflection_baseline", True)
+        else "Total vertical deflection"
+    )
 
 
 def _html_units(units):
@@ -1387,6 +1639,7 @@ def _bracing_html(bracing, project=None):
         _fmt(item["tributary_width_mm"], 0), _fmt(item["top_shear_kn"]),
         _fmt(item["major_moment_knm"]), _fmt(item["mcr_knm"]),
         _fmt(item["bending_resistance_knm"]), _fmt(item["utilisation"]),
+        "PASS" if float(item.get("utilisation", 0)) <= 1 else "FAIL",
     ) for item in columns]
     gable_calculation_rows = []
     wind_factor = float(bracing.get("wind_uls_factor", 0))
@@ -1480,7 +1733,7 @@ def _bracing_html(bracing, project=None):
     <b>total top shear:</b> {_fmt(bracing.get('total_gable_top_shear_kn', 0))} kN.</p>
     {_html_table(("Case", "Wall zone", "cpi", "|Pressure| (kPa)"), pressure_rows)}
     <h3>Gable-end elevation</h3><svg class="layout" viewBox="0 0 700 300" role="img" aria-label="Gable column layout">{''.join(gable_lines)}</svg>
-    {_html_table(("Column", "Roof node", "Section", "Tributary width (mm)", "Top shear (kN)", "M (kNm)", "Mcr (kNm)", "Mr (kNm)", "Util."), column_rows)}
+    {_html_table(("Column", "Roof node", "Section", "Tributary width (mm)", "Top shear (kN)", "M (kNm)", "Mcr (kNm)", "Mr (kNm)", "Util.", "Status"), column_rows)}
     <h3>Gable-column design calculations</h3>
     {_html_table(("Column", "Ref.", "Calculation", "Equation", "Substitution", "Result"), gable_calculation_rows, "details")}
     <h3>Roof-bracing plan - first braced bay</h3><svg class="layout" viewBox="0 0 700 220" role="img" aria-label="Roof X bracing layout">{''.join(plan_lines)}</svg>
@@ -1512,6 +1765,15 @@ def write_html_report(data, output_path):
         ("Steel", escape(str(data.project["steel_grade"]))),
         ("Sections", f"Rafter {escape(str(data.project['rafter_section']))}; column {escape(str(data.project['column_section']))}"),
         ("Roof accessibility", escape(str(data.project["roof_accessibility"]))),
+        (
+            "Additional permanent roof loads",
+            escape(
+                f"{data.project.get('additional_permanent_roof_loads_kpa', {})}; "
+                f"D_MAX addition {_fmt(data.project.get('additional_permanent_roof_load_total_kpa', 0))} kPa; "
+                f"D_MIN addition {_fmt(data.project.get('minimum_additional_permanent_roof_load_total_kpa', 0))} kPa "
+                "(services and solar excluded)"
+            ),
+        ),
         ("Combinations", escape(str(data.project["load_combination_standard"]))),
         ("Wind design mode", escape(str(data.project.get("wind_design_mode", "Prelim")))),
         ("Wall openings", escape(str(data.project.get("wall_openings_m2", "Not required")))),
@@ -1557,8 +1819,11 @@ def write_html_report(data, output_path):
          f"[{escape(summary['overall_status'])}]"),
         ("Maximum horizontal deflection", f"{_deflection_display(summary['max_horizontal_deflection_mm'], summary.get('horizontal_deflection_ratio'), 'Eaves')} at "
          f"{escape(summary['horizontal_deflection_node'])} - {escape(summary['horizontal_deflection_combination'])}"),
-        ("Maximum vertical deflection", f"{_deflection_display(summary['max_vertical_deflection_mm'], summary.get('vertical_deflection_ratio'), 'Span')} at "
-         f"{escape(summary['vertical_deflection_node'])} - {escape(summary['vertical_deflection_combination'])}"),
+        (f"Maximum {_checked_vertical_label(summary).lower()}", f"{_deflection_display(summary['max_vertical_deflection_mm'], summary.get('vertical_deflection_ratio'), 'Span')} at "
+         f"{escape(summary['vertical_deflection_node'])} - {escape(summary['vertical_deflection_combination'])}; "
+         f"matching permanent baseline {_fmt(summary.get('permanent_baseline_deflection_mm', 0))} mm; "
+         f"total {_fmt(summary.get('total_vertical_deflection_mm', 0))} mm"),
+        ("Roof drainage / ponding safeguard", escape(str(summary.get("roof_drainage_status", "PASS")))),
         ("Maximum absolute horizontal reaction", f"{_fmt(summary['max_abs_horizontal_reaction_kN'])} kN at "
          f"{escape(summary['horizontal_reaction_node'])} - {escape(summary['horizontal_reaction_combination'])}"),
         ("Maximum absolute vertical reaction", f"{_fmt(summary['max_abs_vertical_reaction_kN'])} kN at "
@@ -1575,6 +1840,9 @@ def write_html_report(data, output_path):
             escape(item["dx_node"]),
             _deflection_display(item["max_dy"], item.get("vertical_ratio"), "Span"),
             escape(item["dy_node"]),
+            _fmt(item.get("permanent_max_dy", 0)),
+            _fmt(item.get("total_max_dy", 0)),
+            escape(str(item.get("roof_drainage", {}).get("status", ""))),
         )
         for item in data.deflections
     ]
@@ -1733,7 +2001,7 @@ footer {{ margin-top:28px; border-top:1px solid var(--line); padding-top:8px; co
 <h2>4. Ultimate load combinations</h2>
 {_html_table(("Combination", "Factors"), combination_rows)}
 <h2>5. Serviceability results</h2>
-{_html_table(("Combination", "Max dx (mm)", "Node", "Max dy (mm)", "Node"), deflection_rows)}
+{_html_table(("Combination", "Max dx (mm)", "Node", f"{_checked_vertical_label(summary)} (mm)", "Node", "Permanent baseline dy (mm)", "Total dy (mm)", "Roof drainage"), deflection_rows)}
 <h2>6. Support reactions</h2>
 <p class="subtitle">Forces in kN; moments in kNm. Critical scope retains combinations governing at least one component.</p>
 {_html_table(("Node", "Combination", "Fx", "Fy", "Fz", "Mx", "My", "Mz"), reaction_rows)}
@@ -1913,8 +2181,11 @@ def write_pdf_from_json(json_path, output_path):
          f"{frame_summary['governing_check']} = {_fmt(frame_summary['governing_utilisation'])} [{frame_summary['overall_status']}]"],
         ["Maximum horizontal deflection", f"{_deflection_display(frame_summary['max_horizontal_deflection_mm'], frame_summary.get('horizontal_deflection_ratio'), 'Eaves')} at "
          f"{frame_summary['horizontal_deflection_node']} - {frame_summary['horizontal_deflection_combination']}"],
-        ["Maximum vertical deflection", f"{_deflection_display(frame_summary['max_vertical_deflection_mm'], frame_summary.get('vertical_deflection_ratio'), 'Span')} at "
-         f"{frame_summary['vertical_deflection_node']} - {frame_summary['vertical_deflection_combination']}"],
+        [f"Maximum {_checked_vertical_label(frame_summary).lower()}", f"{_deflection_display(frame_summary['max_vertical_deflection_mm'], frame_summary.get('vertical_deflection_ratio'), 'Span')} at "
+         f"{frame_summary['vertical_deflection_node']} - {frame_summary['vertical_deflection_combination']}; "
+         f"permanent baseline {_fmt(frame_summary.get('permanent_baseline_deflection_mm', 0))} mm; "
+         f"total {_fmt(frame_summary.get('total_vertical_deflection_mm', 0))} mm"],
+        ["Roof drainage / ponding safeguard", str(frame_summary.get("roof_drainage_status", "PASS"))],
         ["Maximum absolute horizontal reaction", f"{_fmt(frame_summary['max_abs_horizontal_reaction_kN'])} kN at "
          f"{frame_summary['horizontal_reaction_node']} - {frame_summary['horizontal_reaction_combination']}"],
         ["Maximum absolute vertical reaction", f"{_fmt(frame_summary['max_abs_vertical_reaction_kN'])} kN at "
@@ -1934,19 +2205,25 @@ def write_pdf_from_json(json_path, output_path):
     combo_table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#174f78")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),0.3,colors.HexColor("#cbd2d9")),("FONTSIZE",(0,0),(-1,-1),7)]))
     story += [Paragraph("4. Ultimate load combinations", styles["CalcH2"]), combo_table]
 
-    deflection_rows = [["Combination", "Max dx", "Node", "Max dy", "Node"]] + [
+    deflection_rows = [[
+        "Combination", "Max dx",
+        _checked_vertical_label(frame_summary),
+        "Permanent dy", "Total dy",
+        "Drainage",
+    ]] + [
         [
             row["load_combination"],
             _deflection_display(row["max_dx"], row.get("horizontal_ratio"), "Eaves"),
-            row["dx_node"],
             _deflection_display(row["max_dy"], row.get("vertical_ratio"), "Span"),
-            row["dy_node"],
+            _fmt(row.get("permanent_max_dy", 0)),
+            _fmt(row.get("total_max_dy", 0)),
+            str(row.get("roof_drainage", {}).get("status", "")),
         ]
         for row in source["deflections"]
     ]
     deflection_table = Table(
         deflection_rows,
-        colWidths=[92*mm, 22*mm, 16*mm, 22*mm, 16*mm],
+        colWidths=[70*mm, 22*mm, 22*mm, 20*mm, 18*mm, 18*mm],
         repeatRows=1,
     )
     deflection_table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#174f78")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),0.3,colors.HexColor("#cbd2d9")),("FONTSIZE",(0,0),(-1,-1),6.5)]))
@@ -2131,12 +2408,13 @@ def write_pdf_from_json(json_path, output_path):
             drawing.add(String(x+3.5*mm,(7*mm+gy(item["height_mm"]))/2,f"{result.get('section','')}",fontSize=5.5,angle=90))
         story += [drawing]
 
-        column_rows = [["Column","Node","Section","Trib. mm","V kN","M kNm","Mcr","Mr","Util."]] + [[
+        column_rows = [["Column","Node","Section","Trib. mm","V kN","M kNm","Mcr","Mr","Util.","Status"]] + [[
             item["name"],item["roof_node"],item["section"],_fmt(item["tributary_width_mm"],0),
             _fmt(item["top_shear_kn"]),_fmt(item["major_moment_knm"]),_fmt(item["mcr_knm"]),
             _fmt(item["bending_resistance_knm"]),_fmt(item["utilisation"]),
+            "PASS" if float(item.get("utilisation", 0)) <= 1 else "FAIL",
         ] for item in bracing.get("gable_columns", [])]
-        column_table = Table(column_rows, colWidths=[15*mm,15*mm,25*mm,20*mm,18*mm,18*mm,18*mm,18*mm,15*mm], repeatRows=1)
+        column_table = Table(column_rows, colWidths=[14*mm,14*mm,23*mm,18*mm,16*mm,16*mm,16*mm,16*mm,14*mm,15*mm], repeatRows=1)
         column_table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#174f78")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),0.3,colors.HexColor("#cbd2d9")),("FONTSIZE",(0,0),(-1,-1),6.2)]))
         story += [column_table, Paragraph("Gable-column design calculations", styles["CalcH4"])]
         gable_calc_rows = [["Column","Ref.","Calculation","Equation","Substitution","Result"]]
@@ -2272,59 +2550,3 @@ def write_pdf_from_json(json_path, output_path):
     doc.build(story)
     return output_path
 
-
-def _parse_args():
-    parser = argparse.ArgumentParser(
-        description="Generate portal-frame reports from stored analysis results."
-    )
-    parser.add_argument(
-        "--results",
-        default="output/analysis/analysis_results.json",
-        help="Completed analysis snapshot written by portal_frame_analysis.py.",
-    )
-    parser.add_argument("--scope", choices=[item.value for item in ReportScope], default=ReportScope.CRITICAL.value)
-    parser.add_argument("--load-combination")
-    parser.add_argument("--output-dir", default="output/calculations")
-    parser.add_argument(
-        "--allow-stale-results",
-        action="store_true",
-        help="Allow a report when the current input differs from the stored analysis.",
-    )
-    parser.add_argument("--render-json", help="Render an existing calculation JSON file to PDF.")
-    parser.add_argument("--pdf-output", default="output/pdf/portal_frame_calculation_sheet.pdf")
-    parser.add_argument(
-        "--no-pdf",
-        action="store_true",
-        help="Generate only the HTML and JSON reports.",
-    )
-    return parser.parse_args()
-
-
-def main():
-    args = _parse_args()
-    if args.render_json:
-        path = write_pdf_from_json(args.render_json, args.pdf_output)
-        print(f"PDF calculation sheet written to {path.resolve()}")
-        return
-
-    scope = ReportScope(args.scope)
-    if scope is ReportScope.LOAD_COMBINATION and not args.load_combination:
-        raise SystemExit("--load-combination is required when --scope load_combination is used.")
-    data = load_calculation_sheet_data(
-        snapshot_path=args.results,
-        scope=scope,
-        load_combination=args.load_combination,
-        allow_stale=args.allow_stale_results,
-    )
-    output_dir = Path(args.output_dir)
-    html_path = write_html_report(data, output_dir / "portal_frame_calculation_sheet.html")
-    json_path = write_json_data(data, output_dir / "portal_frame_calculation_sheet.json")
-    print(f"HTML calculation sheet written to {html_path.resolve()}")
-    print(f"Calculation data written to {json_path.resolve()}")
-    if not args.no_pdf:
-        pdf_path = write_pdf_from_json(json_path, args.pdf_output)
-        print(f"PDF calculation sheet written to {pdf_path.resolve()}")
-
-
-if __name__ == "__main__":
-    main()

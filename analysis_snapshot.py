@@ -18,6 +18,8 @@ SNAPSHOT_SCHEMA_VERSION = 1
 DEFAULT_SNAPSHOT_PATH = Path("output/analysis/analysis_results.json")
 ENGINE_SOURCE_FILES = (
     "portal_frame_analysis.py",
+    "haunch_design.py",
+    "haunch_geometry.py",
     "bracing_design.py",
     "internal_pressure.py",
     "strength_checks.py",
@@ -128,7 +130,7 @@ def validate_snapshot_input(
         return "stale-allowed"
     raise StaleAnalysisError(
         "The current input file differs from the stored analysis. "
-        f"Re-run run_full_analysis.py before generating the report. "
+        f"Re-run the analysis from the PortalFrame UI before generating the report. "
         f"Analysed SHA-256: {analysis['input_sha256']}; "
         f"current SHA-256: {current_hash}."
     )

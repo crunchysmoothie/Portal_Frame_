@@ -1,14 +1,14 @@
-# PortalFrame API
+# Portal Frame and Truss API
 
-The API is the boundary between the Flet UI and the existing PortalFrame
-calculation/reporting code.
+The API is the boundary between the Flet UI, the existing PortalFrame engine,
+and the generic preliminary truss engine.
 
 ## Install
 
 From the repository root:
 
 ```powershell
-.\.venv314\Scripts\python.exe -m pip install -r requirements-api.txt
+.\.venv314\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
 ## Run locally
@@ -25,7 +25,7 @@ The available endpoints are:
 
 - `GET /api/health` — liveness check.
 - `GET /api/project` — exposed capability information.
-- `POST /api/preview` - analysis-independent frame, purlin, girt and bracing geometry.
+- `POST /api/preview` - system-specific analysis-independent geometry.
 - `POST /api/analysis` - validate the request and queue a structural analysis job.
 - `GET /api/analysis/{analysis_id}/status` - retrieve queued, running, complete or failed status.
 - `GET /api/analysis/{analysis_id}/results` - retrieve the completed design summary and artifact links.
@@ -43,10 +43,38 @@ The API workflow generates the design report as printable HTML; it no longer
 creates the legacy equation-layout PDF. The browser print dialog can save the
 HTML report as a PDF when required.
 
-Completed results include a renderer-neutral `load_case_visualisation` object.
+Completed portal-frame results include a renderer-neutral `load_case_visualisation` object.
 It contains all ULS and SLS combinations, factored member loads, member
 utilisations, model geometry, local member axes, sampled global displacement
 points and sampled axial, shear and bending-moment results. Deflection views use
 SLS combinations only and utilisation views use ULS combinations only. The API
 performs these calculations; clients should render the stored values rather than
 reproduce engineering formulae.
+
+Truss jobs return `preliminary_generic_truss_v0.8`, mass-ranked solutions,
+transverse and longitudinal building geometry, automatic support layouts,
+eave-column checks, optional longitudinal-girder design, calculated top- and
+bottom-chord restraint nodes, member schedules, ULS reactions, governing checks
+and printable HTML/JSON plus member-markup HTML artifacts. The supported Warren
+variants are no verticals, intermediate-purlin verticals and all verticals.
+Chords use a common section within each fabricated span, web members use
+practical groups, the user-selected equal-angle search order is recorded, and
+the minimum base angle is 50x50x5. Restraint is selected as every Nth purlin and
+is assumed across the whole building. Results remain preliminary until checked
+against independent calculations and the applicable SANS editions are confirmed.
+
+Portal jobs also create connection-design JSON, a detailed HTML calculation
+report, vector A3 PDF sheets, R2018 DXF layouts and a DWG converted by the
+installed AutoCAD Core Console. The in-app Plotly connection model is
+display-only and is not an artifact. The post-analysis module checks Mahachi-based
+base-plate bearing/bending, bolt geometry and steel interaction, T-stub prying,
+end plates, elastic weld groups, supporting flange/web effects, and stiffener
+yielding, buckling and welds. Failed checks remain reported and supporting
+member overstress triggers calculated transverse stiffeners. Red Book Table 4.6
+provides a preliminary HD-bolt anchor-plate estimate for 25 MPa concrete;
+pedestal geometry, `7d` edge distance and reinforcement remain project
+confirmation items. Portal automatic sizing measures vertical variable-action
+deflection from a matching permanent-action baseline and independently rejects
+total-load roof-fall reversal as a ponding risk. The post-analysis foundation endpoint accepts soil unit weight and
+permissible bearing pressure and returns an automatically searched common pad
+length, width and height with ULS sliding and overturning safety factors.
