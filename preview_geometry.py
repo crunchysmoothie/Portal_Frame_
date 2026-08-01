@@ -274,7 +274,10 @@ def build_preview_geometry(payload: Mapping[str, Any]) -> dict[str, Any]:
             "eaves",
             left_eave,
             apex_point,
-            float(building.get("eaves_haunch_length", 0.0)),
+            float(building.get(
+                "left_eaves_haunch_length",
+                building.get("eaves_haunch_length", 0.0),
+            )),
             float(building.get("eaves_haunch_depth", 0.0)),
         ))
         if roof_type == "Duo Pitched":
@@ -283,7 +286,10 @@ def build_preview_geometry(payload: Mapping[str, Any]) -> dict[str, Any]:
                 "eaves",
                 right_eave,
                 apex_point,
-                float(building.get("eaves_haunch_length", 0.0)),
+                float(building.get(
+                    "right_eaves_haunch_length",
+                    building.get("eaves_haunch_length", 0.0),
+                )),
                 float(building.get("eaves_haunch_depth", 0.0)),
             ))
     if str(building.get("use_apex_haunch", "No")).lower() == "yes":

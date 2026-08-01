@@ -1,7 +1,7 @@
 import unittest
 
 import member_database as mdb
-from haunch_design import composite_haunch_properties
+from haunch_design import HaunchProfile, composite_haunch_properties
 from haunch_geometry import (
     HAUNCH_DEPTH_AUTO,
     HAUNCH_DEPTH_CUT,
@@ -156,6 +156,46 @@ class HaunchGeometryRuleTests(unittest.TestCase):
         maximum = maximum_haunch_cut_depth_mm(self.section)
         self.assertEqual(resolved["eaves_haunch_depth"], maximum)
         self.assertEqual(resolved["apex_haunch_depth"], maximum)
+
+    def test_independent_eaves_lengths_are_normalised_and_modelled(self):
+        values = dict(DEFAULT_VALUES)
+        values.update({
+            "use_eaves_haunch": True,
+            "eaves_haunch_depth_mode": HAUNCH_DEPTH_SPECIFIED,
+            "eaves_haunch_length_m": "0.8",
+            "right_eaves_haunch_length_m": "1.0",
+            "eaves_haunch_depth_mm": "180",
+        })
+        frame = build_analysis_payload(values)["building_data"]
+        self.assertEqual(frame["left_eaves_haunch_length"], 800.0)
+        self.assertEqual(frame["right_eaves_haunch_length"], 1000.0)
+
+        profile = HaunchProfile(frame)
+        slope_position = profile.slope_position(400.0, 0.0)
+        self.assertIsNotNone(slope_position)
+        self.assertAlmostEqual(
+            profile.added_depth_at(400.0, 0.0),
+            180.0 * (1.0 - slope_position / 800.0),
+            places=6,
+        )
+        self.assertAlmostEqual(
+            profile.added_depth_at(15_600.0, 0.0),
+            180.0 * (1.0 - slope_position / 1000.0),
+            places=6,
+        )
+
+    def test_missing_right_eaves_length_uses_legacy_common_value(self):
+        values = dict(DEFAULT_VALUES)
+        values.update({
+            "use_eaves_haunch": True,
+            "eaves_haunch_depth_mode": HAUNCH_DEPTH_SPECIFIED,
+            "eaves_haunch_length_m": "0.8",
+            "right_eaves_haunch_length_m": "",
+            "eaves_haunch_depth_mm": "180",
+        })
+        frame = build_analysis_payload(values)["building_data"]
+        self.assertEqual(frame["left_eaves_haunch_length"], 800.0)
+        self.assertEqual(frame["right_eaves_haunch_length"], 800.0)
 
 
 if __name__ == "__main__":

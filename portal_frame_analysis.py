@@ -14,7 +14,11 @@ from strength_checks import (
     element_properties,
     member_design,
 )
-from frame_model import load_portal_frame, PortalFrame
+from frame_model import (
+    PortalFrame,
+    foundation_characteristic_combinations,
+    load_portal_frame,
+)
 from haunch_design import (
     HaunchProfile,
     TaperedPhysMember,
@@ -533,11 +537,20 @@ def directional_search(primary, r_list, c_list, r_section_type, c_section_type,
     for combo in data.load_combinations:  # e.g. '1.1 DL + 1.0 LL'
         best_frame.add_load_combo(combo['name'], combo['factors'])
 
+    foundation_combinations = foundation_characteristic_combinations(
+        data.load_combinations
+    )
+    for combo in foundation_combinations:
+        best_frame.add_load_combo(combo['name'], combo['factors'])
+
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=MatrixRankWarning)
         best_frame.analyze(check_statics=False)
     best_frame._portal_resolved_frame_data = dict(
         resolved_data.frame_data[0]
+    )
+    best_frame._portal_foundation_characteristic_combinations = (
+        foundation_combinations
     )
 
     return {

@@ -655,9 +655,10 @@ def _haunch_checks(
     rafter_section = str(project.get("rafter_section", ""))
     column_section = str(project.get("column_section", ""))
     rafter = _section(rafter_section)
-    envelope = haunch_connections.get("preliminary_uls_envelope", {})
+    common_envelope = haunch_connections.get("preliminary_uls_envelope", {})
     locations = []
     for location in haunch_connections.get("locations", []):
+        envelope = location.get("uls_envelope", common_envelope)
         connection = location.get("connection", {})
         connection_type = str(
             location.get(

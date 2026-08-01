@@ -13,6 +13,7 @@ from connection_design import (
 )
 from connection_report import write_connection_report_html
 from foundation_design import (
+    DEFAULT_FOUNDATION_VALUES,
     FoundationInputError,
     design_pad_foundations,
     passive_sliding_resistance,
@@ -101,6 +102,16 @@ def _snapshot() -> dict:
             "major_moment": 85.0,
         },
     ]
+    characteristic_reactions = [
+        {
+            **reaction,
+            "load_combination": reaction["load_combination"].replace(
+                "SLS", "Foundation characteristic"
+            ),
+        }
+        for reaction in reactions
+        if reaction["load_combination"].startswith("SLS")
+    ]
     return {
         "input_data": {
             "load_combinations": uls,
@@ -118,6 +129,9 @@ def _snapshot() -> dict:
                 "rafter_section": "254x146x31",
             },
             "reactions": reactions,
+            "foundation_characteristic_reactions": (
+                characteristic_reactions
+            ),
             "members": members,
         },
     }
@@ -137,6 +151,11 @@ class AutomaticFoundationTests(unittest.TestCase):
         self.assertGreater(automatic["length_m"], 0)
         self.assertGreater(automatic["width_m"], 0)
         self.assertGreater(automatic["height_mm"], 0)
+        self.assertLessEqual(
+            max(automatic["length_m"], automatic["width_m"])
+            / min(automatic["length_m"], automatic["width_m"]),
+            automatic["maximum_plan_aspect_ratio"],
+        )
         for support in result["supports"]:
             self.assertGreaterEqual(
                 support["uls_stability"]["sliding"]["safety_factor"],
@@ -274,7 +293,92 @@ class AutomaticFoundationTests(unittest.TestCase):
             0.5 * expected_characteristic,
         )
 
-    def test_factored_uls_actions_default_to_required_sliding_sf_of_one(self):
+    def test_prokon_footing_benchmark_reproduces_reported_results(self):
+        characteristic = {
+            "node": "N1",
+            "load_combination": "Foundation characteristic: D + D_MAX + L",
+            "fx": 14.69,
+            "fy": 34.43,
+            "fz": 0.0,
+            "mx": 0.0,
+            "my": 0.0,
+            "mz": -25.91,
+        }
+        snapshot = {
+            "input_data": {
+                "load_combinations": [{"name": "PF02 ULS"}],
+                "serviceability_load_combinations": [{"name": "PF02 SLS"}],
+            },
+            "results": {
+                "reactions": [
+                    {
+                        **characteristic,
+                        "load_combination": "PF02 ULS",
+                        "fx": 19.844,
+                        "fy": 46.116,
+                        "mz": -35.004,
+                    },
+                    {**characteristic, "load_combination": "PF02 SLS"},
+                ],
+                "foundation_characteristic_reactions": [characteristic],
+            },
+        }
+        inputs = {
+            **DEFAULT_FOUNDATION_VALUES,
+            "foundation_length_m": 2.1,
+            "foundation_width_m": 2.1,
+            "foundation_thickness_mm": 400,
+            "foundation_loaded_length_mm": 500,
+            "foundation_loaded_width_mm": 350,
+            "foundation_pedestal_height_m": 0.6,
+            "foundation_concrete_strength_mpa": 30,
+            "foundation_rebar_strength_mpa": 450,
+            "foundation_permissible_bearing_kpa": 100,
+            "foundation_base_depth_m": 0.8,
+            "foundation_soil_cover_depth_m": 0.4,
+            "foundation_soil_unit_weight_kn_m3": 19,
+            "foundation_friction_coefficient": 0.5,
+            "foundation_passive_resistance": "Passive Resistance Included",
+            "foundation_passive_mobilisation_factor": 0.75,
+            "foundation_passive_uls_partial_factor": 1.4,
+            "foundation_stability_self_weight_factor": 0.9,
+            "foundation_uls_self_weight_factor": 1.2,
+            "foundation_uls_sliding_required_sf": 1.5,
+        }
+        result = design_pad_foundations(snapshot, inputs)
+        support = result["supports"][0]
+        self.assertAlmostEqual(
+            support["serviceability"]["bearing"]["q_max_kpa"],
+            51.60,
+            delta=0.05,
+        )
+        self.assertAlmostEqual(
+            support["structural"]["q_max_kpa"],
+            67.24,
+            delta=0.35,
+        )
+        self.assertAlmostEqual(
+            support["serviceability"]["overturning"]["safety_factor"],
+            2.88,
+            delta=0.01,
+        )
+        self.assertAlmostEqual(
+            support["uls_stability"]["overturning"]["safety_factor"],
+            2.68,
+            delta=0.01,
+        )
+        self.assertAlmostEqual(
+            support["serviceability"]["sliding"]["safety_factor"],
+            5.40,
+            delta=0.01,
+        )
+        self.assertAlmostEqual(
+            support["uls_stability"]["sliding"]["safety_factor"],
+            4.68,
+            delta=0.01,
+        )
+
+    def test_characteristic_stability_actions_default_to_sf_of_one_point_five(self):
         result = design_pad_foundations(
             _snapshot(),
             {
@@ -284,19 +388,16 @@ class AutomaticFoundationTests(unittest.TestCase):
             },
         )
         stability = result["supports"][0]["uls_stability"]
-        self.assertAlmostEqual(stability["required_sliding_safety_factor"], 1.0)
-        sliding_check = next(
-            check
-            for check in result["supports"][0]["structural"]["checks"]
-            if check["name"].startswith("ULS sliding stability")
+        self.assertAlmostEqual(stability["required_sliding_safety_factor"], 1.5)
+        self.assertEqual(
+            stability["action_basis"],
+            "Characteristic factor-1.0 frame actions",
         )
+        sliding = stability["sliding"]
         self.assertAlmostEqual(
-            sliding_check["demand"],
-            abs(
-                result["supports"][0]["structural"][
-                    "horizontal_reaction_kN"
-                ]
-            ),
+            sliding["safety_factor"],
+            sliding["total_resistance_kN"]
+            / sliding["horizontal_demand_kN"],
         )
 
     def test_sliding_inputs_are_validated_and_project_sf_scales_demand(self):
@@ -324,14 +425,13 @@ class AutomaticFoundationTests(unittest.TestCase):
             },
         )
         support = result["supports"][0]
-        sliding_check = next(
-            check
-            for check in support["structural"]["checks"]
-            if check["name"].startswith("ULS sliding stability")
-        )
-        self.assertAlmostEqual(
-            sliding_check["demand"],
-            1.5 * abs(support["structural"]["horizontal_reaction_kN"]),
+        stability = support["uls_stability"]
+        self.assertAlmostEqual(stability["required_sliding_safety_factor"], 1.5)
+        self.assertEqual(
+            stability["sliding"]["status"],
+            "PASS"
+            if stability["sliding"]["safety_factor"] >= 1.5
+            else "FAIL",
         )
 
 
@@ -448,24 +548,40 @@ class PostAnalysisConnectionTests(unittest.TestCase):
             self.assertIn("INPUT_REQUIRED", report)
             self.assertIn("Elastic line-weld group", report)
 
-    def test_all_concrete_design_uses_fixed_25_mpa_strength(self):
+    def test_explicit_foundation_design_uses_entered_concrete_strength(self):
+        inputs = dict(DEFAULT_FOUNDATION_VALUES)
+        inputs["foundation_concrete_strength_mpa"] = 40
+        foundation = design_pad_foundations(_snapshot(), inputs)
+        self.assertEqual(
+            foundation["inputs"]["concrete_strength_mpa"],
+            40.0,
+        )
+
+    def test_automatic_foundation_and_connections_retain_25_mpa_basis(self):
         foundation = design_pad_foundations(
             _snapshot(),
             {
                 "foundation_soil_unit_weight_kn_m3": 18,
                 "foundation_permissible_bearing_kpa": 150,
-                "foundation_concrete_strength_mpa": 40,
             },
         )
-        self.assertEqual(
-            foundation["inputs"]["concrete_strength_mpa"],
-            25.0,
-        )
+        self.assertEqual(foundation["inputs"]["concrete_strength_mpa"], 25.0)
         connection = design_portal_connections(_snapshot())
         self.assertEqual(
             connection["base_plates"]["basis"]["concrete_strength_mpa"],
             25.0,
         )
+
+    def test_automatic_foundation_uses_entered_concrete_strength(self):
+        foundation = design_pad_foundations(
+            _snapshot(),
+            {
+                "foundation_soil_unit_weight_kn_m3": 18,
+                "foundation_permissible_bearing_kpa": 150,
+                "foundation_concrete_strength_mpa": 30,
+            },
+        )
+        self.assertEqual(foundation["inputs"]["concrete_strength_mpa"], 30.0)
 
     def test_heavier_haunch_connection_reports_panel_zone_hold_point(self):
         snapshot = deepcopy(_snapshot())

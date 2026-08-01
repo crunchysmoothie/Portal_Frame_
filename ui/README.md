@@ -70,14 +70,17 @@ Connection drawings omit utilisation/status text; those values remain in the
 calculation report. Haunch donors omit their top flange, retain the bottom
 flange and enforce the displayed usable-donor limit `hw + tf`.
 
-The Foundation page requests the bearing, soil-cover and sliding inputs. It
+The Foundation page requests the bearing, soil-cover, pedestal-height and sliding inputs. It
 automatically searches a common pad length, width and height. **Sliding
 Resisted** records a separate external restraint and prevents pad sliding from
 inflating the automatic size; the external load path remains a design hold
 point. **Sliding Not Resisted** checks normal force, base friction, optional
 mobilised Rankine passive resistance, horizontal demand and achieved safety
-factor. ULS reactions are already factored, so the required sliding safety
-factor defaults to 1.0; ULS overturning retains 1.5.
+factor. Footing stability uses separate factor-1.0 characteristic actions, so
+the required sliding safety factor defaults to 1.5; ULS overturning also
+requires 1.5. Factored ULS reactions are retained for reinforced-concrete
+design. Pedestal weight and horizontal-force moment transfer to the footing
+underside are included.
 
 Portal rafters and columns can be left on **Automatic - lightest passing** or
 set to an explicit I- or H-section. An explicit section is still checked through

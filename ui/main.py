@@ -485,9 +485,15 @@ def main(page: ft.Page) -> None:
     controls["use_eaves_haunch"] = use_eaves_haunch
     eaves_haunch_length = number_field(
         "eaves_haunch_length_m",
-        "Eaves haunch length",
+        "Left eaves haunch length",
         unit="m",
-        helper="Length along each roof slope from the eaves.",
+        helper="Length along the left roof slope from the eaves.",
+    )
+    right_eaves_haunch_length = number_field(
+        "right_eaves_haunch_length_m",
+        "Right eaves haunch length",
+        unit="m",
+        helper="Length along the right roof slope; leave equal for a symmetric frame.",
     )
     eaves_haunch_depth_mode = dropdown(
         "eaves_haunch_depth_mode",
@@ -504,12 +510,16 @@ def main(page: ft.Page) -> None:
     eaves_haunch_length.disabled = (
         DEFAULT_VALUES["eaves_haunch_depth_mode"] == HAUNCH_DEPTH_AUTO
     )
+    right_eaves_haunch_length.disabled = (
+        DEFAULT_VALUES["eaves_haunch_depth_mode"] == HAUNCH_DEPTH_AUTO
+    )
     eaves_haunch_depth.disabled = (
         DEFAULT_VALUES["eaves_haunch_depth_mode"] == HAUNCH_DEPTH_AUTO
     )
     eaves_haunch_fields = ft.ResponsiveRow(
         controls=[
             eaves_haunch_length,
+            right_eaves_haunch_length,
             eaves_haunch_depth_mode,
             eaves_haunch_depth,
         ],
@@ -1109,9 +1119,8 @@ def main(page: ft.Page) -> None:
         "foundation_concrete_strength_mpa",
         "Concrete strength",
         unit="MPa",
-        helper="Fixed design assumption: 25 MPa for all foundation designs.",
+        helper="Characteristic concrete strength used by the footing checks.",
     )
-    foundation_concrete.disabled = True
     foundation_rebar = number_field(
         "foundation_rebar_strength_mpa",
         "Reinforcement yield strength",
@@ -1153,6 +1162,15 @@ def main(page: ft.Page) -> None:
         unit="m",
         helper="Depth of soil cover contributing to stabilising weight.",
     )
+    foundation_pedestal_height = number_field(
+        "foundation_pedestal_height_m",
+        "Pedestal height above footing",
+        unit="m",
+        helper=(
+            "Distance from footing top to the frame support reaction level; "
+            "used for pedestal weight and horizontal-force moment transfer."
+        ),
+    )
     foundation_sliding = dropdown(
         "foundation_sliding_resistance",
         "Sliding resistance",
@@ -1183,12 +1201,17 @@ def main(page: ft.Page) -> None:
     foundation_uls_sliding_required_sf = number_field(
         "foundation_uls_sliding_required_sf",
         "Required ULS sliding SF",
-        helper="Use 1.0 with factored ULS actions unless the project basis requires more.",
+        helper=(
+            "Compared with stability resistance calculated from factor-1.0 "
+            "characteristic frame actions."
+        ),
     )
     foundation_control_keys = {
         "foundation_permissible_bearing_kpa",
+        "foundation_concrete_strength_mpa",
         "foundation_soil_unit_weight_kn_m3",
         "foundation_soil_cover_depth_m",
+        "foundation_pedestal_height_m",
         "foundation_friction_coefficient",
         "foundation_sliding_resistance",
         "foundation_soil_friction_angle_deg",
@@ -1427,7 +1450,7 @@ def main(page: ft.Page) -> None:
                     f"ULS sliding {sliding.get('status', 'PASS')} "
                     + (
                         f"SF {float(sliding['safety_factor']):.2f} "
-                        f"(required {float(stability.get('required_sliding_safety_factor', 1.0)):.2f})"
+                        f"(required {float(stability.get('required_sliding_safety_factor', 1.5)):.2f})"
                         if sliding.get('status') not in {'NOT_CHECKED', 'RESISTED_EXTERNALLY'}
                         else "(separate external restraint)"
                     ) + " | "
@@ -1870,6 +1893,16 @@ def main(page: ft.Page) -> None:
     download_markup_button = ft.OutlinedButton(
         "Download markup drawings",
         icon=ft.Icons.ARCHITECTURE,
+        disabled=True,
+    )
+    download_prokon_a03_button = ft.OutlinedButton(
+        "Download Prokon A03",
+        icon=ft.Icons.DOWNLOAD,
+        disabled=True,
+    )
+    download_prokon_json_button = ft.OutlinedButton(
+        "Download Prokon audit JSON",
+        icon=ft.Icons.DATA_OBJECT,
         disabled=True,
     )
 
@@ -2504,7 +2537,9 @@ def main(page: ft.Page) -> None:
                 "Rafter haunches",
                 " | ".join([
                     (
-                        f"Eaves {building['eaves_haunch_length'] / 1000:g} m x "
+                        f"Eaves L/R "
+                        f"{building.get('left_eaves_haunch_length', building['eaves_haunch_length']) / 1000:g}/"
+                        f"{building.get('right_eaves_haunch_length', building['eaves_haunch_length']) / 1000:g} m x "
                         + (
                             (
                                 "Auto Size (span/15 x max cut)"
@@ -2577,6 +2612,8 @@ def main(page: ft.Page) -> None:
                 foundation_destination.disabled = True
                 foundation_design_button.disabled = True
                 download_markup_button.disabled = True
+                download_prokon_a03_button.disabled = True
+                download_prokon_json_button.disabled = True
                 connection_markup_button.disabled = True
                 connection_dxf_button.disabled = True
                 connection_dwg_button.disabled = True
@@ -2647,6 +2684,8 @@ def main(page: ft.Page) -> None:
         view_report_button.disabled = True
         open_analysis_button.disabled = True
         download_markup_button.disabled = True
+        download_prokon_a03_button.disabled = True
+        download_prokon_json_button.disabled = True
         connection_markup_button.disabled = True
         connection_dxf_button.disabled = True
         connection_dwg_button.disabled = True
@@ -2857,6 +2896,13 @@ def main(page: ft.Page) -> None:
                 download_markup_button.disabled = False
             else:
                 download_markup_button.disabled = True
+            prokon_a03 = artifacts.get("prokon-input-a03")
+            prokon_json = artifacts.get("prokon-input-json")
+            if prokon_a03 and prokon_json:
+                download_prokon_a03_button.url = f"{API_URL}{prokon_a03['download_url']}"
+                download_prokon_json_button.url = f"{API_URL}{prokon_json['download_url']}"
+                download_prokon_a03_button.disabled = False
+                download_prokon_json_button.disabled = False
             connection_markup_button.disabled = True
             connection_dxf_button.disabled = True
             connection_dwg_button.disabled = True
@@ -3068,6 +3114,8 @@ def main(page: ft.Page) -> None:
         connection_markup = artifacts.get("connection-markup-pdf")
         connection_dxf = artifacts.get("connection-markup-dxf")
         connection_dwg = artifacts.get("connection-markup-dwg")
+        prokon_a03 = artifacts.get("prokon-input-a03")
+        prokon_json = artifacts.get("prokon-input-json")
         if report:
             view_report_button.url = ft.Url(
                 url=f"{API_URL}{report['download_url']}",
@@ -3077,6 +3125,11 @@ def main(page: ft.Page) -> None:
         if markup:
             download_markup_button.url = f"{API_URL}{markup['download_url']}"
             download_markup_button.disabled = False
+        if prokon_a03 and prokon_json:
+            download_prokon_a03_button.url = f"{API_URL}{prokon_a03['download_url']}"
+            download_prokon_json_button.url = f"{API_URL}{prokon_json['download_url']}"
+            download_prokon_a03_button.disabled = False
+            download_prokon_json_button.disabled = False
         if connection_markup:
             connection_markup_button.url = ft.Url(
                 url=f"{API_URL}{connection_markup['download_url']}",
@@ -3203,6 +3256,8 @@ def main(page: ft.Page) -> None:
         foundation_destination.disabled = True
         foundation_design_button.disabled = True
         download_markup_button.disabled = True
+        download_prokon_a03_button.disabled = True
+        download_prokon_json_button.disabled = True
         connection_markup_button.disabled = True
         connection_dxf_button.disabled = True
         connection_dwg_button.disabled = True
@@ -3340,7 +3395,9 @@ def main(page: ft.Page) -> None:
                 "Haunches",
                 " | ".join([
                     (
-                        f"Eaves {building['eaves_haunch_length'] / 1000:g} m x "
+                        f"Eaves L/R "
+                        f"{building.get('left_eaves_haunch_length', building['eaves_haunch_length']) / 1000:g}/"
+                        f"{building.get('right_eaves_haunch_length', building['eaves_haunch_length']) / 1000:g} m x "
                         + (
                             (
                                 "Auto Size (span/15 x max cut)"
@@ -3446,6 +3503,7 @@ def main(page: ft.Page) -> None:
             return
         if eaves_haunch_depth_mode.value == HAUNCH_DEPTH_AUTO:
             eaves_haunch_length.value = f"{auto_length:g}"
+            right_eaves_haunch_length.value = f"{auto_length:g}"
             eaves_haunch_depth.value = ""
         if apex_haunch_depth_mode.value == HAUNCH_DEPTH_AUTO:
             apex_haunch_length.value = f"{auto_length:g}"
@@ -3529,6 +3587,7 @@ def main(page: ft.Page) -> None:
         eaves_auto_size = eaves_haunch_depth_mode.value == HAUNCH_DEPTH_AUTO
         apex_auto_size = apex_haunch_depth_mode.value == HAUNCH_DEPTH_AUTO
         eaves_haunch_length.disabled = eaves_auto_size
+        right_eaves_haunch_length.disabled = eaves_auto_size
         apex_haunch_length.disabled = apex_auto_size
         eaves_haunch_depth.disabled = eaves_haunch_depth_mode.value in (
             HAUNCH_DEPTH_CUT,
@@ -4063,6 +4122,8 @@ def main(page: ft.Page) -> None:
                                     view_report_button,
                                     open_analysis_button,
                                     download_markup_button,
+                                    download_prokon_a03_button,
+                                    download_prokon_json_button,
                                     open_connections_button,
                                 ],
                             ),
@@ -4230,8 +4291,10 @@ def main(page: ft.Page) -> None:
                             ft.ResponsiveRow(
                                 controls=[
                                     foundation_bearing,
+                                    foundation_concrete,
                                     foundation_soil_weight,
                                     foundation_soil_cover,
+                                    foundation_pedestal_height,
                                     foundation_friction,
                                     foundation_sliding,
                                     foundation_soil_friction_angle,
@@ -4245,15 +4308,18 @@ def main(page: ft.Page) -> None:
                 ),
                 card(
                     "Automatic design assumptions",
-                    "Concrete, reinforcement and loaded-area assumptions remain fixed. "
+                    "Reinforcement and loaded-area assumptions remain fixed; automatic "
+                    "isolated pads are limited to a 1.5 plan aspect ratio. "
                     "When the pad must resist sliding, the calculation uses the entered "
                     "base-friction and optional passive-pressure inputs. A selected "
                     "external restraint is excluded from pad sizing and remains a design hold point.",
                     ft.Text(
-                        "SANS 10100-1 | 25 MPa concrete | 500 MPa reinforcement | "
+                        "SANS 10100-1 | user-entered concrete strength | 500 MPa reinforcement | "
                         "T16@150 bottom mesh | 75 mm cover | 400 Ã— 400 mm loaded area | "
-                        "ULS reactions are already factored | required sliding SF is user-entered | "
-                        "ULS overturning SF remains 1.5." if True else ""
+                        "factor-1.0 characteristic reactions for bearing/stability | "
+                        "1.2 foundation self-weight for ULS bearing | 0.9 for stability | "
+                        "passive resistance divided by 1.4 at ULS | overturning SF 1.5."
+                        if True else ""
                         "ULS sliding and overturning safety factors â‰¥ 1.5.",
                         size=12,
                         color=TEXT_MUTED,

@@ -29,6 +29,11 @@ from draughtsman_markup import write_markup
 from foundation_design import design_pad_foundations
 from analysis_snapshot import load_analysis_snapshot
 from preview_geometry import build_preview_geometry
+from prokon_export import (
+    build_portal_comparison,
+    build_truss_comparison,
+    write_comparison_package,
+)
 from run_full_analysis import run_analysis
 from truss_design import design_truss, preview_truss
 from truss_report import (
@@ -182,6 +187,14 @@ def _design_summary(
             "eaves": {
                 "used": project.get("use_eaves_haunch", "No") == "Yes",
                 "length_mm": project.get("eaves_haunch_length_mm", 0),
+                "left_length_mm": project.get(
+                    "left_eaves_haunch_length_mm",
+                    project.get("eaves_haunch_length_mm", 0),
+                ),
+                "right_length_mm": project.get(
+                    "right_eaves_haunch_length_mm",
+                    project.get("eaves_haunch_length_mm", 0),
+                ),
                 "depth_mode": project.get(
                     "eaves_haunch_depth_mode", "Specified Depth"
                 ),
@@ -293,6 +306,10 @@ def _run_job(analysis_id: str, payload: dict[str, Any]) -> None:
             markup_html = write_truss_markup_html(
                 result, markup_dir / "truss_member_markup.html"
             )
+            comparison = build_truss_comparison(result)
+            comparison_paths = write_comparison_package(
+                comparison, directory / "prokon"
+            )
             job.update(
                 {
                     "status": "complete",
@@ -303,6 +320,8 @@ def _run_job(analysis_id: str, payload: dict[str, Any]) -> None:
                         "truss-report-html": str(report_html),
                         "truss-report-json": str(report_json),
                         "truss-markup-html": str(markup_html),
+                        "prokon-input-json": str(comparison_paths["json"]),
+                        "prokon-input-a03": str(comparison_paths["a03"]),
                     },
                 }
             )
@@ -336,6 +355,12 @@ def _run_job(analysis_id: str, payload: dict[str, Any]) -> None:
         )
         connection_result = design_portal_connections(
             load_analysis_snapshot(written_snapshot)
+        )
+        comparison = build_portal_comparison(
+            load_analysis_snapshot(written_snapshot)
+        )
+        comparison_paths = write_comparison_package(
+            comparison, directory / "prokon"
         )
         connection_path = directory / "connections" / "connection_design.json"
         connection_path.parent.mkdir(parents=True, exist_ok=True)
@@ -385,6 +410,8 @@ def _run_job(analysis_id: str, payload: dict[str, Any]) -> None:
             "connection-report-html": str(connection_report),
             "connection-markup-pdf": str(connection_pdf),
             "connection-markup-dxf": str(connection_dxf),
+            "prokon-input-json": str(comparison_paths["json"]),
+            "prokon-input-a03": str(comparison_paths["a03"]),
         }
         if connection_dwg is not None:
             artifact_paths["connection-markup-dwg"] = str(connection_dwg)

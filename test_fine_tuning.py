@@ -391,7 +391,19 @@ class FoundationDesignTests(unittest.TestCase):
                         "my": 0.0,
                         "mz": 45.0,
                     },
-                ]
+                ],
+                "foundation_characteristic_reactions": [
+                    {
+                        "node": "N1",
+                        "load_combination": "Foundation characteristic: D + L",
+                        "fx": 20.0,
+                        "fy": 300.0,
+                        "fz": 0.0,
+                        "mx": 0.0,
+                        "my": 0.0,
+                        "mz": 30.0,
+                    },
+                ],
             },
         }
 

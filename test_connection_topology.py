@@ -136,6 +136,72 @@ class ConnectionTopologyTests(unittest.TestCase):
                 self.assertIn("remaining web welded", note)
                 self.assertIn("main rafter", note)
 
+    def test_signed_connection_face_actions_are_location_specific(self):
+        snapshot = _two_haunch_snapshot()
+        frame = snapshot["input_data"]["frame_data"][0]
+        frame.update({
+            "left_eaves_haunch_length": 800.0,
+            "right_eaves_haunch_length": 1000.0,
+            "apex_haunch_depth": 180.0,
+        })
+        snapshot["input_data"]["nodes"] = [
+            {"name": "N2", "x": 0.0, "y": 6500.0},
+            {"name": "N4", "x": 8000.0, "y": 7500.0},
+            {"name": "N6", "x": 16000.0, "y": 6500.0},
+        ]
+        snapshot["input_data"]["members"] = [
+            {"name": "M2", "i_node": "N2", "j_node": "N4"},
+            {"name": "M5", "i_node": "N4", "j_node": "N6"},
+        ]
+        snapshot["results"]["visualisation"] = {
+            "combinations": [{
+                "name": "ULS wind",
+                "kind": "ULS",
+                "members": [
+                    {
+                        "name": "M2",
+                        "type": "rafter",
+                        "i_node": "N2",
+                        "j_node": "N4",
+                        "force_points": [
+                            {"axial_kn": 20.0, "shear_y_kn": 8.0, "moment_z_knm": 110.0},
+                            {"axial_kn": -52.0, "shear_y_kn": 6.0, "moment_z_knm": 79.0},
+                        ],
+                    },
+                    {
+                        "name": "M5",
+                        "type": "rafter",
+                        "i_node": "N4",
+                        "j_node": "N6",
+                        "force_points": [
+                            {"axial_kn": -52.0, "shear_y_kn": -6.0, "moment_z_knm": -79.0},
+                            {"axial_kn": 30.0, "shear_y_kn": -9.0, "moment_z_knm": -114.0},
+                        ],
+                    },
+                ],
+            }],
+        }
+
+        result = design_portal_connections(snapshot)
+        locations = result["haunch_connections"]["locations"]
+        self.assertEqual(
+            [item["location"] for item in locations],
+            [
+                "Left eaves haunch",
+                "Right eaves haunch",
+                "Apex haunch",
+            ],
+        )
+        self.assertEqual(
+            [item["length_mm"] for item in locations[:2]],
+            [800.0, 1000.0],
+        )
+        apex = next(item for item in locations if item["location"] == "Apex haunch")
+        self.assertEqual(apex["uls_envelope"]["major_moment_kNm"], 79.0)
+        self.assertEqual(apex["uls_envelope"]["axial_force_kN"], -52.0)
+        self.assertEqual(apex["uls_envelope"]["node"], "N4")
+        self.assertLess(apex["connection"]["flange_force_kN"], 170.0)
+
 
 if __name__ == "__main__":
     unittest.main()

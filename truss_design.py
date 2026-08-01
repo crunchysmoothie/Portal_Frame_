@@ -1453,7 +1453,19 @@ def _design_candidate(
         "eave_column_design": eave_column_design,
         "girder_design": girder_design,
         "load_source": load_bundle["source"],
-        "load_audit": load_bundle["load_audit"],
+        "load_audit": {
+            **load_bundle["load_audit"],
+            # Persist the exact characteristic node actions used by the final
+            # selected-section model. This is the auditable hand-off to
+            # external analysis packages such as Prokon.
+            "characteristic_node_loads_kn": {
+                case: {
+                    node: [float(components[0]), float(components[1])]
+                    for node, components in loads.items()
+                }
+                for case, loads in final_cases.items()
+            },
+        },
     }
 
 

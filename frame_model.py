@@ -61,6 +61,31 @@ class PortalFrame:
     wind_zones_0M2: List[Dict] = field(default_factory=list)
     wind_zones_90: List[Dict] = field(default_factory=list)
 
+
+def foundation_characteristic_combinations(
+    load_combinations: List[Dict],
+) -> List[Dict]:
+    """Build unique factor-1.0 combinations for footing calculations."""
+
+    combinations: List[Dict] = []
+    seen: set[tuple[str, ...]] = set()
+    for combination in load_combinations:
+        factors = {
+            str(case): 1.0
+            for case, factor in dict(combination.get("factors", {})).items()
+            if abs(float(factor)) > 1e-12
+        }
+        signature = tuple(sorted(factors))
+        if not signature or signature in seen:
+            continue
+        seen.add(signature)
+        combinations.append({
+            "name": "Foundation characteristic: " + " + ".join(signature),
+            "factors": factors,
+            "source_strength_combination": str(combination.get("name", "")),
+        })
+    return combinations
+
 def load_portal_frame(path: str) -> 'PortalFrame':
     import json
     with open(path) as f:

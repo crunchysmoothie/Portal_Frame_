@@ -786,6 +786,131 @@ def _connection_face_envelope(
     }
 
 
+def _connection_face_samples(
+    snapshot: Mapping[str, Any],
+) -> dict[str, list[dict[str, Any]]]:
+    """Return signed, coincident ULS actions at each physical roof joint."""
+
+    input_data = snapshot.get("input_data", {})
+    node_coordinates = {
+        str(item.get("name", "")): (
+            float(item.get("x", 0.0)),
+            float(item.get("y", 0.0)),
+        )
+        for item in input_data.get("nodes", [])
+    }
+    member_nodes = {
+        str(item.get("name", "")): (
+            str(item.get("i_node", "")),
+            str(item.get("j_node", "")),
+        )
+        for item in input_data.get("members", [])
+    }
+    samples: list[dict[str, Any]] = []
+    visualisation = snapshot.get("results", {}).get("visualisation", {})
+    for combination in visualisation.get("combinations", []):
+        if str(combination.get("kind", "")).upper() != "ULS":
+            continue
+        for member in combination.get("members", []):
+            if str(member.get("type", "")).lower() != "rafter":
+                continue
+            force_points = list(member.get("force_points", []))
+            if not force_points:
+                continue
+            member_name = str(member.get("name", ""))
+            fallback_nodes = member_nodes.get(member_name, ("", ""))
+            endpoints = (
+                (
+                    str(member.get("i_node", fallback_nodes[0])),
+                    "i",
+                    force_points[0],
+                ),
+                (
+                    str(member.get("j_node", fallback_nodes[1])),
+                    "j",
+                    force_points[-1],
+                ),
+            )
+            for node, member_end, point in endpoints:
+                if node not in node_coordinates:
+                    continue
+                x, y = node_coordinates[node]
+                samples.append({
+                    "combination": str(combination.get("name", "")),
+                    "member": member_name,
+                    "member_end": member_end,
+                    "node": node,
+                    "x_mm": x,
+                    "y_mm": y,
+                    "axial_force_kN": float(point.get("axial_kn", 0.0)),
+                    "shear_force_kN": float(point.get("shear_y_kn", 0.0)),
+                    "major_moment_kNm": float(
+                        point.get("moment_z_knm", 0.0)
+                    ),
+                })
+    if not samples:
+        return {}
+
+    min_x = min(item["x_mm"] for item in samples)
+    max_x = max(item["x_mm"] for item in samples)
+    max_y = max(item["y_mm"] for item in samples)
+    tolerance = 1e-3
+    grouped = {
+        "left_eaves": [],
+        "right_eaves": [],
+        "apex": [],
+    }
+    for sample in samples:
+        if abs(sample["y_mm"] - max_y) <= tolerance:
+            grouped["apex"].append(sample)
+        elif abs(sample["x_mm"] - min_x) <= tolerance:
+            grouped["left_eaves"].append(sample)
+        elif abs(sample["x_mm"] - max_x) <= tolerance:
+            grouped["right_eaves"].append(sample)
+    return grouped
+
+
+def _governing_connection_face_action(
+    samples: list[Mapping[str, Any]],
+    effective_depth_mm: float,
+) -> dict[str, Any] | None:
+    """Select one coincident action set by maximum tensile-flange demand."""
+
+    if not samples:
+        return None
+
+    def flange_force(sample: Mapping[str, Any]) -> float:
+        return max(
+            abs(float(sample["major_moment_kNm"]))
+            * 1000.0
+            / max(effective_depth_mm, 1.0)
+            + float(sample["axial_force_kN"]) / 2.0,
+            0.0,
+        )
+
+    governing = max(samples, key=flange_force)
+    return {
+        "major_moment_kNm": abs(float(governing["major_moment_kNm"])),
+        "axial_force_kN": float(governing["axial_force_kN"]),
+        "shear_force_kN": abs(float(governing["shear_force_kN"])),
+        "combination": str(governing["combination"]),
+        "moment_combination": str(governing["combination"]),
+        "axial_combination": str(governing["combination"]),
+        "shear_combination": str(governing["combination"]),
+        "member": str(governing["member"]),
+        "moment_member": str(governing["member"]),
+        "axial_member": str(governing["member"]),
+        "shear_member": str(governing["member"]),
+        "member_end": str(governing["member_end"]),
+        "node": str(governing["node"]),
+        "flange_force_kN": flange_force(governing),
+        "qualification": (
+            "Signed axial force, shear and moment from one coincident ULS "
+            "sample at the physical connection face."
+        ),
+    }
+
+
 def _design_haunch_end_plate(
     location: Mapping[str, Any],
     envelope: Mapping[str, Any],
@@ -812,10 +937,13 @@ def _design_haunch_end_plate(
         + float(location.get("added_depth_mm", 0.0))
         - float(rafter["tf"])
     )
-    flange_force = (
-        float(envelope["major_moment_kNm"]) * 1000.0
-        / max(effective_depth, 1.0)
-        + float(envelope["axial_force_kN"]) / 2.0
+    flange_force = max(
+        (
+            float(envelope["major_moment_kNm"]) * 1000.0
+            / max(effective_depth, 1.0)
+            + float(envelope["axial_force_kN"]) / 2.0
+        ),
+        0.0,
     )
     maximum_pitch_mm = 200.0
     minimum_row_count = max(
@@ -1118,13 +1246,14 @@ def _haunch_connection_start(snapshot: Mapping[str, Any]) -> dict[str, Any]:
             "reason": "No ULS rafter member calculations were stored.",
         }
 
-    envelope = _connection_face_envelope(snapshot, rafter_rows)
+    legacy_envelope = _connection_face_envelope(snapshot, rafter_rows)
+    face_samples = _connection_face_samples(snapshot)
     locations = []
     if str(input_frame.get("use_eaves_haunch", "No")).lower() == "yes":
-        locations.append({
-            "location": "Eaves haunch",
-            "connection_type": "eaves_end_plate",
-            "length_mm": float(input_frame.get("eaves_haunch_length", 0.0)),
+        common_length = float(
+            input_frame.get("eaves_haunch_length", 0.0)
+        )
+        depth_fields = {
             "depth_mode": str(
                 project.get(
                     "eaves_haunch_depth_mode",
@@ -1140,11 +1269,53 @@ def _haunch_connection_start(snapshot: Mapping[str, Any]) -> dict[str, Any]:
                     input_frame.get("eaves_haunch_depth", 0.0),
                 )
             ),
-        })
+        }
+        has_independent_lengths = any(
+            key in input_frame
+            for key in (
+                "left_eaves_haunch_length",
+                "right_eaves_haunch_length",
+            )
+        )
+        if has_independent_lengths:
+            locations.append({
+                "location": "Left eaves haunch",
+                "connection_type": "eaves_end_plate",
+                "action_key": "left_eaves",
+                "length_mm": float(
+                    input_frame.get(
+                        "left_eaves_haunch_length", common_length
+                    )
+                ),
+                **depth_fields,
+            })
+            if str(
+                input_frame.get("building_roof", "Duo Pitched")
+            ) == "Duo Pitched":
+                locations.append({
+                    "location": "Right eaves haunch",
+                    "connection_type": "eaves_end_plate",
+                    "action_key": "right_eaves",
+                    "length_mm": float(
+                        input_frame.get(
+                            "right_eaves_haunch_length", common_length
+                        )
+                    ),
+                    **depth_fields,
+                })
+        else:
+            locations.append({
+                "location": "Eaves haunch",
+                "connection_type": "eaves_end_plate",
+                "action_key": "eaves",
+                "length_mm": common_length,
+                **depth_fields,
+            })
     if str(input_frame.get("use_apex_haunch", "No")).lower() == "yes":
         locations.append({
             "location": "Apex haunch",
             "connection_type": "apex_splice",
+            "action_key": "apex",
             "length_mm": float(input_frame.get("apex_haunch_length", 0.0)),
             "depth_mode": str(
                 project.get(
@@ -1179,6 +1350,7 @@ def _haunch_connection_start(snapshot: Mapping[str, Any]) -> dict[str, Any]:
         "top flange removed and the remaining web welded to the main rafter."
     )
     designs = []
+    envelopes: dict[str, dict[str, Any]] = {}
     for location in locations:
         is_apex = location["connection_type"] == "apex_splice"
         supporting_properties = (
@@ -1198,6 +1370,25 @@ def _haunch_connection_start(snapshot: Mapping[str, Any]) -> dict[str, Any]:
             "source_rafter_section_family": rafter_family,
             "donor_fabrication_note": donor_fabrication_note,
         }
+        action_key = str(location.get("action_key", ""))
+        if action_key == "eaves":
+            action_samples = [
+                *face_samples.get("left_eaves", []),
+                *face_samples.get("right_eaves", []),
+            ]
+        else:
+            action_samples = face_samples.get(action_key, [])
+        effective_depth = (
+            float(rafter_properties["h"])
+            + float(location.get("added_depth_mm", 0.0))
+            - float(rafter_properties["tf"])
+        )
+        envelope = _governing_connection_face_action(
+            action_samples,
+            effective_depth,
+        ) or dict(legacy_envelope)
+        topology["uls_envelope"] = envelope
+        envelopes[action_key or str(location["location"])] = envelope
         cut_check = haunch_cut_depth_check(
             rafter_properties,
             float(location.get("added_depth_mm", 0.0)),
@@ -1241,7 +1432,15 @@ def _haunch_connection_start(snapshot: Mapping[str, Any]) -> dict[str, Any]:
             else ("NOT_REQUIRED" if not designs else "HOLD_POINT")
         ),
         "locations": designs,
-        "preliminary_uls_envelope": envelope,
+        "preliminary_uls_envelope": (
+            max(
+                envelopes.values(),
+                key=lambda item: float(item.get("flange_force_kN", 0.0)),
+            )
+            if envelopes
+            else legacy_envelope
+        ),
+        "preliminary_uls_envelopes": envelopes,
         "references": [
             (
                 "Mahachi Chapter 7.8, equations 7.45-7.48: fillet-weld "
