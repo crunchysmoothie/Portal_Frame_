@@ -1260,7 +1260,7 @@ def build_calculation_sheet_data_from_frame(
 
 def load_calculation_sheet_data(
     snapshot_path="output/analysis/analysis_results.json",
-    scope=ReportScope.CRITICAL,
+    scope=ReportScope.FULL,
     load_combination=None,
     allow_stale=False,
 ):

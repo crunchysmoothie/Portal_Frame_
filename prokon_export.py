@@ -380,8 +380,22 @@ def build_truss_comparison(result: Mapping[str, Any], *, ranked_solution: int = 
         for direction, value in (("FX", float(components[0])), ("FY", float(components[1])))
         if case != "D" and abs(float(value)) > 1e-12
     ]
-    left = node_ids[str(geometry["left_support"])]
-    right = node_ids[str(geometry["right_support"])]
+    support_names = [
+        str(name) for name in geometry.get("support_nodes", [])
+    ] or [
+        str(geometry["left_support"]),
+        str(geometry["right_support"]),
+    ]
+    # Match the PortalFrame truss solver: every bearing node carries vertical
+    # reaction, while only the first support restrains horizontal translation.
+    support_rows = [
+        {
+            "node": node_ids[name],
+            "fixity": "XY" if index == 0 else "Y",
+            "rz_spring_knm_per_rad": None,
+        }
+        for index, name in enumerate(support_names)
+    ]
     combinations = _factor_pairs(best["load_audit"]["uls_combinations"], best["load_audit"]["sls_combinations"])
     load_cases = {
         load["case"] for load in nodal_loads
@@ -400,7 +414,7 @@ def build_truss_comparison(result: Mapping[str, Any], *, ranked_solution: int = 
         "nodes": [{"id": node_ids[str(node["name"])], "source_name": node["name"], "x_m": float(node["x_mm"]) / 1000.0, "y_m": float(node["y_mm"]) / 1000.0, "z_m": 0.0} for node in nodes_in],
         "members": members,
         "sections": list(sections.values()),
-        "supports": [{"node": left, "fixity": "XY", "rz_spring_knm_per_rad": None}, {"node": right, "fixity": "Y", "rz_spring_knm_per_rad": None}],
+        "supports": support_rows,
         "nodal_loads": nodal_loads,
         "member_loads": [],
         "load_combinations": combinations,
@@ -411,6 +425,7 @@ def build_truss_comparison(result: Mapping[str, Any], *, ranked_solution: int = 
             "All truss member ends are released as Prokon truss members to match the PortalFrame axial-only solver.",
             "Prokon generates member self-weight in load case D; the PortalFrame equivalent nodal D self-weight loads are intentionally not exported to prevent double-counting.",
             "Member I and J values are stiffness placeholders derived from area and radius of gyration; released truss axial response depends on E and area.",
+            "All PortalFrame bearing nodes are exported as Prokon supports; the first support restrains XY and the remaining bearing supports restrain Y.",
         ],
     }
 
