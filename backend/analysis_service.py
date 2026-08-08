@@ -11,32 +11,33 @@ from threading import Lock
 from typing import Any, Mapping
 from uuid import uuid4
 
-from connection_cad import (
+from connection_workflow.cad import (
     dwg_converter_status,
     write_connection_dwg,
     write_connection_dxf,
     write_connection_pdf,
 )
-from connection_design import design_portal_connections
-from connection_report import write_connection_report_html
-from design_calculations import (
+from connection_workflow.design import design_portal_connections
+from connection_workflow.report import write_connection_report_html
+from reporting_workflow.calculations import (
     ReportScope,
     load_calculation_sheet_data,
     write_html_report,
     write_json_data,
 )
-from draughtsman_markup import write_markup
-from foundation_design import design_pad_foundations
-from analysis_snapshot import load_analysis_snapshot
-from preview_geometry import build_preview_geometry
-from prokon_export import (
+from reporting_workflow.markup import write_markup
+from foundation_workflow.design import design_pad_foundations
+from reporting_workflow.snapshot import load_analysis_snapshot
+from portal_workflow.preview import build_preview_geometry
+from portal_workflow.prokon_export import (
     build_portal_comparison,
     build_truss_comparison,
     write_comparison_package,
 )
-from run_full_analysis import run_analysis
-from truss_design import design_truss, preview_truss
-from truss_report import (
+from portal_workflow.runner import run_analysis
+from truss_workflow import (
+    design_truss,
+    preview_truss,
     write_truss_html,
     write_truss_json,
     write_truss_markup_html,

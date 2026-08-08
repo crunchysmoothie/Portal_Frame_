@@ -6,7 +6,7 @@ import base64
 import html
 from typing import Any, Callable
 
-from truss_model import (
+from truss_workflow import (
     WARREN_ALL_VERTICALS,
     WARREN_INTERMEDIATE_VERTICALS,
     WARREN_NO_VERTICALS,

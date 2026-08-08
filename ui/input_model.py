@@ -7,9 +7,9 @@ import math
 from pathlib import Path
 from typing import Any, Mapping
 
-import member_database as portal_members
-from foundation_design import DEFAULT_FOUNDATION_VALUES
-from haunch_geometry import (
+from databases import member_database as portal_members
+from foundation_workflow.design import DEFAULT_FOUNDATION_VALUES
+from connection_workflow.haunch_geometry import (
     HAUNCH_DEPTH_AUTO,
     HAUNCH_DEPTH_CUT,
     HAUNCH_DEPTH_MODES,
@@ -18,8 +18,8 @@ from haunch_geometry import (
     haunch_cut_error,
     maximum_haunch_cut_depth_mm,
 )
-from roof_layout import calculate_roof_bracing_layout
-from truss_model import (
+from portal_workflow.roof_layout import calculate_roof_bracing_layout
+from truss_workflow import (
     WARREN_ALL_VERTICALS,
     WARREN_INTERMEDIATE_VERTICALS,
     WARREN_NO_VERTICALS,
@@ -67,7 +67,7 @@ HAUNCH_DEPTH_OPTIONS = HAUNCH_DEPTH_MODES
 def load_lipped_channel_sections() -> tuple[str, ...]:
     """Load the finite purlin/girt choices used by the design engine."""
 
-    path = PROJECT_ROOT / "bracing_member_database.csv"
+    path = PROJECT_ROOT / "databases" / "bracing_member_database.csv"
     with path.open(newline="", encoding="utf-8-sig") as stream:
         rows = csv.DictReader(stream)
         values = [
@@ -81,7 +81,7 @@ def load_lipped_channel_sections() -> tuple[str, ...]:
 
 LIPPED_CHANNEL_SECTIONS = load_lipped_channel_sections()
 _PORTAL_MEMBER_DATABASE = portal_members.load_member_database(
-    PROJECT_ROOT / "member_database.csv"
+    PROJECT_ROOT / "databases" / "member_database.csv"
 )
 
 

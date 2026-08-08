@@ -13,7 +13,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 
-from analysis_snapshot import load_analysis_snapshot
+from reporting_workflow.snapshot import load_analysis_snapshot
 from backend.analysis_service import (
     design_foundations,
     get_analysis_artifact,
@@ -21,12 +21,12 @@ from backend.analysis_service import (
     public_analysis_job,
     submit_analysis_job,
 )
-from preview_geometry import build_preview_geometry
-from connection_viewer import (
+from portal_workflow.preview import build_preview_geometry
+from connection_workflow.viewer import (
     build_connection_viewer_html,
     list_connection_views,
 )
-from truss_design import preview_truss
+from truss_workflow import preview_truss
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent

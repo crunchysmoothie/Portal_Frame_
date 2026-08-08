@@ -12,15 +12,18 @@ import flet as ft
 import flet_webview as fwv
 import httpx
 
-from connection_viewer import list_connection_views
-from foundation_design import (
+# TODO(advanced-finishes): Finalise the UI after the remaining engineering and
+# reporting workflows are complete.
+
+from connection_workflow.viewer import list_connection_views
+from foundation_workflow.design import (
     FOUNDATION_PASSIVE_RESISTANCE_OPTIONS,
     FOUNDATION_SLIDING_OPTIONS,
     FOUNDATION_STANDARDS,
 )
-from haunch_geometry import HAUNCH_DEPTH_AUTO, HAUNCH_DEPTH_CUT
-from preview_geometry import build_preview_geometry
-from truss_design import preview_truss
+from connection_workflow.haunch_geometry import HAUNCH_DEPTH_AUTO, HAUNCH_DEPTH_CUT
+from portal_workflow.preview import build_preview_geometry
+from truss_workflow import preview_truss
 from ui.analysis_render import combination_names, load_case_svg
 from ui.input_model import (
     AUTOMATIC_GABLE_SECTION,
