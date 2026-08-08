@@ -183,6 +183,7 @@ DEFAULT_VALUES: dict[str, Any] = {
     "column_section": AUTOMATIC_SECTION,
     "use_eaves_haunch": False,
     "eaves_haunch_length_m": "",
+    "right_eaves_haunch_length_m": "",
     "eaves_haunch_depth_mode": HAUNCH_DEPTH_AUTO,
     "eaves_haunch_depth_mm": "",
     "use_apex_haunch": False,
@@ -578,7 +579,8 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
         structural_system == "Portal frame"
         and bool(raw.get("use_apex_haunch", False))
     )
-    eaves_haunch_length_m = 0.0
+    left_eaves_haunch_length_m = 0.0
+    right_eaves_haunch_length_m = 0.0
     eaves_haunch_depth_mm = 0.0
     apex_haunch_length_m = 0.0
     apex_haunch_depth_mm = 0.0
@@ -597,11 +599,20 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
             "Choose Specified Depth, Cut-Depth or Auto Size."
         )
     if use_eaves_haunch:
-        eaves_haunch_length_m = (
-            width_m / 15.0
-            if eaves_haunch_depth_mode == HAUNCH_DEPTH_AUTO
-            else number("eaves_haunch_length_m", strictly_positive=True)
-        )
+        if eaves_haunch_depth_mode == HAUNCH_DEPTH_AUTO:
+            left_eaves_haunch_length_m = width_m / 15.0
+            right_eaves_haunch_length_m = width_m / 15.0
+        else:
+            left_eaves_haunch_length_m = number(
+                "eaves_haunch_length_m", strictly_positive=True
+            )
+            right_raw = raw.get("right_eaves_haunch_length_m", "")
+            if right_raw in (None, ""):
+                right_eaves_haunch_length_m = left_eaves_haunch_length_m
+            else:
+                right_eaves_haunch_length_m = number(
+                    "right_eaves_haunch_length_m", strictly_positive=True
+                )
         if eaves_haunch_depth_mode == HAUNCH_DEPTH_SPECIFIED:
             eaves_haunch_depth_mm = number(
                 "eaves_haunch_depth_mm",
@@ -663,9 +674,18 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
     if (
         use_eaves_haunch
         and "eaves_haunch_length_m" not in errors
-        and eaves_haunch_length_m >= roof_slope_length_m
+        and left_eaves_haunch_length_m >= roof_slope_length_m
     ):
         errors["eaves_haunch_length_m"] = (
+            f"Length must be less than the roof slope length of "
+            f"{roof_slope_length_m:.2f} m."
+        )
+    if (
+        use_eaves_haunch
+        and "right_eaves_haunch_length_m" not in errors
+        and right_eaves_haunch_length_m >= roof_slope_length_m
+    ):
+        errors["right_eaves_haunch_length_m"] = (
             f"Length must be less than the roof slope length of "
             f"{roof_slope_length_m:.2f} m."
         )
@@ -683,10 +703,13 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
         and use_apex_haunch
         and not {
             "eaves_haunch_length_m",
+            "right_eaves_haunch_length_m",
             "apex_haunch_length_m",
         }.intersection(errors)
-        and eaves_haunch_length_m + apex_haunch_length_m
-        >= roof_slope_length_m
+        and max(
+            left_eaves_haunch_length_m,
+            right_eaves_haunch_length_m,
+        ) + apex_haunch_length_m >= roof_slope_length_m
     ):
         errors["apex_haunch_length_m"] = (
             "Eaves and apex haunch zones must not overlap on a roof slope."
@@ -900,7 +923,11 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
             "column_section_type": column_section_type,
             "column_section": column_section,
             "use_eaves_haunch": "Yes" if use_eaves_haunch else "No",
-            "eaves_haunch_length": eaves_haunch_length_m * 1000,
+            # Preserve the historical common value as the left-side value so
+            # old calculation/report consumers remain compatible.
+            "eaves_haunch_length": left_eaves_haunch_length_m * 1000,
+            "left_eaves_haunch_length": left_eaves_haunch_length_m * 1000,
+            "right_eaves_haunch_length": right_eaves_haunch_length_m * 1000,
             "eaves_haunch_depth_mode": eaves_haunch_depth_mode,
             "eaves_haunch_depth": eaves_haunch_depth_mm,
             "use_apex_haunch": "Yes" if use_apex_haunch else "No",

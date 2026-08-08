@@ -129,18 +129,24 @@ the main eave-column section is used only as a preliminary stiffness proxy.
 ## Post-analysis connections and automatic portal foundations
 
 After a portal-frame analysis, enter the permissible bearing pressure, soil unit
-weight, soil cover, base-friction coefficient and sliding-resistance basis. If
+weight, soil cover, pedestal height, base-friction coefficient and sliding-resistance basis. If
 passive resistance is credited, also enter the soil friction angle and passive
 mobilisation factor. The automatic common-pad search calculates the footing
 length, width and height in practical increments.
+The automatic search limits the footing plan aspect ratio to 1.5 so a minimum-
+volume solution cannot become an impractical strip footing.
 
 Choose **Sliding Resisted** only where a separate restraint, such as a designed
 tie or slab load path, will carry the horizontal action. That option removes pad
 sliding from the automatic size search and records the external restraint as an
 engineering hold point. Choose **Sliding Not Resisted** where the isolated pad
 must resist sliding using base friction and any mobilised Rankine passive
-pressure. ULS support reactions are already factored, so the required ULS
-sliding safety factor defaults to 1.0; ULS overturning retains 1.5.
+pressure. Footing bearing and stability use separately analysed factor-1.0
+characteristic actions, so the required ULS sliding safety factor defaults to
+1.5; ULS overturning also requires 1.5. Factored ULS reactions are retained for
+reinforced-concrete design. Horizontal reaction moment is transferred through
+the pedestal height plus footing thickness, and pedestal self-weight is included.
+Mobilised passive resistance is divided by 1.4 for the ULS stability check.
 
 Passive resistance is excluded by default. Only enable it where a geotechnical
 engineer confirms that retained, adequately compacted and drained soil will
@@ -190,6 +196,33 @@ loading details there. Added crawl beams appear on the frame preview and are
 included in the generated analysis input.
 
 ## Results
+
+### Prokon comparison export
+
+After a portal-frame or truss analysis completes, use **Download Prokon A03**
+and **Download Prokon audit JSON**. The JSON is the canonical, readable record
+of the exported nodes, members, sections, supports, characteristic loads,
+load-case aliases and paired ULS/SLS factors. The A03 is generated from that
+same record for Prokon Frame Analysis file version 12.
+
+Portal-frame haunches are stepped at the same eight analysis stations used by
+PortalFrame. Each haunch boundary and each existing bracing subdivision is an
+explicit Prokon node because Prokon can only place member restraint at nodes.
+The truss export is the pin-jointed truss-only model used by PortalFrame;
+eave-column and longitudinal-girder designs remain separate calculation models.
+
+Before analysing the A03, replot the structure in Prokon and verify the global
+axes, local load arrows, support fixities, rotational spring values, truss end
+releases, section assignments and load-combination factors. Prokon load cases
+are limited to short names in the generated file, so the JSON `load_case_map`
+must be retained when matching output back to PortalFrame. Compare
+characteristic cases first and then identical combinations; do not compare
+results from unrelated factored action sets.
+
+The generated file is a comparison input, not independent verification or
+structural sign-off. The first generated A03 from each installed Prokon version
+must be opened and visually checked before it is used as a repeatable import
+workflow.
 
 - ULS combinations show member utilisation and internal-force diagrams.
 - SLS combinations show horizontal and vertical deflection diagrams. Vertical

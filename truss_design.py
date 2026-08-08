@@ -45,6 +45,11 @@ MINIMUM_ANGLE_LEG_MM = 50.0
 MINIMUM_ANGLE_THICKNESS_MM = 5.0
 PLATEWORK_COST_ALLOWANCE = 0.08
 DEFAULT_DATABASE = Path(__file__).with_name("bracing_member_database.csv")
+# BTB equal angles are detailed with a fixed clear gap between the adjacent
+# legs.  The pair is treated as two identical components about the built-up
+# centroid; the weak-axis property therefore follows from the parallel-axis
+# theorem rather than from a size-specific radius multiplier.
+BACK_TO_BACK_GAP_MM = 10.0
 
 
 @dataclass(frozen=True)
@@ -69,6 +74,21 @@ def _float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _equal_angle_centroid_mm(leg_h: float, thickness: float) -> float:
+    """Centroid from the heel of an equal angle, in millimetres."""
+
+    area = thickness * (2.0 * leg_h - thickness)
+    if area <= 0:
+        return 0.0
+    # Union of two rectangles minus their overlap.
+    numerator = (
+        thickness * leg_h * (thickness / 2.0)
+        + leg_h * thickness * (leg_h / 2.0)
+        - thickness**2 * (thickness / 2.0)
+    )
+    return numerator / area
 
 
 def _purlin_quantity(
@@ -142,14 +162,17 @@ def load_angle_candidates(
             configuration="Single equal angle", area_mm2=area, mass_kg_m=mass,
             rx_mm=rx, ry_mm=ry, rv_mm=rv,
         ))
+        built_up_area = 2.0 * area
+        single_centroid = _equal_angle_centroid_mm(leg_h, thickness)
+        centroid_offset = single_centroid + BACK_TO_BACK_GAP_MM / 2.0
+        built_up_radius = math.sqrt(rx ** 2 + centroid_offset ** 2)
         candidates.append(AngleCandidate(
             designation=f"2L {name}", base_designation=name,
-            configuration="Back-to-back equal angles", area_mm2=2.0 * area,
+            configuration="Back-to-back equal angles", area_mm2=built_up_area,
             mass_kg_m=2.0 * mass,
-            # A symmetric heel-to-heel pair removes the single angle's weak
-            # principal-axis radius. No further spacing benefit is assumed
-            # until the gusset gap and stitch details are defined.
-            rx_mm=rx, ry_mm=max(ry, rx), rv_mm=rx,
+            # The scalar resistance model uses the governing built-up radius;
+            # no additional gusset-gap or stitch benefit is assumed.
+            rx_mm=built_up_radius, ry_mm=built_up_radius, rv_mm=built_up_radius,
         ))
     if not candidates:
         raise ValueError(
@@ -1453,7 +1476,19 @@ def _design_candidate(
         "eave_column_design": eave_column_design,
         "girder_design": girder_design,
         "load_source": load_bundle["source"],
-        "load_audit": load_bundle["load_audit"],
+        "load_audit": {
+            **load_bundle["load_audit"],
+            # Persist the exact characteristic node actions used by the final
+            # selected-section model. This is the auditable hand-off to
+            # external analysis packages such as Prokon.
+            "characteristic_node_loads_kn": {
+                case: {
+                    node: [float(components[0]), float(components[1])]
+                    for node, components in loads.items()
+                }
+                for case, loads in final_cases.items()
+            },
+        },
     }
 
 
@@ -1653,7 +1688,7 @@ def design_truss(payload: Mapping[str, Any]) -> dict[str, Any]:
             "No base angle smaller than 50x50x5 is considered so that the selected leg and thickness can accommodate the intended bolted detailing basis.",
             "Each top chord and bottom chord uses one common section within each transverse span; ordinary webs use practical groups of at least three consecutive panels and downsize only below 75% retained utilisation.",
             "Where the selected topology has a vertical aligned with a bearing, it is excluded from truss-angle optimisation and analysed with the selected supporting column or longitudinal-girder vertical area; other Warren variants bear directly at a top-chord node.",
-            "Back-to-back equal angles are treated as symmetric heel-to-heel pairs with the single-angle x radius governing; no further gusset-gap benefit is used.",
+            "Back-to-back equal angles use a composite centroid and parallel-axis radius calculation based on the supplied Prokon BTB geometry; no additional gusset-gap or stitch benefit is used until pair spacing and stitch details are defined.",
             "The axial compression resistance curve is reused from the existing PortalFrame bracing implementation; angle flexural-torsional buckling is not separately benchmark-validated.",
             "Connection eccentricity, gussets, bolts, welds, bearings, splices and net-section rupture are not designed.",
             "Top- and bottom-chord restraint is assumed across the entire building at every selected Nth purlin; the purlins and restraint connections require separate verification.",

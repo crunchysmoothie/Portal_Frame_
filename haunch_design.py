@@ -248,11 +248,30 @@ class HaunchProfile:
         self.apex = float(frame_data["apex_height"])
         run = self.span / 2 if self.roof_type == "Duo Pitched" else self.span
         self.slope_length = math.hypot(run, self.apex - self.eaves)
-        self.eaves_length = (
+        use_eaves_haunch = (
+            str(frame_data.get("use_eaves_haunch", "No")).lower() == "yes"
+        )
+        common_eaves_length = (
             float(frame_data.get("eaves_haunch_length", 0.0))
-            if str(frame_data.get("use_eaves_haunch", "No")).lower() == "yes"
+            if use_eaves_haunch
             else 0.0
         )
+        self.left_eaves_length = (
+            float(frame_data.get(
+                "left_eaves_haunch_length", common_eaves_length
+            ))
+            if use_eaves_haunch
+            else 0.0
+        )
+        self.right_eaves_length = (
+            float(frame_data.get(
+                "right_eaves_haunch_length", common_eaves_length
+            ))
+            if use_eaves_haunch
+            else 0.0
+        )
+        # Backward-compatible alias used by older report and test consumers.
+        self.eaves_length = self.left_eaves_length
         self.eaves_depth = float(frame_data.get("eaves_haunch_depth", 0.0))
         self.apex_length = (
             float(frame_data.get("apex_haunch_length", 0.0))
@@ -263,7 +282,11 @@ class HaunchProfile:
 
     @property
     def enabled(self) -> bool:
-        return self.eaves_length > 0 or self.apex_length > 0
+        return (
+            self.left_eaves_length > 0
+            or self.right_eaves_length > 0
+            or self.apex_length > 0
+        )
 
     def slope_position(self, x: float, y: float) -> float | None:
         del y
@@ -280,9 +303,14 @@ class HaunchProfile:
         position = self.slope_position(x, y)
         if position is None:
             return 0.0
+        eaves_length = (
+            self.left_eaves_length
+            if self.roof_type != "Duo Pitched" or x <= self.span / 2
+            else self.right_eaves_length
+        )
         eaves_depth = 0.0
-        if self.eaves_length and position < self.eaves_length:
-            eaves_depth = self.eaves_depth * (1 - position / self.eaves_length)
+        if eaves_length and position < eaves_length:
+            eaves_depth = self.eaves_depth * (1 - position / eaves_length)
         apex_distance = self.slope_length - position
         apex_depth = 0.0
         if self.apex_length and apex_distance < self.apex_length:
@@ -294,21 +322,34 @@ class HaunchProfile:
     def discretisation_points(self) -> list[tuple[float, float]]:
         """Return internal global roof coordinates for the tapered zones."""
 
-        positions: set[float] = set()
-        if self.eaves_length:
-            positions.update(
-                self.eaves_length * index / HAUNCH_SEGMENTS
+        left_positions: set[float] = set()
+        right_positions: set[float] = set()
+        if self.left_eaves_length:
+            left_positions.update(
+                self.left_eaves_length * index / HAUNCH_SEGMENTS
+                for index in range(1, HAUNCH_SEGMENTS + 1)
+            )
+        if self.roof_type == "Duo Pitched" and self.right_eaves_length:
+            right_positions.update(
+                self.right_eaves_length * index / HAUNCH_SEGMENTS
                 for index in range(1, HAUNCH_SEGMENTS + 1)
             )
         if self.apex_length:
-            positions.update(
+            apex_positions = {
                 self.slope_length
                 - self.apex_length * index / HAUNCH_SEGMENTS
                 for index in range(1, HAUNCH_SEGMENTS + 1)
-            )
-        positions = {
+            }
+            left_positions.update(apex_positions)
+            right_positions.update(apex_positions)
+        left_positions = {
             position
-            for position in positions
+            for position in left_positions
+            if _TOLERANCE_MM < position < self.slope_length - _TOLERANCE_MM
+        }
+        right_positions = {
+            position
+            for position in right_positions
             if _TOLERANCE_MM < position < self.slope_length - _TOLERANCE_MM
         }
         run = self.span / 2 if self.roof_type == "Duo Pitched" else self.span
@@ -318,11 +359,14 @@ class HaunchProfile:
                 run * position / self.slope_length,
                 self.eaves + rise * position / self.slope_length,
             )
-            for position in sorted(positions)
+            for position in sorted(left_positions)
         ]
         if self.roof_type == "Duo Pitched":
-            points.extend((self.span - x, y) for x, y in list(points))
-        return points
+            for position in sorted(right_positions):
+                x = run * position / self.slope_length
+                y = self.eaves + rise * position / self.slope_length
+                points.append((self.span - x, y))
+        return sorted(set(points))
 
 
 class TaperedPhysMember(PhysMember):
@@ -371,12 +415,21 @@ def haunch_extra_mass_kg(
     profile = HaunchProfile(frame_data)
     if not profile.enabled:
         return 0.0
-    count = 2 if profile.roof_type == "Duo Pitched" else 1
     total = 0.0
-    for zone_length, zone_depth in (
-        (profile.eaves_length, profile.eaves_depth),
-        (profile.apex_length, profile.apex_depth),
-    ):
+    zones = [
+        (profile.left_eaves_length, profile.eaves_depth, 1),
+        (
+            profile.right_eaves_length,
+            profile.eaves_depth,
+            1 if profile.roof_type == "Duo Pitched" else 0,
+        ),
+        (
+            profile.apex_length,
+            profile.apex_depth,
+            2 if profile.roof_type == "Duo Pitched" else 1,
+        ),
+    ]
+    for zone_length, zone_depth, count in zones:
         if zone_length <= 0:
             continue
         segment_length = zone_length / HAUNCH_SEGMENTS

@@ -181,6 +181,8 @@ def build_analysis_visualisation(
                 {
                     "name": member_name,
                     "type": member_types.get(member_name, ""),
+                    "i_node": str(member.i_node.name),
+                    "j_node": str(member.j_node.name),
                     "section": member.section.name,
                     "utilisation": (
                         float(design.governing_ratio) if design is not None else None

@@ -101,6 +101,9 @@ class CalculationSheetData:
     deflections: list[dict[str, Any]] = field(default_factory=list)
     members: list[MemberCalculation] = field(default_factory=list)
     reactions: list[ReactionResult] = field(default_factory=list)
+    foundation_characteristic_reactions: list[ReactionResult] = field(
+        default_factory=list
+    )
     bracing_design: Mapping[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     visualisation: Mapping[str, Any] = field(default_factory=dict)
@@ -116,6 +119,9 @@ class CalculationSheetData:
             "deflections": list(self.deflections),
             "members": [item.to_dict() for item in self.members],
             "reactions": [item.to_dict() for item in self.reactions],
+            "foundation_characteristic_reactions": [
+                item.to_dict() for item in self.foundation_characteristic_reactions
+            ],
             "bracing_design": dict(self.bracing_design),
             "warnings": list(self.warnings),
             "visualisation": dict(self.visualisation),
@@ -136,6 +142,10 @@ def calculation_sheet_from_dict(raw: Mapping[str, Any]) -> CalculationSheetData:
             )
         members.append(MemberCalculation(**member_data))
     reactions = [ReactionResult(**item) for item in raw.get("reactions", [])]
+    foundation_characteristic_reactions = [
+        ReactionResult(**item)
+        for item in raw.get("foundation_characteristic_reactions", [])
+    ]
     return CalculationSheetData(
         title=raw["title"],
         scope=ReportScope(raw.get("scope", ReportScope.FULL.value)),
@@ -146,6 +156,7 @@ def calculation_sheet_from_dict(raw: Mapping[str, Any]) -> CalculationSheetData:
         deflections=list(raw.get("deflections", [])),
         members=members,
         reactions=reactions,
+        foundation_characteristic_reactions=foundation_characteristic_reactions,
         bracing_design=dict(raw.get("bracing_design", {})),
         warnings=list(raw.get("warnings", [])),
         visualisation=dict(raw.get("visualisation", {})),
@@ -1009,6 +1020,16 @@ def build_calculation_sheet_data_from_frame(
         )
     ))
     reactions = collect_reactions(frame, combo_names, data.supports.keys())
+    foundation_combinations = list(getattr(
+        frame,
+        "_portal_foundation_characteristic_combinations",
+        [],
+    ))
+    foundation_characteristic_reactions = collect_reactions(
+        frame,
+        [item["name"] for item in foundation_combinations],
+        data.supports.keys(),
+    )
     frame_data = dict(data.frame_data[0])
     wind_data = dict(data.wind_data[0]) if data.wind_data else {}
     internal_pressure = dict(wind_data.get("internal_pressure", {}))
@@ -1117,6 +1138,14 @@ def build_calculation_sheet_data_from_frame(
         "girt_max_spacing_mm": frame_data.get("girt_max_spacing_mm", 0),
         "use_eaves_haunch": frame_data.get("use_eaves_haunch", "No"),
         "eaves_haunch_length_mm": frame_data.get("eaves_haunch_length", 0),
+        "left_eaves_haunch_length_mm": frame_data.get(
+            "left_eaves_haunch_length",
+            frame_data.get("eaves_haunch_length", 0),
+        ),
+        "right_eaves_haunch_length_mm": frame_data.get(
+            "right_eaves_haunch_length",
+            frame_data.get("eaves_haunch_length", 0),
+        ),
         "eaves_haunch_depth_mode": frame_data.get(
             "eaves_haunch_depth_mode", "Specified Depth"
         ),
@@ -1197,6 +1226,9 @@ def build_calculation_sheet_data_from_frame(
         deflections=deflections,
         members=all_members,
         reactions=reactions,
+        foundation_characteristic_reactions=(
+            foundation_characteristic_reactions
+        ),
         bracing_design=dict(bracing_design or {}),
         warnings=[
             "Tension-member net-section fracture and connection resistance are outside the current input model.",
@@ -1228,7 +1260,7 @@ def build_calculation_sheet_data_from_frame(
 
 def load_calculation_sheet_data(
     snapshot_path="output/analysis/analysis_results.json",
-    scope=ReportScope.CRITICAL,
+    scope=ReportScope.FULL,
     load_combination=None,
     allow_stale=False,
 ):
