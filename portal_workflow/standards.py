@@ -20,6 +20,7 @@ SANS_10160_LOADING_CODES = (
 # their original meaning; the temporary project-schedule value did not record
 # an edition, so it migrates to the current/latest default.
 _LEGACY_LOADING_CODE_MIGRATIONS = {
+    "2019": SANS_10160_LATEST_EDITIONS,
     "SANS 10160-1:2019": SANS_10160_LATEST_EDITIONS,
     "Pre-2019": SANS_10160_PREVIOUS_EDITIONS,
     "Project C1-C6 schedule": SANS_10160_LATEST_EDITIONS,

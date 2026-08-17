@@ -24,6 +24,10 @@ from foundation_workflow.design import (
 )
 from connection_workflow.haunch_geometry import HAUNCH_DEPTH_AUTO, HAUNCH_DEPTH_CUT
 from portal_workflow.preview import build_preview_geometry
+from portal_workflow.standards import (
+    SANS_10160_LATEST_EDITIONS,
+    SANS_10160_PREVIOUS_EDITIONS,
+)
 from truss_workflow import preview_truss
 from ui.analysis_render import combination_names, load_case_svg
 from ui.input_model import (
@@ -87,6 +91,56 @@ SUCCESS_BG = "#E4F5EE"
 WARNING_BG = "#FFF4D9"
 ERROR_BG = "#FCE8E6"
 
+MVP_PHASE_BY_SECTION = {
+    0: (1, "Inputs"),
+    1: (1, "Inputs"),
+    2: (1, "Inputs"),
+    3: (1, "Inputs"),
+    4: (1, "Inputs"),
+    5: (2, "Analysis"),
+    6: (3, "Connections"),
+    7: (4, "Foundations"),
+    8: (5, "Outputs"),
+    9: (5, "Outputs"),
+}
+
+MVP_PHASE_GUIDANCE = {
+    "Inputs": "Complete the project information, then review it before running the model.",
+    "Analysis": "Read the status, governing result and utilisation before opening detail.",
+    "Connections": "Review the selected arrangement and governing checks before drawings.",
+    "Foundations": "Confirm the design status and assumptions before using the calculation sheet.",
+    "Outputs": "Export only results that belong to the current analysis.",
+}
+
+LOAD_STANDARD_DISPLAY = {
+    SANS_10160_LATEST_EDITIONS: (
+        "2019",
+        "SANS 10160-1:2019 Ed. 1.3; SANS 10160-2:2011 Ed. 1.1; "
+        "SANS 10160-3:2019 Ed. 2.1",
+    ),
+    SANS_10160_PREVIOUS_EDITIONS: (
+        "Pre-2019",
+        "SANS 10160-1:2010 Ed. 1; SANS 10160-2:2011 Ed. 1.1; "
+        "SANS 10160-3:2011 Ed. 1.1",
+    ),
+}
+
+
+def mvp_phase_for_section(section_index: int) -> tuple[int, str]:
+    """Return the condensed MVP workflow phase for a detailed UI section."""
+
+    return MVP_PHASE_BY_SECTION.get(section_index, (1, "Inputs"))
+
+
+def load_standard_display(value: object) -> tuple[str, str]:
+    """Return the short selector label and full code basis shown in the UI."""
+
+    normalized = normalize_sans_10160_loading_code(value)
+    return LOAD_STANDARD_DISPLAY.get(
+        normalized,
+        (str(value or ""), str(value or "")),
+    )
+
 
 def main(page: ft.Page) -> None:
     page.title = "Portal Frame and Truss Designer"
@@ -104,6 +158,8 @@ def main(page: ft.Page) -> None:
     )
 
     controls: dict[str, Any] = {}
+    mvp_mode = False
+    sync_mvp_path_state = lambda: None
     input_file_picker = ft.FilePicker()
     page.services.append(input_file_picker)
 
@@ -402,10 +458,41 @@ def main(page: ft.Page) -> None:
     )
     load_standard = dropdown(
         "load_combination_standard",
-        "SANS 10160 loading-code editions",
+        "SANS 10160 loading basis",
         LOAD_COMBINATION_STANDARDS,
-        helper="Choose the current edition set or one previous edition set. Combination names remain C1 to C6.2.",
+        helper="Combination names remain C1 to C6.2.",
         col=12,
+    )
+    load_standard.options = [
+        ft.DropdownOption(
+            key=load_standard_display(value)[0],
+            content=ft.Text(load_standard_display(value)[0], color=TEXT_PRIMARY),
+        )
+        for value in LOAD_COMBINATION_STANDARDS
+    ]
+    load_standard.value = load_standard_display(load_standard.value)[0]
+    load_standard_detail_text = ft.Text(
+        load_standard_display(load_standard.value)[1],
+        size=11,
+        color=TEXT_MUTED,
+    )
+    load_standard_detail = ft.Container(
+        col=12,
+        bgcolor="#F3F8F7",
+        border_radius=9,
+        padding=10,
+        content=ft.Column(
+            spacing=2,
+            controls=[
+                ft.Text(
+                    "Design codes used",
+                    size=10,
+                    weight=ft.FontWeight.BOLD,
+                    color=ACCENT_DARK,
+                ),
+                load_standard_detail_text,
+            ],
+        ),
     )
     report_scope = dropdown(
         "report_scope",
@@ -1706,6 +1793,7 @@ def main(page: ft.Page) -> None:
         )
         boq_item_rows.append(record)
         boq_additional_items.controls.append(item_row)
+        sync_mvp_path_state()
         if update_page:
             page.update()
 
@@ -2458,6 +2546,9 @@ def main(page: ft.Page) -> None:
             key: control.value
             for key, control in controls.items()
         }
+        values["load_combination_standard"] = normalize_sans_10160_loading_code(
+            values["load_combination_standard"]
+        )
         values.update({
             "civil_surface_bed_area_m2": civil_surface_bed_area.value,
             "civil_surface_bed_thickness_mm": civil_surface_bed_thickness.value,
@@ -2545,7 +2636,7 @@ def main(page: ft.Page) -> None:
                 control.value = bool(value)
             elif isinstance(control, (ft.TextField, ft.Dropdown)):
                 control.value = (
-                    normalize_sans_10160_loading_code(value)
+                    load_standard_display(value)[0]
                     if key == "load_combination_standard"
                     else str(value)
                 )
@@ -3112,6 +3203,7 @@ def main(page: ft.Page) -> None:
         civil_boq_download_button.disabled = True
         boq_generate_button.disabled = True
         boq_download_button.disabled = True
+        sync_mvp_path_state()
         page.update()
 
     def show_analysis_results(result: dict[str, Any]) -> None:
@@ -3702,6 +3794,7 @@ def main(page: ft.Page) -> None:
         )
         run_analysis_button.disabled = False
         run_analysis_button.content = "Run analysis again"
+        sync_mvp_path_state()
         page.update()
 
     async def run_analysis(_=None) -> None:
@@ -3755,6 +3848,7 @@ def main(page: ft.Page) -> None:
         analysis_status_icon.visible = False
         analysis_progress.visible = True
         analysis_status_text.value = "Submitting analysis..."
+        sync_mvp_path_state()
         page.update()
 
         try:
@@ -3983,7 +4077,13 @@ def main(page: ft.Page) -> None:
             apex_haunch_length.value = f"{auto_length:g}"
             apex_haunch_depth.value = ""
 
+    def refresh_load_standard_detail() -> None:
+        load_standard_detail_text.value = load_standard_display(
+            load_standard.value
+        )[1]
+
     def update_conditionals(_=None) -> None:
+        refresh_load_standard_detail()
         sync_portal_section_options()
         sync_gable_section_options()
         sync_auto_haunch_values()
@@ -4184,6 +4284,7 @@ def main(page: ft.Page) -> None:
     gable_section.on_select = update_conditionals
 
     def update_live_input(_=None) -> None:
+        refresh_load_standard_detail()
         sync_auto_haunch_values()
         if structural_system.value == "Truss":
             span_count = entered_truss_span_count()
@@ -4490,6 +4591,7 @@ def main(page: ft.Page) -> None:
                                     wind_design_mode,
                                     roof_accessibility,
                                     load_standard,
+                                    load_standard_detail,
                                     steel_grade,
                                     report_scope,
                                 ]
@@ -5051,6 +5153,14 @@ def main(page: ft.Page) -> None:
         disabled=True,
     )
 
+    rail_brand_details = ft.Column(
+        spacing=0,
+        controls=[
+            ft.Text("PortalFrame", weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
+            ft.Text("Designer", size=11, color=TEXT_MUTED),
+        ],
+    )
+
     rail = ft.NavigationRail(
         extended=True,
         selected_index=0,
@@ -5076,13 +5186,7 @@ def main(page: ft.Page) -> None:
                             "PF", color="#FFFFFF", weight=ft.FontWeight.BOLD, size=16
                         ),
                     ),
-                    ft.Column(
-                        spacing=0,
-                        controls=[
-                            ft.Text("PortalFrame", weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
-                            ft.Text("Designer", size=11, color=TEXT_MUTED),
-                        ],
-                    ),
+                    rail_brand_details,
                 ]
             ),
         ),
@@ -5121,6 +5225,93 @@ def main(page: ft.Page) -> None:
     )
 
     current_index = 0
+    mvp_phase_text = ft.Text(
+        "Phase 1 of 5 • Inputs",
+        size=15,
+        weight=ft.FontWeight.BOLD,
+        color=TEXT_PRIMARY,
+    )
+    mvp_phase_guidance = ft.Text(
+        MVP_PHASE_GUIDANCE["Inputs"],
+        size=11,
+        color=TEXT_MUTED,
+    )
+
+    mvp_path_specs = [
+        ("1  Inputs", ft.Icons.FOLDER_OUTLINED, 0, None),
+        ("2  Analysis", ft.Icons.QUERY_STATS_OUTLINED, 5, analysis_destination),
+        ("3  Connections", ft.Icons.HARDWARE_OUTLINED, 6, connection_destination),
+        ("4  Foundations", ft.Icons.FOUNDATION_OUTLINED, 7, foundation_destination),
+        ("5  Outputs", ft.Icons.TABLE_VIEW_OUTLINED, 8, boq_destination),
+    ]
+    mvp_path_buttons: list[tuple[ft.OutlinedButton, Any]] = []
+    for label, icon, target, destination in mvp_path_specs:
+        button = ft.OutlinedButton(
+            label,
+            icon=icon,
+            disabled=bool(destination.disabled) if destination is not None else False,
+            on_click=lambda _, section=target: go_to(section),
+        )
+        mvp_path_buttons.append((button, destination))
+
+    mvp_review_bar = ft.Container(
+        visible=False,
+        bgcolor="#EAF4F3",
+        padding=ft.Padding.symmetric(horizontal=20, vertical=12),
+        border=ft.Border(bottom=ft.BorderSide(1, "#C8DEDB")),
+        content=ft.Column(
+            spacing=9,
+            controls=[
+                ft.Row(
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    vertical_alignment=ft.CrossAxisAlignment.START,
+                    controls=[
+                        ft.Column(
+                            spacing=2,
+                            controls=[
+                                ft.Text(
+                                    "GUIDED MVP REVIEW",
+                                    size=10,
+                                    weight=ft.FontWeight.BOLD,
+                                    color=ACCENT_DARK,
+                                ),
+                                mvp_phase_text,
+                                mvp_phase_guidance,
+                            ],
+                        ),
+                        ft.Container(
+                            bgcolor="#FFFFFF",
+                            border_radius=8,
+                            padding=10,
+                            content=ft.Text(
+                                "Presentation layer only — calculations, inputs and saved data are unchanged.",
+                                size=10,
+                                color=TEXT_MUTED,
+                            ),
+                        ),
+                    ],
+                ),
+                ft.Row(
+                    wrap=True,
+                    spacing=8,
+                    run_spacing=8,
+                    controls=[item[0] for item in mvp_path_buttons],
+                ),
+                ft.Text(
+                    "Status language: PASS • FAIL • PRELIMINARY • INPUT REQUIRED • OUTDATED",
+                    size=10,
+                    color=TEXT_MUTED,
+                ),
+            ],
+        ),
+    )
+
+    def sync_mvp_path_state() -> None:
+        phase_number, phase_name = mvp_phase_for_section(current_index)
+        mvp_phase_text.value = f"Phase {phase_number} of 5 • {phase_name}"
+        mvp_phase_guidance.value = MVP_PHASE_GUIDANCE[phase_name]
+        for button, destination in mvp_path_buttons:
+            button.disabled = bool(destination.disabled) if destination is not None else False
 
     def go_to(index: int) -> None:
         nonlocal current_index
@@ -5131,8 +5322,11 @@ def main(page: ft.Page) -> None:
         current_index = index
         rail.selected_index = index
         content_host.controls = [sections[index]]
-        visual_builder.visible = index not in (5, 6, 7, 8, 9)
-        running_summary_panel.visible = index not in (5, 6, 7, 8, 9)
+        visual_builder.visible = index not in (5, 6, 7, 8, 9) and (
+            not mvp_mode or index in (1, 2, 3, 4)
+        )
+        running_summary_panel.visible = index not in (5, 6, 7, 8, 9) and not mvp_mode
+        sync_mvp_path_state()
         page.update()
         page.run_task(content_host.scroll_to, offset=0, duration=0)
 
@@ -5140,6 +5334,61 @@ def main(page: ft.Page) -> None:
         go_to(event.control.selected_index)
 
     rail.on_change = on_nav_change
+
+    header_subtitle = ft.Text("Input workspace • Draft UI", size=11, color=TEXT_MUTED)
+    interface_mode_badge = ft.Container(
+        visible=False,
+        bgcolor="#EEF2F2",
+        border_radius=12,
+        padding=ft.Padding.symmetric(horizontal=9, vertical=5),
+        content=ft.Text(
+            "CURRENT UI",
+            size=9,
+            weight=ft.FontWeight.BOLD,
+            color=TEXT_MUTED,
+        ),
+    )
+    check_api_button = ft.OutlinedButton(
+        "Check API", icon=ft.Icons.SYNC, on_click=check_api
+    )
+    interface_mode_button = ft.OutlinedButton(
+        "Review MVP UI",
+        icon=ft.Icons.VISIBILITY_OUTLINED,
+    )
+
+    def toggle_interface_mode(_) -> None:
+        nonlocal mvp_mode
+        mvp_mode = not mvp_mode
+        mvp_review_bar.visible = mvp_mode
+        rail.extended = not mvp_mode
+        rail_brand_details.visible = not mvp_mode
+        api_status.visible = not mvp_mode
+        check_api_button.visible = not mvp_mode
+        interface_mode_badge.visible = mvp_mode
+        header_subtitle.value = (
+            "Guided review • Engineering workflow unchanged"
+            if mvp_mode
+            else "Input workspace • Draft UI"
+        )
+        interface_mode_badge.bgcolor = "#D9EFEC" if mvp_mode else "#EEF2F2"
+        interface_mode_badge.content.value = "MVP UI" if mvp_mode else "CURRENT UI"
+        interface_mode_badge.content.color = ACCENT_DARK if mvp_mode else TEXT_MUTED
+        interface_mode_button.content = (
+            "Return to current UI" if mvp_mode else "Review MVP UI"
+        )
+        interface_mode_button.icon = (
+            ft.Icons.UNDO if mvp_mode else ft.Icons.VISIBILITY_OUTLINED
+        )
+        visual_builder.visible = current_index not in (5, 6, 7, 8, 9) and (
+            not mvp_mode or current_index in (1, 2, 3, 4)
+        )
+        running_summary_panel.visible = (
+            current_index not in (5, 6, 7, 8, 9) and not mvp_mode
+        )
+        sync_mvp_path_state()
+        page.update()
+
+    interface_mode_button.on_click = toggle_interface_mode
 
     header = ft.Container(
         bgcolor="#FFFFFF",
@@ -5156,7 +5405,7 @@ def main(page: ft.Page) -> None:
                             weight=ft.FontWeight.BOLD,
                             color=TEXT_PRIMARY,
                         ),
-                        ft.Text("Input workspace • Draft UI", size=11, color=TEXT_MUTED),
+                        header_subtitle,
                     ],
                 ),
                 ft.Row(
@@ -5171,10 +5420,10 @@ def main(page: ft.Page) -> None:
                             icon=ft.Icons.SAVE_OUTLINED,
                             on_click=save_inputs,
                         ),
+                        interface_mode_badge,
+                        interface_mode_button,
                         api_status,
-                        ft.OutlinedButton(
-                            "Check API", icon=ft.Icons.SYNC, on_click=check_api
-                        ),
+                        check_api_button,
                     ]
                 ),
             ],
@@ -5193,6 +5442,7 @@ def main(page: ft.Page) -> None:
                     expand=True,
                     controls=[
                         header,
+                        mvp_review_bar,
                         ft.Row(
                             expand=True,
                             spacing=0,
