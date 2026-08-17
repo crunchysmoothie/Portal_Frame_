@@ -137,7 +137,7 @@ def write_connection_report_html(
     )
     document = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<title>Portal-frame connection calculations</title>
+<title>Structural connection calculations</title>
 <style>
 body{{font-family:Arial,sans-serif;margin:28px;color:#173C3A;background:#F6F8F7}}
 main{{max-width:1450px;margin:auto}}section{{margin:28px 0}}
@@ -157,7 +157,7 @@ Checks marked INPUT_REQUIRED are deliberately not accepted. This report is not
 a fabrication drawing.</div>
 <h2>Calculated scope</h2><ul>{completed}</ul>
 <h2>Inputs still required</h2><ul>{required}</ul>
-{''.join(sections) or '<p>No portal-frame connection checks were generated.</p>'}
+{''.join(sections) or '<p>No applicable connection checks were generated.</p>'}
 </main></body></html>"""
     output.write_text(document, encoding="utf-8")
     return output

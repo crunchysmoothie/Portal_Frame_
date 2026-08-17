@@ -209,6 +209,7 @@ def _stiffener_checks(
     *,
     demand_kN: float,
     connected_thickness_mm: float,
+    fy_mpa: float = STEEL_FY_MPA,
 ) -> dict[str, Any]:
     if not stiffener.get("required"):
         return {
@@ -223,7 +224,7 @@ def _stiffener_checks(
     area = thickness * height
     demand_each = demand_kN / count
     yield_resistance = (
-        RESISTANCE_FACTOR * area * STEEL_FY_MPA / 1000.0
+        RESISTANCE_FACTOR * area * float(fy_mpa) / 1000.0
     )
     radius = thickness / math.sqrt(12.0) if thickness > 0 else 0.0
     slenderness = 0.7 * height / max(radius, 1e-9)
@@ -231,12 +232,12 @@ def _stiffener_checks(
         math.pi**2 * ELASTIC_MODULUS_MPA / max(slenderness**2, 1e-9)
     )
     normalised = math.sqrt(
-        STEEL_FY_MPA / max(euler_stress, 1e-9)
+        float(fy_mpa) / max(euler_stress, 1e-9)
     )
     buckling_resistance = (
         RESISTANCE_FACTOR
         * area
-        * STEEL_FY_MPA
+        * float(fy_mpa)
         * (1.0 + normalised ** (2.0 * 1.34)) ** (-1.0 / 1.34)
         / 1000.0
     )
@@ -686,6 +687,12 @@ def _haunch_checks(
             )
         )
         supporting_member = _section(supporting_member_section)
+        steel_yield_mpa = float(
+            connection.get(
+                "steel_yield_mpa",
+                location.get("steel_yield_mpa", STEEL_FY_MPA),
+            )
+        )
         if is_apex:
             supporting_label = "Opposing rafter"
             resistance_suffix = "opposing-rafter"
@@ -917,6 +924,7 @@ def _haunch_checks(
             connected_thickness_mm=float(
                 connection["plate"]["provided_thickness_mm"]
             ),
+            fy_mpa=steel_yield_mpa,
         )
         components = connection.get("supporting_member_components")
         if not components:
@@ -930,6 +938,7 @@ def _haunch_checks(
                 row_demand_kN=row_demand,
                 flange_force_kN=flange_force,
                 panel_shear_kN=flange_force,
+                fy_mpa=steel_yield_mpa,
             )
         flange_component = components["flange_t_stub"]
         local_checks = [
@@ -1089,6 +1098,7 @@ def _haunch_checks(
             "end_plate_weld": weld,
             "stiffener_checks": stiffeners,
             "local_member_checks": local_checks,
+            "haunch_section_checks": _haunch_section_checks(snapshot, location),
         })
     return {
         "status": (
@@ -1096,11 +1106,144 @@ def _haunch_checks(
             if locations
             and all(
                 item["status"] in {"PASS", "PASS_WITH_STIFFENERS"}
+                and item.get("haunch_section_checks", {}).get("status") == "PASS"
                 for item in locations
             )
-            else ("NOT_REQUIRED" if not locations else "FAIL")
+            else (
+                "NOT_REQUIRED" if not locations
+                else (
+                    "PASS_WITH_INPUT_REQUIRED"
+                    if all(
+                        item["status"] in {"PASS", "PASS_WITH_STIFFENERS"}
+                        for item in locations
+                    )
+                    else "FAIL"
+                )
+            )
         ),
         "locations": locations,
+    }
+
+
+def _haunch_section_checks(
+    snapshot: Mapping[str, Any],
+    location: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Run post-analysis gross-web checks for the tapered haunch segments."""
+
+    # Imported lazily because design.py owns the connection-face grouping and
+    # imports this module for the completed post-analysis checks.
+    from .design import _connection_face_samples
+
+    samples = _connection_face_samples(snapshot)
+    action_key = str(location.get("action_key", ""))
+    face_samples = (
+        [*samples.get("left_eaves", []), *samples.get("right_eaves", [])]
+        if action_key == "eaves"
+        else samples.get(action_key, [])
+    )
+    parent_members = {str(item.get("member", "")) for item in face_samples}
+    rows = []
+    for item in snapshot.get("results", {}).get("members", []):
+        if str(item.get("member_type", "")).lower() != "rafter":
+            continue
+        if str(item.get("parent_member", "")) not in parent_members:
+            continue
+        try:
+            added_depth = float(item.get("section_properties", {}).get(
+                "haunch_added_depth_mm", 0.0
+            ))
+        except (TypeError, ValueError):
+            added_depth = 0.0
+        if added_depth > 0.0:
+            rows.append(item)
+    if not rows:
+        return {
+            "status": "INPUT_REQUIRED",
+            "checks": [],
+            "load_combinations": [],
+            "reason": "No stored tapered-haunch segment actions were found; re-run the analysis.",
+        }
+
+    fy = float(location.get("steel_yield_mpa", STEEL_FY_MPA))
+    grouped: dict[str, list[Mapping[str, Any]]] = {}
+    for row in rows:
+        grouped.setdefault(str(row.get("load_combination", "")), []).append(row)
+    combination_results = []
+    for combination, combination_rows in sorted(grouped.items()):
+        governing = max(
+            combination_rows,
+            key=lambda item: abs(float(item.get("shear_force", 0.0))),
+        )
+        properties = governing.get("section_properties", {})
+        try:
+            tw = float(properties["tw"])
+            hw = float(properties["hw"])
+            shear = abs(float(governing.get("shear_force", 0.0)))
+        except (KeyError, TypeError, ValueError):
+            combination_results.append({
+                "load_combination": combination,
+                "status": "INPUT_REQUIRED",
+                "governing_segment": governing.get("governing_segment", ""),
+                "checks": [],
+                "reason": "Composite haunch web properties were not stored.",
+            })
+            continue
+        resistance = RESISTANCE_FACTOR * 0.55 * fy * tw * hw / 1000.0
+        check = _check(
+            reference="HH-01",
+            name="Haunch composite web shear yielding",
+            equation="V_r = 0.55 phi f_y t_w h_w",
+            substitution=(
+                f"{shear:.3f} / (0.55 x {RESISTANCE_FACTOR:.2f} x {fy:.1f} x "
+                f"{tw:.2f} x {hw:.1f} / 1000)"
+            ),
+            demand=shear,
+            resistance=resistance,
+            units="kN",
+            source="SANS 10162 web shear resistance model used by the frame connection checks.",
+            note=(
+                "Gross-web yielding only; web shear buckling, local bearing and "
+                "longitudinal donor-weld transfer remain separate checks."
+            ),
+        )
+        combination_results.append({
+            "load_combination": combination,
+            "status": check["status"],
+            "governing_segment": governing.get("governing_segment", ""),
+            "station_start_mm": float(governing.get("segment_start_mm", 0.0)),
+            "station_end_mm": float(governing.get("segment_end_mm", 0.0)),
+            "haunch_added_depth_mm": float(properties.get("haunch_added_depth_mm", 0.0)),
+            "checks": [check],
+        })
+
+    weld_transfer = _check(
+        reference="HH-02",
+        name="Longitudinal donor-haunch weld transfer",
+        equation="q = VQ/I; weld resistance from effective throat",
+        substitution="Not calculated until the continuous weld path and effective throat are confirmed.",
+        demand=0.0,
+        resistance=0.0,
+        units="kN/mm",
+        source="SANS 10162 welded-joint design basis; fabrication topology required.",
+        completed=False,
+        note=(
+            "The donor web is shown welded to the main rafter, but the current "
+            "connection input has no weld size, continuity or termination field."
+        ),
+    )
+    statuses = [item["status"] for item in combination_results]
+    status = (
+        "FAIL" if "FAIL" in statuses else
+        "INPUT_REQUIRED" if "INPUT_REQUIRED" in statuses or weld_transfer["status"] == "INPUT_REQUIRED" else
+        "PASS"
+    )
+    return {
+        "status": status,
+        "checks": [weld_transfer],
+        "load_combinations": combination_results,
+        "weld_transfer": weld_transfer,
+        "source": "Post-analysis tapered-haunch station checks; one governing segment per ULS combination.",
     }
 
 
@@ -1146,5 +1289,44 @@ def calculate_connection_checks(
             "Checks marked INPUT_REQUIRED are not passed automatically. "
             "Connection drawings remain calculation-review markups until all "
             "project anchor and fabrication inputs are confirmed."
+        ),
+    }
+
+
+def calculate_base_plate_checks(
+    snapshot: Mapping[str, Any],
+    base_plates: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Calculate the shared base-plate scope without any haunch dependency."""
+
+    base = _base_plate_checks(snapshot, base_plates)
+    return {
+        "schema_version": 2,
+        "status": (
+            "PASS_WITH_INPUT_REQUIRED"
+            if base["status"] == "PASS_WITH_INPUT_REQUIRED"
+            else "FAIL"
+        ),
+        "base_plates": base,
+        "haunch_connections": {"status": "NOT_REQUIRED", "locations": []},
+        "completed_check_scope": [
+            "Base-plate concrete bearing and plate bending",
+            "Bolt distances and steel shear/tension interaction",
+            "Red Book HD-bolt anchor-plate estimate for 25 MPa concrete",
+            "Column-to-base-plate weld and required stiffeners",
+        ],
+        "input_required_scope": [
+            "Verification of the required 7d concrete edge distance",
+            "Pedestal geometry, reinforcement and anchor load-path detailing",
+            "Truss bearings, gussets, splices and restraint connections",
+        ],
+        "references": [
+            "Mahachi Chapter 7.3-7.5 and 7.9.",
+            "SANS 10162 steel resistance models used by the frame engine.",
+            "The Red Book holding-down-bolt anchorage estimates.",
+        ],
+        "warning": (
+            "The truss connection scope is limited to column base plates. "
+            "Items marked INPUT_REQUIRED must be resolved before fabrication."
         ),
     }

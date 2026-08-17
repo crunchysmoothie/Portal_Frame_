@@ -16,10 +16,13 @@ import gzip
 import json
 import math
 from pathlib import Path
+import re
 import tempfile
 from typing import Any, Iterable, Mapping
+import zipfile
 
 from databases import member_database as mdb
+from .inputs import display_load_case_name
 from .model import load_portal_frame
 from .analysis import build_model, resolve_candidate_haunch_data
 
@@ -134,8 +137,14 @@ def _factor_pairs(uls: Iterable[Mapping[str, Any]], sls: Iterable[Mapping[str, A
         key = tuple(sorted(uls_combo.get("factors", {})))
         candidates = sls_by_cases.get(key, [])
         sls_combo = candidates.pop(0) if candidates else {"name": "", "factors": {}}
+        requested_id = str(uls_combo.get("name") or "")
+        combination_id = (
+            requested_id
+            if len(requested_id) <= 11 and re.fullmatch(r"C\d+(?:\.\d+)?", requested_id)
+            else f"C{index}"
+        )
         pairs.append({
-            "id": f"PF{index:02d}",
+            "id": combination_id,
             "uls_name": str(uls_combo.get("name", "")),
             "sls_name": str(sls_combo.get("name", "")),
             "uls_factors": dict(uls_combo.get("factors", {})),
@@ -151,8 +160,9 @@ def _load_case_aliases(cases: Iterable[str]) -> dict[str, str]:
     used: set[str] = set()
     sequence = 1
     for source in sorted({str(case) for case in cases}):
-        if len(source) <= 6 and source not in used:
-            alias = source
+        preferred = display_load_case_name(source)
+        if len(preferred) <= 6 and preferred not in used:
+            alias = preferred
         else:
             while True:
                 alias = f"LC{sequence:04d}"
@@ -244,9 +254,18 @@ def build_portal_comparison(snapshot: Mapping[str, Any]) -> dict[str, Any]:
             ),
         })
 
+    combinations = _factor_pairs(
+        data.load_combinations, data.serviceability_load_combinations
+    )
+    combination_cases = {
+        case for combo in combinations
+        for case in [*combo["uls_factors"], *combo["sls_factors"]]
+    }
     nodal_loads = []
     for node in data.nodes.values():
         for load in node.loads:
+            if (load.case or "D") not in combination_cases:
+                continue
             nodal_loads.append({
                 "case": load.case or "D", "node": node_ids[node.name],
                 "direction": str(load.direction),
@@ -265,6 +284,8 @@ def build_portal_comparison(snapshot: Mapping[str, Any]) -> dict[str, Any]:
         ]
         total_length = sum(element_lengths)
         for load in member.loads:
+            if (load.case or "D") not in combination_cases:
+                continue
             load_start = 0.0 if load.x1 is None else float(load.x1) / 1000.0
             load_end = total_length if load.x2 is None else float(load.x2) / 1000.0
             loaded_length = max(load_end - load_start, 0.0)
@@ -287,6 +308,8 @@ def build_portal_comparison(snapshot: Mapping[str, Any]) -> dict[str, Any]:
                     member_loads.append(_orient_local_load_for_prokon(exported_load, element_length))
                 cumulative += element_length
         for load in member.point_loads:
+            if (load.case or "D") not in combination_cases:
+                continue
             point = float(load.x) / 1000.0
             cumulative = 0.0
             for index, (exported, element_length) in enumerate(zip(element_path, element_lengths)):
@@ -303,7 +326,6 @@ def build_portal_comparison(snapshot: Mapping[str, Any]) -> dict[str, Any]:
                 cumulative += element_length
 
     frame_data = data.frame_data[0]
-    combinations = _factor_pairs(data.load_combinations, data.serviceability_load_combinations)
     load_cases = {
         load["case"] for load in [*nodal_loads, *member_loads]
     } | {
@@ -340,13 +362,27 @@ def build_portal_comparison(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_truss_comparison(result: Mapping[str, Any], *, ranked_solution: int = 0) -> dict[str, Any]:
-    """Build the pin-jointed truss model actually analysed by PortalFrame."""
+def build_truss_comparison(
+    result: Mapping[str, Any], *, ranked_solution: int = 0,
+    include_columns: bool = False,
+) -> dict[str, Any]:
+    """Build the truss-only or truss-with-columns Prokon comparison model."""
 
     best = list(result["ranked_solutions"])[ranked_solution]
     geometry = best["geometry"]
     nodes_in = list(geometry["nodes"])
     node_ids = {str(node["name"]): index for index, node in enumerate(nodes_in, 1)}
+    column_height_mm = (
+        float(best.get("eave_column_design", {}).get("height_mm", 0.0))
+        if include_columns else 0.0
+    )
+    nodes = [{
+        "id": node_ids[str(node["name"])],
+        "source_name": node["name"],
+        "x_m": float(node["x_mm"]) / 1000.0,
+        "y_m": (float(node["y_mm"]) + column_height_mm) / 1000.0,
+        "z_m": 0.0,
+    } for node in nodes_in]
     schedule = {str(row["member"]): row for row in best["member_schedule"]}
     sections: dict[str, dict[str, Any]] = {}
     section_names: dict[str, str] = {}
@@ -370,64 +406,295 @@ def build_truss_comparison(result: Mapping[str, Any], *, ranked_solution: int = 
             "i_node": node_ids[str(member["i_node"])], "j_node": node_ids[str(member["j_node"])],
             "section": section_names[designation], "release_i": "T", "release_j": "T",
         })
-    cases = best.get("load_audit", {}).get("characteristic_node_loads_kn", {})
-    # Case D in the truss solver contains only the selected members' iterated
-    # self-weight, distributed equally to their end nodes.  Prokon can generate
-    # the same action directly from the exported member areas and steel density.
-    # Do not also export the equivalent D node loads or self-weight is counted
-    # twice in every combination containing D.
-    nodal_loads = [
-        {"case": case, "node": node_ids[node], "direction": direction, "magnitude": value}
-        for case, loads in cases.items() for node, components in loads.items()
-        for direction, value in (("FX", float(components[0])), ("FY", float(components[1])))
-        if case != "D" and abs(float(value)) > 1e-12
-    ]
     support_names = [
         str(name) for name in geometry.get("support_nodes", [])
     ] or [
         str(geometry["left_support"]),
         str(geometry["right_support"]),
     ]
-    # Match the PortalFrame truss solver: every bearing node carries vertical
-    # reaction, while only the first support restrains horizontal translation.
-    support_rows = [
-        {
-            "node": node_ids[name],
-            "fixity": "XY" if index == 0 else "Y",
-            "rz_spring_knm_per_rad": None,
+    column_bearings: list[str] = []
+    base_node_ids: dict[str, int] = {}
+    if include_columns:
+        if column_height_mm <= 0.0:
+            raise ValueError("The selected truss result has no positive column height.")
+        internal_support = str(
+            best.get("building_layout", {}).get("support_arrangement", {}).get(
+                "internal_support", "Not required"
+            )
+        )
+        column_bearings = [support_names[0], support_names[-1]]
+        if internal_support == "Centre columns":
+            column_bearings[1:1] = support_names[1:-1]
+        vertical_schedule = {
+            str(item["bearing_node"]): item
+            for item in best.get("bearing_support_verticals", [])
         }
-        for index, name in enumerate(support_names)
-    ]
-    combinations = _factor_pairs(best["load_audit"]["uls_combinations"], best["load_audit"]["sls_combinations"])
-    load_cases = {
-        load["case"] for load in nodal_loads
-    } | {
+        database = mdb.load_member_database(
+            PROJECT_ROOT / "databases" / "member_database.csv"
+        )
+        for column_index, bearing in enumerate(column_bearings, 1):
+            schedule_item = vertical_schedule.get(bearing)
+            if schedule_item is None:
+                raise ValueError(f"No supporting-column section is stored for bearing {bearing}.")
+            designation = str(schedule_item["section"]["designation"])
+            section_name = f"C{column_index:02d}"
+            props = mdb.member_properties(_section_family(designation), designation, database)
+            sections[section_name] = asdict(
+                _section_from_portal(section_name, designation, props)
+            )
+            top_node = next(node for node in nodes if node["source_name"] == bearing)
+            base_id = len(nodes) + 1
+            base_node_ids[bearing] = base_id
+            nodes.append({
+                "id": base_id,
+                "source_name": f"BASE-{bearing}",
+                "x_m": float(top_node["x_m"]),
+                "y_m": 0.0,
+                "z_m": 0.0,
+            })
+            members.append({
+                "id": len(members) + 1,
+                "source_name": f"COLUMN-{bearing}",
+                "i_node": base_id,
+                "j_node": node_ids[bearing],
+                "section": section_name,
+                "release_i": "",
+                "release_j": "",
+            })
+    combinations = _factor_pairs(
+        best["load_audit"]["uls_combinations"],
+        best["load_audit"]["sls_combinations"],
+    )
+    combination_cases = {
         case for combo in combinations
+        for case in [*combo["uls_factors"], *combo["sls_factors"]]
+    }
+    cases = best.get("load_audit", {}).get("characteristic_node_loads_kn", {})
+    nodal_loads = [
+        {"case": case, "node": node_ids[node], "direction": direction, "magnitude": value}
+        for case, loads in cases.items() for node, components in loads.items()
+        for direction, value in (("FX", float(components[0])), ("FY", float(components[1])))
+        if case != "D" and case in combination_cases and abs(float(value)) > 1e-12
+    ]
+    column_member_loads = []
+    if include_columns:
+        wall_loads = best.get("load_audit", {}).get(
+            "eave_column_member_loads", {}
+        )
+        for side, bearing in (("left", support_names[0]), ("right", support_names[-1])):
+            for load in wall_loads.get(side, []):
+                if load["case"] not in combination_cases:
+                    continue
+                column_member_loads.append({
+                    "case": str(load["case"]),
+                    "source_member": f"COLUMN-{bearing}",
+                    "node_path": [base_node_ids[bearing], node_ids[bearing]],
+                    "direction": "X",
+                    "w1_kn_m": float(load["w1_kn_m"]),
+                    "w2_kn_m": float(load["w2_kn_m"]),
+                    "start_m": float(load["start_m"]),
+                    "length_m": float(load["length_m"]),
+                })
+    support_rows = [{
+        "node": node_ids[name],
+        "fixity": "XY" if index == 0 else "Y",
+        "rz_spring_knm_per_rad": None,
+    } for index, name in enumerate(support_names) if name not in base_node_ids]
+    support_rows.extend({
+        "node": base_node_ids[name],
+        "fixity": "XY" if name == column_bearings[0] else "Y",
+        "rz_spring_knm_per_rad": None,
+    } for name in column_bearings)
+    load_cases = {
+        load["case"] for load in [*nodal_loads, *column_member_loads]
+    } | combination_cases
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "generator": "PortalFrame prokon_export",
+        "created": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "analysis_id": result.get("analysis_id", ""),
+        "structural_system": "Truss with columns" if include_columns else "Truss",
+        "units": {"distance": "m", "force": "kN", "moment": "kNm"},
+        "analysis": {"domain": "XY plane", "type": "Linear", "self_weight_case": "D"},
+        "nodes": nodes, "members": members, "sections": list(sections.values()),
+        "supports": support_rows, "nodal_loads": nodal_loads,
+        "member_loads": column_member_loads,
+        "load_combinations": combinations,
+        "load_case_map": _load_case_aliases(load_cases),
+        "prokon_node_rules": {"bracing": "Every truss panel and restraint location is already a node.", "haunch": "Not applicable."},
+        "warnings": [
+            (
+                "This export adds the selected main and centre-column sections below the truss bearings and applies the source portal's characteristic wall-wind load segments to the two main columns."
+                if include_columns else
+                "This export is the pin-jointed truss-only analysis model; columns and the longitudinal girder are exported as separate comparison models."
+            ),
+            "All truss member ends are released as Prokon truss members to match the PortalFrame axial-only solver.",
+            "Prokon generates member self-weight in load case D; PortalFrame D nodal self-weight loads are not exported.",
+            "Member I and J values are stiffness placeholders derived from area and radius of gyration; released truss axial response depends on E and area.",
+        ],
+    }
+
+
+def build_girder_comparison(
+    result: Mapping[str, Any], *, ranked_solution: int = 0,
+) -> dict[str, Any] | None:
+    """Build the selected longitudinal lattice-girder comparison model."""
+
+    best = list(result["ranked_solutions"])[ranked_solution]
+    girder = dict(best.get("girder_design", {}))
+    if girder.get("status") != "PASS":
+        return None
+    geometry = girder["geometry"]
+    nodes_in = list(geometry["nodes"])
+    node_ids = {str(node["name"]): index for index, node in enumerate(nodes_in, 1)}
+    schedule = {str(row["member"]): row for row in girder["member_schedule"]}
+    sections: dict[str, dict[str, Any]] = {}
+    section_names: dict[str, str] = {}
+    members = []
+    for member in geometry["members"]:
+        section = schedule[str(member["name"])]["section"]
+        designation = str(section["designation"])
+        if designation not in section_names:
+            short = f"S{len(section_names) + 1:02d}"
+            section_names[designation] = short
+            area = float(section["area_mm2"])
+            radius = min(float(section.get("rx_mm", 1.0)), float(section.get("ry_mm", 1.0)))
+            inertia = area * radius**2 * 1e-12
+            sections[short] = {
+                "name": short, "designation": designation, "area_m2": area * 1e-6,
+                "ixx_m4": inertia, "iyy_m4": inertia,
+                "j_m4": max(inertia * 0.01, 1e-12), "material": "Steel:S355JR",
+            }
+        members.append({
+            "id": len(members) + 1, "source_name": str(member["name"]),
+            "i_node": node_ids[str(member["i_node"])],
+            "j_node": node_ids[str(member["j_node"])],
+            "section": section_names[designation], "release_i": "T", "release_j": "T",
+        })
+    audit = girder.get("load_audit", {})
+    combinations = _factor_pairs(
+        audit.get("uls_combinations", []), audit.get("sls_combinations", [])
+    )
+    combination_cases = {
+        case for combo in combinations
+        for case in [*combo["uls_factors"], *combo["sls_factors"]]
+    }
+    nodal_loads = [
+        {"case": case, "node": node_ids[node], "direction": direction, "magnitude": value}
+        for case, loads in audit.get("characteristic_node_loads_kn", {}).items()
+        for node, components in loads.items()
+        for direction, value in (("FX", float(components[0])), ("FY", float(components[1])))
+        if case != "D" and case in combination_cases and abs(float(value)) > 1e-12
+    ]
+    support_names = list(geometry.get("support_nodes", [])) or [
+        geometry["left_support"], geometry["right_support"]
+    ]
+    load_cases = {load["case"] for load in nodal_loads} | combination_cases
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "generator": "PortalFrame prokon_export",
+        "created": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "analysis_id": result.get("analysis_id", ""),
+        "structural_system": "Longitudinal girder",
+        "units": {"distance": "m", "force": "kN", "moment": "kNm"},
+        "analysis": {"domain": "XY plane", "type": "Linear", "self_weight_case": "D"},
+        "nodes": [{
+            "id": node_ids[str(node["name"])], "source_name": node["name"],
+            "x_m": float(node["x_mm"]) / 1000.0,
+            "y_m": float(node["y_mm"]) / 1000.0, "z_m": 0.0,
+        } for node in nodes_in],
+        "members": members,
+        "sections": list(sections.values()),
+        "supports": [{
+            "node": node_ids[str(name)], "fixity": "XY" if index == 0 else "Y",
+            "rz_spring_knm_per_rad": None,
+        } for index, name in enumerate(support_names)],
+        "nodal_loads": nodal_loads,
+        "member_loads": [],
+        "load_combinations": combinations,
+        "load_case_map": _load_case_aliases(load_cases),
+        "prokon_node_rules": {"bracing": "Every lattice-girder panel is a node.", "haunch": "Not applicable."},
+        "warnings": [
+            "This is one representative longitudinal lattice-girder span.",
+            "The largest absolute characteristic internal truss-bearing reaction is repeated at every truss grid, matching the PortalFrame girder design basis.",
+            "Prokon generates the girder member self-weight in load case D.",
+        ],
+    }
+
+
+def build_gable_columns_comparison(
+    bracing: Mapping[str, Any], combinations: Iterable[Mapping[str, Any]], *,
+    analysis_id: str = "", source_system: str = "Portal frame",
+) -> dict[str, Any] | None:
+    """Build the independently pinned gable-column comparison model."""
+
+    columns = list(bracing.get("gable_columns", []))
+    if not columns:
+        return None
+    database = mdb.load_member_database(
+        PROJECT_ROOT / "databases" / "member_database.csv"
+    )
+    nodes, members, supports = [], [], []
+    sections: dict[str, dict[str, Any]] = {}
+    member_loads = []
+    pressure_by_case = {
+        str(item["case"]): float(item["pressure_kpa"])
+        for item in bracing.get("pressure_cases", [])
+    }
+    for index, column in enumerate(columns, 1):
+        bottom, top = 2 * index - 1, 2 * index
+        height_m = float(column["height_mm"]) / 1000.0
+        x_m = float(column["x_mm"]) / 1000.0
+        nodes.extend((
+            {"id": bottom, "source_name": f'{column["name"]}-BASE', "x_m": x_m, "y_m": 0.0, "z_m": 0.0},
+            {"id": top, "source_name": f'{column["name"]}-TOP', "x_m": x_m, "y_m": height_m, "z_m": 0.0},
+        ))
+        section_name = f"G{index:02d}"
+        designation = str(column["section"])
+        props = mdb.member_properties(str(column["section_type"]), designation, database)
+        sections[section_name] = asdict(
+            _section_from_portal(section_name, designation, props)
+        )
+        members.append({
+            "id": index, "source_name": str(column["name"]),
+            "i_node": bottom, "j_node": top, "section": section_name,
+            "release_i": "", "release_j": "",
+        })
+        supports.extend((
+            {"node": bottom, "fixity": "XY", "rz_spring_knm_per_rad": None},
+            {"node": top, "fixity": "XY", "rz_spring_knm_per_rad": None},
+        ))
+        tributary_m = float(column["tributary_width_mm"]) / 1000.0
+        for case, pressure_kpa in pressure_by_case.items():
+            line_load = pressure_kpa * tributary_m
+            if abs(line_load) > 1e-12:
+                member_loads.append({
+                    "case": case, "source_member": str(column["name"]),
+                    "node_path": [bottom, top], "direction": "X",
+                    "w1_kn_m": line_load, "w2_kn_m": line_load,
+                    "start_m": None, "length_m": None,
+                })
+    canonical_combinations = [dict(item) for item in combinations]
+    load_cases = {load["case"] for load in member_loads} | {
+        case for combo in canonical_combinations
         for case in [*combo["uls_factors"], *combo["sls_factors"]]
     }
     return {
         "schema_version": SCHEMA_VERSION,
         "generator": "PortalFrame prokon_export",
         "created": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "analysis_id": result.get("analysis_id", ""),
-        "structural_system": "Truss",
+        "analysis_id": analysis_id,
+        "structural_system": f"{source_system} gable columns",
         "units": {"distance": "m", "force": "kN", "moment": "kNm"},
         "analysis": {"domain": "XY plane", "type": "Linear", "self_weight_case": "D"},
-        "nodes": [{"id": node_ids[str(node["name"])], "source_name": node["name"], "x_m": float(node["x_mm"]) / 1000.0, "y_m": float(node["y_mm"]) / 1000.0, "z_m": 0.0} for node in nodes_in],
-        "members": members,
-        "sections": list(sections.values()),
-        "supports": support_rows,
-        "nodal_loads": nodal_loads,
-        "member_loads": [],
-        "load_combinations": combinations,
+        "nodes": nodes, "members": members, "sections": list(sections.values()),
+        "supports": supports, "nodal_loads": [], "member_loads": member_loads,
+        "load_combinations": canonical_combinations,
         "load_case_map": _load_case_aliases(load_cases),
-        "prokon_node_rules": {"bracing": "Every truss panel and restraint location is already a node.", "haunch": "Not applicable."},
+        "prokon_node_rules": {"bracing": "Each gable column is independently pinned at its base and roof restraint.", "haunch": "Not applicable."},
         "warnings": [
-            "This export is the pin-jointed truss-only analysis model; PortalFrame eave-column and longitudinal-girder designs are separate models.",
-            "All truss member ends are released as Prokon truss members to match the PortalFrame axial-only solver.",
-            "Prokon generates member self-weight in load case D; the PortalFrame equivalent nodal D self-weight loads are intentionally not exported to prevent double-counting.",
-            "Member I and J values are stiffness placeholders derived from area and radius of gyration; released truss axial response depends on E and area.",
-            "All PortalFrame bearing nodes are exported as Prokon supports; the first support restrains XY and the remaining bearing supports restrain Y.",
+            "This model contains the internal gable columns only; corner portal/eave columns and the roof-bracing load path are separate models.",
+            "Characteristic W90 pressures are applied over each calculated tributary width; the paired C1-C6 factors are retained for comparison.",
         ],
     }
 
@@ -555,12 +822,46 @@ def render_a03(model: Mapping[str, Any], template: str | Path = DEFAULT_TEMPLATE
     return b"".join(lines) + binary_tail
 
 
+def _comparison_stem(model: Mapping[str, Any]) -> str:
+    system = str(model.get("structural_system", "comparison")).lower()
+    if system == "portal frame":
+        return "portalframe_prokon_input"
+    if system == "truss":
+        return "truss_prokon_input"
+    if system == "truss with columns":
+        return "truss_with_columns_prokon_input"
+    if system == "longitudinal girder":
+        return "longitudinal_girder_prokon_input"
+    if "gable columns" in system:
+        prefix = "truss" if system.startswith("truss") else "portalframe"
+        return f"{prefix}_gable_columns_prokon_input"
+    return re.sub(r"[^a-z0-9]+", "_", system).strip("_") + "_prokon_input"
+
+
 def write_comparison_package(model: Mapping[str, Any], output_dir: str | Path) -> dict[str, Path]:
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
-    stem = "portalframe_prokon_input" if model["structural_system"] == "Portal frame" else "truss_prokon_input"
+    stem = _comparison_stem(model)
     json_path = output / f"{stem}.json"
     a03_path = output / f"{stem}.A03"
     json_path.write_text(json.dumps(model, indent=2), encoding="utf-8")
     a03_path.write_bytes(render_a03(model))
     return {"json": json_path, "a03": a03_path}
+
+
+def write_comparison_bundle(
+    models: Mapping[str, Mapping[str, Any] | None], output_dir: str | Path,
+) -> dict[str, Any]:
+    """Write every available comparison model and one downloadable ZIP bundle."""
+
+    output = Path(output_dir)
+    written: dict[str, dict[str, Path]] = {}
+    for key, model in models.items():
+        if model is not None:
+            written[key] = write_comparison_package(model, output)
+    zip_path = output / "prokon_comparison_models.zip"
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for paths in written.values():
+            for path in paths.values():
+                archive.write(path, arcname=path.name)
+    return {"models": written, "zip": zip_path}

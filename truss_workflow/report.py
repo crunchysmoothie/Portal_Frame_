@@ -8,6 +8,8 @@ import math
 from pathlib import Path
 from typing import Any, Mapping
 
+from portal_workflow.inputs import display_load_case_name
+
 
 def write_truss_json(result: Mapping[str, Any], path: str | Path) -> Path:
     path = Path(path)
@@ -76,7 +78,7 @@ def _wind_audit_html(best: Mapping[str, Any]) -> str:
 
     resultant_rows = "".join(
         "<tr>"
-        f"<td>{escape(str(item.get('case', '')))}</td>"
+        f"<td>{escape(display_load_case_name(item.get('case', '')))}</td>"
         f"<td>{item.get('loaded_node_count', '')}</td>"
         f"<td>{_number(item.get('sum_fx_kn', 0), 3)}</td>"
         f"<td>{_number(item.get('sum_fy_kn', 0), 3)}</td>"
@@ -85,7 +87,7 @@ def _wind_audit_html(best: Mapping[str, Any]) -> str:
     )
     applied_rows = "".join(
         "<tr>"
-        f"<td>{escape(str(item.get('case', '')))}</td>"
+        f"<td>{escape(display_load_case_name(item.get('case', '')))}</td>"
         f"<td>{escape(str(item.get('truss_member', '')))}</td>"
         f"<td>{escape(str(item.get('i_node', '')))} - {escape(str(item.get('j_node', '')))}</td>"
         f"<td>{_number(item.get('global_x_start_m', 0), 3)} to {_number(item.get('global_x_end_m', 0), 3)}</td>"
@@ -102,7 +104,7 @@ def _wind_audit_html(best: Mapping[str, Any]) -> str:
         return "".join(
             "<tr>"
             f"<td>{escape(str(item.get('name', '')))}</td>"
-            f"<td>{escape(', '.join(f'{case}={float(factor):g}' for case, factor in item.get('factors', {}).items()))}</td>"
+            f"<td>{escape(', '.join(f'{display_load_case_name(case)}={float(factor):g}' for case, factor in item.get('factors', {}).items()))}</td>"
             "</tr>"
             for item in audit.get(key, [])
             if any(
@@ -139,7 +141,6 @@ def _wind_audit_html(best: Mapping[str, Any]) -> str:
 """
 
 
-# TODO(advanced-finishes): Complete the truss markup section.
 def write_truss_markup_html(
     result: Mapping[str, Any], path: str | Path
 ) -> Path:
@@ -168,9 +169,24 @@ def write_truss_markup_html(
         designation: f"S{index}"
         for index, designation in enumerate(designations, 1)
     }
+    restraint_layout = best.get("chord_restraint_layout", {})
+    top_restraint_nodes = {
+        str(item.get("name", ""))
+        for item in restraint_layout.get("top_chord", {}).get(
+            "restraint_nodes", []
+        )
+        if isinstance(item, Mapping)
+    }
+    bottom_restraint_nodes = {
+        str(item.get("name", ""))
+        for item in restraint_layout.get("bottom_chord", {}).get(
+            "restraint_nodes", []
+        )
+        if isinstance(item, Mapping)
+    }
 
     width, height = 1800, 760
-    plot_left, plot_right, plot_top, plot_bottom = 70, 1730, 110, 610
+    plot_left, plot_right, plot_top, plot_bottom = 70, 1450, 110, 610
     x_values = [float(item["x_mm"]) for item in nodes.values()]
     y_values = [float(item["y_mm"]) for item in nodes.values()]
     min_x, max_x = min(x_values), max(x_values)
@@ -215,6 +231,77 @@ def write_truss_markup_html(
             f'<line x1="{x1:.2f}" y1="{y1:.2f}" x2="{x2:.2f}" y2="{y2:.2f}" '
             f'stroke="{colour}" stroke-width="4" stroke-linecap="round"/>'
         )
+    # Use short section marks only. Member/node identifiers belong in the
+    # calculation report and made the overview unreadable on dense trusses.
+    for member_index, member in enumerate(geometry.get("members", [])):
+        name = str(member["name"])
+        item = schedule.get(name, {})
+        designation = str(item.get("section", {}).get("designation", ""))
+        section_mark = section_marks.get(designation, "-")
+        start = nodes[str(member["i_node"])]
+        end = nodes[str(member["j_node"])]
+        x1, y1 = sx(float(start["x_mm"])), sy(float(start["y_mm"]))
+        x2, y2 = sx(float(end["x_mm"])), sy(float(end["y_mm"]))
+        role = str(member.get("role", ""))
+        label_x, label_y = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+        if role == "top_chord":
+            label_y -= 11.0
+        elif role == "bottom_chord":
+            label_y += 15.0
+        elif role in {"vertical", "support_vertical"}:
+            label_x += 8.0 if member_index % 2 == 0 else -8.0
+        else:
+            label_y += 8.0 if member_index % 2 == 0 else -8.0
+        svg.extend([
+            f'<rect x="{label_x - 12:.2f}" y="{label_y - 10:.2f}" '
+            'width="24" height="13" rx="3" fill="#FFFFFF" opacity="0.94"/>',
+            f'<text x="{label_x:.2f}" y="{label_y:.2f}" text-anchor="middle" '
+            f'font-size="9" font-weight="700" fill="#102C2B">'
+            f'{escape(section_mark)}</text>',
+        ])
+    # Mark the actual transverse bracing points supplied to the analysis.
+    # These are deliberately separate from the truss members: a purlin or
+    # tie restraint is not an additional in-plane truss member.
+    for chord in ("top_chord", "bottom_chord"):
+        for point in restraint_layout.get(chord, {}).get("restraint_nodes", []):
+            if not isinstance(point, Mapping):
+                continue
+            x_value = sx(float(point["x_mm"]))
+            y_value = sy(float(point["y_mm"]))
+            svg.append(
+                f'<circle cx="{x_value:.2f}" cy="{y_value:.2f}" r="7" '
+                'fill="#FFFFFF" stroke="#2866A3" stroke-width="2.5"/>'
+            )
+    legend_x = 1490
+    legend_height = max(250, 155 + len(designations) * 32)
+    svg.extend([
+        f'<rect x="{legend_x}" y="125" width="270" height="{legend_height}" rx="8" '
+        'fill="#F7FAFB" stroke="#C9D3D9" stroke-width="1.5"/>',
+        f'<text x="{legend_x + 18}" y="153" font-size="18" font-weight="700" '
+        'fill="#173C3A">MEMBER LEGEND</text>',
+    ])
+    for legend_index, designation in enumerate(designations):
+        mark = section_marks[designation]
+        legend_y = 184 + legend_index * 30
+        member_names = sorted(
+            name for name, item in schedule.items()
+            if str(item.get("section", {}).get("designation", "")) == designation
+        )
+        svg.extend([
+            f'<text x="{legend_x + 18}" y="{legend_y}" font-size="17" '
+            f'font-weight="700" fill="#2866A3">{escape(mark)}</text>',
+            f'<text x="{legend_x + 55}" y="{legend_y}" font-size="14" '
+            f'fill="#173C3A">{escape(designation)}</text>',
+            f'<text x="{legend_x + 55}" y="{legend_y + 16}" font-size="11" '
+            f'fill="#607472">{len(member_names)} member(s)</text>',
+        ])
+    restraint_legend_y = 184 + len(designations) * 30 + 20
+    svg.extend([
+        f'<circle cx="{legend_x + 26}" cy="{restraint_legend_y - 5}" r="7" '
+        'fill="#FFFFFF" stroke="#2866A3" stroke-width="2.5"/>',
+        f'<text x="{legend_x + 45}" y="{restraint_legend_y}" font-size="12" '
+        'fill="#607472">Calculated chord restraint</text>',
+    ])
     for support in geometry.get("support_nodes", []):
         node = nodes[str(support)]
         x_value, y_value = sx(float(node["x_mm"])), sy(float(node["y_mm"]))
@@ -224,15 +311,15 @@ def write_truss_markup_html(
             f'{y_value:.2f} Z" fill="#C17B00"/>'
         )
     svg.extend([
-        '<text x="50" y="690" font-size="15" font-weight="700" fill="#173C3A">Full elevation overview - see enlarged labelled strips below</text>',
-        '<text x="50" y="718" font-size="13" fill="#607472">Section marks and utilisations are calculation-review information. Connections are not shown.</text>',
+        '<text x="50" y="690" font-size="15" font-weight="700" fill="#173C3A">Full elevation overview - section marks and paired restraint points shown</text>',
+        f'<text x="50" y="718" font-size="13" fill="#607472">Span {_number((max_x - min_x) / 1000, 2)} m | {geometry.get("panel_count", "")} panels at {_number(geometry.get("panel_width_mm", 0), 0)} mm | S labels = member sections | blue circles = paired chord restraint points.</text>',
         "</svg>",
     ])
 
     detail_svgs: list[str] = []
-    # Keep the calculation markup legible when a truss has many short panels.
-    # A strip normally carries no more than about fourteen member callouts.
-    detail_count = min(8, max(1, int(math.ceil(len(schedule) / 14))))
+    # Keep the markup legible when a truss has many short panels. A strip
+    # normally carries no more than about ten member callouts.
+    detail_count = min(8, max(1, int(math.ceil(len(schedule) / 10))))
     for detail_index in range(detail_count):
         zone_start = min_x + (max_x - min_x) * detail_index / detail_count
         zone_end = min_x + (max_x - min_x) * (detail_index + 1) / detail_count
@@ -278,7 +365,6 @@ def write_truss_markup_html(
             item = schedule.get(name, {})
             designation = str(item.get("section", {}).get("designation", ""))
             section_mark = section_marks.get(designation, "-")
-            utilisation = float(item.get("utilisation", 0.0) or 0.0)
             colour = role_colours.get(
                 str(member.get("role", "")), "#173C3A"
             )
@@ -292,35 +378,30 @@ def write_truss_markup_html(
             role = str(member.get("role", ""))
             label_x, label_y = (x1 + x2) / 2, (y1 + y2) / 2
             if role == "top_chord":
-                label_y -= 18.0
+                label_y -= 16.0
             elif role == "bottom_chord":
-                label_y += 28.0
+                label_y += 22.0
             elif role in {"vertical", "support_vertical"}:
-                # Keep vertical-member callouts aligned with their member so
-                # they do not compete with the diagonal labels at mid-depth.
-                label_y += 5.0
+                # Keep vertical labels horizontal. Rotating the text made the
+                # visible label and its collision box disagree.
+                label_x += 28.0
             else:
-                offset = 14.0 if member_index % 2 == 0 else -18.0
+                offset = 10.0 if member_index % 2 == 0 else -12.0
                 label_x -= dy / length_screen * offset
                 label_y += dx / length_screen * offset
-            label_text = (
-                f"{name} / {section_mark} / U={utilisation:.2f}"
-            )
-            label_transform = (
-                f' transform="rotate(-90 {label_x:.2f} {label_y:.2f})"'
-                if role in {"vertical", "support_vertical"}
-                else ""
-            )
+            label_text = section_mark
+            label_width = 44.0
+            label_height = 18.0
             detail.extend([
-                f'<rect{label_transform} x="{label_x - 94:.2f}" y="{label_y - 17:.2f}" '
-                f'width="188" height="22" rx="4" fill="#FFFFFF" '
+                f'<rect x="{label_x - label_width / 2:.2f}" y="{label_y - label_height + 3:.2f}" '
+                f'width="{label_width:.2f}" height="{label_height:.2f}" rx="4" fill="#FFFFFF" '
                 f'opacity="0.90"/>',
-                f'<text{label_transform} class="label" x="{label_x:.2f}" y="{label_y:.2f}" '
-                f'text-anchor="middle" font-size="16" font-weight="700" '
+                f'<text class="label" x="{label_x:.2f}" y="{label_y:.2f}" '
+                f'text-anchor="middle" font-size="12" font-weight="700" '
                 f'fill="#102C2B">{escape(label_text)}</text>',
             ])
         detail.extend([
-            '<text x="50" y="530" font-size="14" fill="#607472">Label format: member / section mark / governing utilisation. Geometry at one physical scale within this detail strip.</text>',
+            '<text x="50" y="530" font-size="14" fill="#607472">Only section marks are shown. Member identifiers and calculations are issued in the separate design report.</text>',
             "</svg>",
         ])
         detail_svgs.append("".join(detail))
@@ -333,18 +414,25 @@ def write_truss_markup_html(
         "</tr>"
         for designation in designations
     )
-    member_rows = "".join(
-        "<tr>"
-        f"<td>{escape(name)}</td>"
-        f"<td>{escape(str(item.get('role', '')).replace('_', ' '))}</td>"
-        f"<td>{section_marks.get(str(item.get('section', {}).get('designation', '')), '-')}</td>"
-        f"<td>{escape(str(item.get('section', {}).get('designation', '')))}</td>"
-        f"<td>{escape(str(item.get('i_node', '')))} - {escape(str(item.get('j_node', '')))}</td>"
-        f"<td>{_number(item.get('maximum_tension_kn', 0), 1)}</td>"
-        f"<td>{_number(item.get('maximum_compression_kn', 0), 1)}</td>"
-        f"<td>{_number(item.get('utilisation', 0), 3)}</td>"
-        "</tr>"
-        for name, item in sorted(schedule.items())
+    def restraint_rows(role: str) -> str:
+        data = restraint_layout.get(role, {})
+        nodes_text = ", ".join(
+            str(item.get("name", ""))
+            for item in data.get("restraint_nodes", [])
+            if isinstance(item, Mapping)
+        ) or "None stored"
+        return (
+            "<tr>"
+            f"<td>{escape(role.replace('_', ' ').title())}</td>"
+            f"<td>{data.get('requested_brace_every_n_purlins', data.get('brace_every_n_purlins', ''))}</td>"
+            f"<td>{data.get('actual_maximum_purlin_interval', '')}</td>"
+            f"<td>{_number(data.get('maximum_spacing_mm', 0), 0)} mm</td>"
+            f"<td>{escape(nodes_text)}</td>"
+            f"<td>{escape(str(data.get('coverage', '')))}</td>"
+            "</tr>"
+        )
+    restraint_rows_html = "".join(
+        restraint_rows(role) for role in ("top_chord", "bottom_chord")
     )
     html = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Truss member markup</title>
@@ -358,14 +446,16 @@ tr:nth-child(even){{background:#f7fafb}}
 .warning{{background:#fff4d9;border-left:5px solid #b87900;padding:12px}}
 @media print{{body{{margin:8mm}} .page-break{{page-break-before:always}}}}
 </style></head><body>
-<div class="warning"><strong>Review markup.</strong> This drawing identifies calculated truss members, selected sections and governing utilisations. It is not a fabrication drawing and contains no connection detailing.</div>
+<div class="warning"><strong>Review markup.</strong> This drawing identifies truss geometry, member labels, selected sections and calculated restraint points. It is not a fabrication drawing and contains no connection detailing.</div>
 {"".join(svg)}
 <h2>Enlarged labelled member strips</h2>
 {"".join(detail_svgs)}
-<h2>Section schedule</h2>
+<h2>Member legend</h2>
 <table><thead><tr><th>Mark</th><th>Section</th><th>Members</th></tr></thead><tbody>{section_rows}</tbody></table>
-<h2 class="page-break">Member-by-member review schedule</h2>
-<table><thead><tr><th>Member</th><th>Role</th><th>Mark</th><th>Section</th><th>Nodes</th><th>Max T* (kN)</th><th>Max C* (kN)</th><th>Util.</th></tr></thead><tbody>{member_rows}</tbody></table>
+<h2>Calculated chord restraint points</h2>
+<p>Blue circles identify paired top- and bottom-chord connection points at each transverse bracing line. An intermediate chord connection point is shown where the analytical Warren geometry has no joint. These points must be coordinated with the purlin, tie and longitudinal bracing layout.</p>
+<table><thead><tr><th>Chord</th><th>Requested maximum Nth purlin</th><th>Actual paired maximum interval</th><th>Maximum restraint spacing</th><th>Transverse restraint nodes</th><th>Coverage</th></tr></thead><tbody>{restraint_rows_html}</tbody></table>
+<p class="warning"><strong>Design calculations are separate.</strong> This markup identifies geometry, section marks and restraint points only. Refer to the truss calculation report for forces and utilisations. Column base plates are issued in the separate base-plate package; truss bearings, gussets, splices and restraint connections are not included.</p>
 </body></html>"""
     path.write_text(html, encoding="utf-8")
     return path
@@ -482,8 +572,8 @@ small{{color:#667681}} .wind-table,.wind-segments{{font-size:9px}} .page-break{{
 <div>Topology / joints</div><div>{escape(str(basis.get('topology', '')))} / {escape(str(basis.get('joint_model', '')))}</div>
 <div>Truss member section order</div><div>{escape(str(section_order.get('selected', '')))}; {len(ordered_candidates)} candidates searched in the recorded order</div>
 <div>Standards</div><div>{escape(str(basis.get('load_standard', '')))}; {escape(str(basis.get('steel_standard', '')))}</div>
-<div>Top-chord restraint</div><div>Every {top_restraint.get('brace_every_n_purlins', '')} purlin(s), full building length; maximum spacing {_number(top_restraint.get('maximum_spacing_mm', 0) / 1000, 2)} m</div>
-<div>Bottom-chord restraint</div><div>Every {bottom_restraint.get('brace_every_n_purlins', '')} purlin(s), full building length; maximum spacing {_number(bottom_restraint.get('maximum_spacing_mm', 0) / 1000, 2)} m</div>
+<div>Top-chord restraint</div><div>Requested at most every {top_restraint.get('brace_every_n_purlins', '')} purlin(s); paired lines have an actual maximum interval of {top_restraint.get('actual_maximum_purlin_interval', '')} purlin(s) and {_number(top_restraint.get('maximum_spacing_mm', 0) / 1000, 2)} m</div>
+<div>Bottom-chord restraint</div><div>Requested at most every {bottom_restraint.get('brace_every_n_purlins', '')} purlin(s); paired lines have an actual maximum interval of {bottom_restraint.get('actual_maximum_purlin_interval', '')} purlin(s) and {_number(bottom_restraint.get('maximum_spacing_mm', 0) / 1000, 2)} m</div>
 <div>Building layout</div><div>{_number(longitudinal.get('building_length_mm', 0) / 1000, 1)} m long; transverse bays {escape(' / '.join(_number(value / 1000, 1) for value in transverse.get('bay_spans_mm', [])))} m</div>
 <div>Support sequence</div><div>{escape(' / '.join(str(value) for value in support_arrangement.get('sequence', [])))}</div>
   <div>Columns</div><div>{layout_columns.get('eave_count', '')} main eave columns; {layout_columns.get('internal_count', '')} internal support columns</div>
@@ -525,7 +615,7 @@ The calculation uses f<sub>y</sub>={_number(basis.get('fy_mpa', 0), 0)} MPa, E={
 <h2>Longitudinal girder</h2>
 <table><tbody>{girder_rows}</tbody></table>
 {f'<h2>Girder member calculations</h2><table class="calc"><thead><tr><th>Member</th><th>Role</th><th>Nodes</th><th>Fabrication group</th><th>Section</th><th>L</th><th>KL</th><th>rmin</th><th>&lambda; / limit</th><th>T* / &phi;Tr (kN)</th><th>C* / &phi;Cr (kN)</th><th>U<sub>T</sub> / U<sub>C</sub> / U<sub>&lambda;</sub></th><th>Governing</th><th>Status</th></tr></thead><tbody>{girder_member_rows}</tbody></table>' if girder_member_rows else ''}
-<small>Positive truss-member action is tension. Member resistance and serviceability are calculated above. Connections, restraint-member capacity and internal-column member design are separate design items.</small>
+<small>Positive truss-member action is tension. Member resistance and serviceability are calculated above. Column base plates are issued separately when present; truss bearings, gussets, splices, restraint-member capacity and any undesigned internal columns remain separate design items.</small>
 </body></html>"""
     path.write_text(html, encoding="utf-8")
     return path

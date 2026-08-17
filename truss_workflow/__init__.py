@@ -1,6 +1,7 @@
 """Unified public entry point for the preliminary truss workflow."""
 
 from .design import design_truss, preview_truss
+from .downstream import build_truss_analysis_snapshot
 from .model import (
     WARREN_ALL_VERTICALS,
     WARREN_INTERMEDIATE_VERTICALS,
@@ -13,6 +14,7 @@ __all__ = (
     "WARREN_INTERMEDIATE_VERTICALS",
     "WARREN_NO_VERTICALS",
     "design_truss",
+    "build_truss_analysis_snapshot",
     "preview_truss",
     "write_truss_html",
     "write_truss_json",

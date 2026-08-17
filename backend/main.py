@@ -15,6 +15,8 @@ from fastapi.responses import FileResponse, HTMLResponse
 
 from reporting_workflow.snapshot import load_analysis_snapshot
 from backend.analysis_service import (
+    create_structural_boq,
+    create_civil_boq,
     design_foundations,
     get_analysis_artifact,
     get_analysis_job,
@@ -132,6 +134,43 @@ def foundation_design(
         raise HTTPException(status_code=422, detail=detail) from exc
 
 
+@app.post(
+    "/api/analysis/{analysis_id}/structural-boq",
+    tags=["reporting"],
+)
+def structural_boq(
+    analysis_id: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Create a tender-format structural-steel BOQ with additional items."""
+
+    try:
+        return create_structural_boq(
+            analysis_id,
+            payload.get("additional_items", []),
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (TypeError, ValueError, RuntimeError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post(
+    "/api/analysis/{analysis_id}/civil-boq",
+    tags=["reporting"],
+)
+def civil_boq(
+    analysis_id: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Create the civil/concrete BOQ from the completed foundation design."""
+
+    try:
+        return create_civil_boq(analysis_id, payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (TypeError, ValueError, RuntimeError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @app.get(
     "/api/analysis/{analysis_id}/connection-viewer",
     response_class=HTMLResponse,
@@ -186,6 +225,7 @@ def analysis_artifact(analysis_id: str, artifact: str):
         ".dwg": "application/acad",
         ".html": "text/html; charset=utf-8",
         ".json": "application/json",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     }.get(path.suffix.lower(), "application/octet-stream")
     return FileResponse(
         path,

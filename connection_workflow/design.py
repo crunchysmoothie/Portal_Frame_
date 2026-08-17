@@ -13,7 +13,7 @@ from html import escape
 from pathlib import Path
 from typing import Any, Mapping
 
-from .checks import calculate_connection_checks
+from .checks import calculate_base_plate_checks, calculate_connection_checks
 from .components import (
     supporting_member_components,
     t_stub_geometry,
@@ -512,10 +512,11 @@ def _section_properties(
 def _design_base_plates(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     results = snapshot["results"]
     project = results.get("project", {})
-    column_section = str(project.get("column_section", "")).strip()
-    family, properties = _section_properties(column_section)
-    column_depth = float(properties["h"])
-    column_width = float(properties["b"])
+    default_column_section = str(project.get("column_section", "")).strip()
+    support_sections = {
+        str(node): str(section).strip()
+        for node, section in results.get("support_sections", {}).items()
+    }
     concrete_strength_mpa = DESIGN_CONCRETE_STRENGTH_MPA
     steel_yield_mpa = 355.0
     concrete_bearing_mpa = 0.4 * concrete_strength_mpa
@@ -528,6 +529,10 @@ def _design_base_plates(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     supports = sorted({str(item["node"]) for item in reactions})
     support_results: list[dict[str, Any]] = []
     for support in supports:
+        column_section = support_sections.get(support, default_column_section)
+        family, properties = _section_properties(column_section)
+        column_depth = float(properties["h"])
+        column_width = float(properties["b"])
         rows = [item for item in reactions if str(item["node"]) == support]
         compression_rows = [
             item for item in rows if float(item["fy"]) > 1e-9
@@ -918,6 +923,8 @@ def _design_haunch_end_plate(
     envelope: Mapping[str, Any],
     rafter: Mapping[str, Any],
     supporting_member: Mapping[str, Any],
+    *,
+    steel_yield_mpa: float = 355.0,
 ) -> dict[str, Any]:
     connection_type = str(
         location.get("connection_type", "eaves_end_plate")
@@ -933,7 +940,7 @@ def _design_haunch_end_plate(
         "supporting_member_section": supporting_member_section,
         "supporting_member_type": supporting_member_type,
     }
-    steel_yield_mpa = 355.0
+    steel_yield_mpa = float(steel_yield_mpa)
     effective_depth = (
         float(rafter["h"])
         + float(location.get("added_depth_mm", 0.0))
@@ -1047,6 +1054,7 @@ def _design_haunch_end_plate(
                 bolt_tension_resistance_kN=resistances[
                     "tension_resistance_kN"
                 ],
+                fy_mpa=steel_yield_mpa,
             )
             utilisation = (
                 row_demand / modes["resistance_kN"]
@@ -1093,6 +1101,7 @@ def _design_haunch_end_plate(
             row_demand_kN=row_demand,
             flange_force_kN=flange_force,
             panel_shear_kN=flange_force,
+            fy_mpa=steel_yield_mpa,
         )
         stiffeners_required = bool(
             support_components["transverse_stiffeners_required"]
@@ -1117,6 +1126,7 @@ def _design_haunch_end_plate(
         )
         selected = {
             **topology,
+            "steel_yield_mpa": steel_yield_mpa,
             "status": (
                 "HOLD_POINT"
                 if support_components[
@@ -1337,6 +1347,8 @@ def _haunch_connection_start(snapshot: Mapping[str, Any]) -> dict[str, Any]:
         })
     rafter_section = str(project.get("rafter_section", "")).strip()
     column_section = str(project.get("column_section", "")).strip()
+    steel_grade = str(project.get("steel_grade", "Steel_S355"))
+    steel_yield_mpa = 275.0 if "275" in steel_grade else 355.0
     rafter_family, rafter_properties = _section_properties(
         rafter_section
     )
@@ -1363,6 +1375,8 @@ def _haunch_connection_start(snapshot: Mapping[str, Any]) -> dict[str, Any]:
         supporting_family = rafter_family if is_apex else column_family
         topology = {
             **location,
+            "steel_grade": steel_grade,
+            "steel_yield_mpa": steel_yield_mpa,
             "rafter_section": rafter_section,
             "column_section": column_section,
             "supporting_member_section": supporting_section,
@@ -1421,6 +1435,7 @@ def _haunch_connection_start(snapshot: Mapping[str, Any]) -> dict[str, Any]:
                 envelope,
                 rafter_properties,
                 supporting_properties,
+                steel_yield_mpa=steel_yield_mpa,
             ),
         })
     return {
@@ -1489,6 +1504,38 @@ def design_portal_connections(
             "Steel component checks are calculated from the completed analysis. "
             "Items marked INPUT_REQUIRED must not be treated as passed, and the "
             "package must not be issued for fabrication until they are resolved."
+        ),
+    }
+
+
+def design_base_plate_connections(
+    snapshot: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Design base plates only for a truss-and-column support system."""
+
+    analysis_project = snapshot.get("results", {}).get("project", {})
+    base_plates = _design_base_plates(snapshot)
+    haunch_connections = {
+        "status": "NOT_REQUIRED",
+        "locations": [],
+        "basis": "Truss systems do not use portal-frame haunch connections.",
+    }
+    detailed_checks = calculate_base_plate_checks(snapshot, base_plates)
+    return {
+        "schema_version": 5,
+        "status": detailed_checks["status"],
+        "project": {
+            "name": str(analysis_project.get("project_name", "")).strip(),
+            "number": str(analysis_project.get("project_number", "")).strip(),
+            "designer": str(analysis_project.get("designer", "")).strip(),
+        },
+        "base_plates": base_plates,
+        "haunch_connections": haunch_connections,
+        "detailed_checks": detailed_checks,
+        "warning": (
+            "Only column base plates and holding-down bolts are designed for "
+            "the truss workflow. Truss bearings, gussets, web/chord joints, "
+            "splices and restraint connections remain separate design items."
         ),
     }
 

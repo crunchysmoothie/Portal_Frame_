@@ -12,18 +12,27 @@ Reference markups are verification examples, not product templates.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import json
 import math
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, Mapping
 
-from portal_workflow.bracing import load_bracing_database
+from databases import member_database as mdb
+from portal_workflow.bracing import design_bracing_system, load_bracing_database
+from portal_workflow.model import load_portal_frame
 from .layout import build_truss_layout
 from .column_design import (
     describe_concrete_centre_columns,
     design_centre_columns_axial,
     design_eave_columns,
 )
-from .loading import build_panel_point_loads, factored_node_loads, with_self_weight
+from .loading import (
+    build_panel_point_loads,
+    build_source_portal_data,
+    factored_node_loads,
+    with_self_weight,
+)
 from .model import (
     PrattTrussGeometry,
     WARREN_ALL_VERTICALS,
@@ -794,8 +803,13 @@ def _analyse_direct_cases(
     selections: Mapping[str, AngleCandidate],
     loads_by_case: Mapping[str, Mapping[str, tuple[float, float]]],
     elastic_modulus_mpa: float,
+    area_overrides_mm2: Mapping[str, float] | None = None,
 ) -> dict[str, dict]:
     areas = {name: selection.area_mm2 for name, selection in selections.items()}
+    areas.update({
+        str(name): float(area)
+        for name, area in (area_overrides_mm2 or {}).items()
+    })
     return {
         name: analyse_truss(
             geometry, areas, loads, elastic_modulus_mpa=elastic_modulus_mpa
@@ -981,6 +995,22 @@ def _design_lattice_girder(
                 "repeated_span_count": repeated_span_count,
                 "total_mass_kg": mass_kg * repeated_span_count,
                 "member_schedule": member_checks,
+                "member_areas_mm2": {
+                    name: float(selection.area_mm2)
+                    for name, selection in selections.items()
+                },
+                "member_masses_kg_m": {
+                    name: float(selection.mass_kg_m)
+                    for name, selection in selections.items()
+                },
+                "support_reactions_uls_kn": {
+                    case: result["reactions_kn"]
+                    for case, result in analysed_uls.items()
+                },
+                "support_reactions_sls_kn": {
+                    case: result["reactions_kn"]
+                    for case, result in analysed_sls.items()
+                },
                 "chord_fabrication_groups": _fabrication_group_summary(member_checks),
                 "governing_strength": {
                     "member": governing["member"],
@@ -1315,6 +1345,52 @@ def _design_candidate(
     else:
         raise ValueError("Bearing support-section iteration did not converge.")
 
+    characteristic_results = _analyse_direct_cases(
+        geometry,
+        selections,
+        final_cases,
+        elastic_modulus_mpa,
+        area_overrides_mm2=support_area_overrides,
+    )
+    if girder_design.get("status") == "PASS":
+        girder_geometry = girder_design["geometry"]
+        girder_characteristic_loads = _girder_reaction_loads(
+                geometry,
+                characteristic_results,
+                int(girder_geometry["panel_count"]),
+                int(truss_data["girder_span_bays"]),
+            )
+        girder_design["load_audit"] = {
+            "characteristic_node_loads_kn": girder_characteristic_loads,
+            "uls_combinations": list(load_bundle["uls_combinations"]),
+            "sls_combinations": list(load_bundle["sls_combinations"]),
+        }
+        regenerated_girder = generate_flat_lattice_girder(
+            float(girder_geometry["span_mm"]),
+            float(girder_geometry["depth_mm"]),
+            int(girder_geometry["panel_count"]),
+            topology=str(girder_geometry["topology"]),
+        )
+        girder_characteristic_with_self_weight = _loads_with_direct_self_weight(
+            regenerated_girder,
+            girder_characteristic_loads,
+            girder_design["member_masses_kg_m"],
+            1.0,
+        )
+        girder_characteristic_results = {
+            case: analyse_truss(
+                regenerated_girder,
+                girder_design["member_areas_mm2"],
+                loads,
+                elastic_modulus_mpa=elastic_modulus_mpa,
+            )
+            for case, loads in girder_characteristic_with_self_weight.items()
+        }
+        girder_design["support_reactions_characteristic_kn"] = {
+            case: result["reactions_kn"]
+            for case, result in girder_characteristic_results.items()
+        }
+
     envelopes = _force_envelopes(geometry, uls_results)
     support_schedule_by_member = {
         item["member"]: item for item in support_vertical_schedule
@@ -1434,6 +1510,10 @@ def _design_candidate(
         combination: result["reactions_kn"]
         for combination, result in sls_results.items()
     }
+    characteristic_reactions = {
+        case: result["reactions_kn"]
+        for case, result in characteristic_results.items()
+    }
     return {
         "status": "PASS",
         "geometry": geometry.to_dict(),
@@ -1477,11 +1557,20 @@ def _design_candidate(
         ),
         "support_reactions_uls_kn": reactions,
         "support_reactions_sls_kn": sls_reactions,
+        "support_reactions_characteristic_kn": characteristic_reactions,
         "eave_column_design": eave_column_design,
         "girder_design": girder_design,
         "load_source": load_bundle["source"],
         "load_audit": {
             **load_bundle["load_audit"],
+            "eave_column_member_loads": load_bundle.get(
+                "eave_column_member_loads", {}
+            ),
+            "eave_column_wall_actions": load_bundle.get(
+                "eave_column_wall_actions", {}
+            ),
+            "uls_combinations": list(load_bundle["uls_combinations"]),
+            "sls_combinations": list(load_bundle["sls_combinations"]),
             # Persist the exact characteristic node actions used by the final
             # selected-section model. This is the auditable hand-off to
             # external analysis packages such as Prokon.
@@ -1611,11 +1700,34 @@ def design_truss(payload: Mapping[str, Any]) -> dict[str, Any]:
     ranked = practical_order[:requested]
     lightest_ranked = lightest_order[:requested]
 
+    selected_geometry_data = ranked[0]["geometry"]
+    selected_geometry = generate_truss_geometry(
+        tuple(float(value) for value in selected_geometry_data["bay_spans_mm"]),
+        str(selected_geometry_data["roof_form"]),
+        float(selected_geometry_data["roof_rise_mm"]),
+        float(selected_geometry_data["depth_mm"]),
+        float(selected_geometry_data["panel_width_mm"]),
+        topology=str(selected_geometry_data["topology"]),
+        chord_form=str(selected_geometry_data["chord_form"]),
+    )
+    source_portal = build_source_portal_data(
+        building_data, wind_data, selected_geometry
+    )
+    with TemporaryDirectory(prefix="portalframe-truss-gable-") as directory:
+        source_path = Path(directory) / "source_portal.json"
+        source_path.write_text(json.dumps(source_portal), encoding="utf-8")
+        source_model = load_portal_frame(str(source_path))
+        member_db = mdb.load_member_database(
+            Path(__file__).resolve().parent.parent / "databases" / "member_database.csv"
+        )
+        gable_bracing_design = design_bracing_system(source_model, member_db)
+
     return {
         "engine": "preliminary_generic_truss_v0.8",
         "validation_status": "CALCULATION DRAFT - member resistance and serviceability checks complete; connection design and independent verification outstanding",
         "project": dict(payload.get("project", {})),
         "structural_system": "Truss",
+        "bracing_design": gable_bracing_design,
         "design_basis": {
             "topology": str(truss_data.get("topology", "")),
             "roof_form": building_data.get("building_roof", ""),

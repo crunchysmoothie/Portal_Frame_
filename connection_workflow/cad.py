@@ -30,8 +30,8 @@ from .haunch_geometry import haunch_cut_depth_check, haunch_cut_error
 from databases import load_member_database
 
 
-# TODO(advanced-finishes): Fix and finalise the canonical PDF, DXF and DWG
-# connection markups generated from this shared sheet model.
+# The canonical PDF/DXF/DWG sheets remain calculation-review markups until all
+# connection checks, including the donor-haunch weld transfer, are complete.
 A3_WIDTH_MM = 420.0
 A3_HEIGHT_MM = 297.0
 MM_TO_PT = 72.0 / 25.4
@@ -441,6 +441,16 @@ def _add_sheet_frame(sheet: ConnectionSheet) -> None:
             "A3 LANDSCAPE - ALL DIMENSIONS mm - DO NOT SCALE",
             height_mm=2.4,
             align="right",
+            collision=False,
+        ),
+        Text(
+            408,
+            9.7,
+            "CALCULATION-REVIEW MARKUP - NOT FOR FABRICATION",
+            height_mm=2.25,
+            bold=True,
+            align="right",
+            layer="TEXT",
             collision=False,
         ),
     )

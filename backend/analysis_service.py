@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 import re
 from threading import Lock
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 from uuid import uuid4
 
 from connection_workflow.cad import (
@@ -17,7 +17,10 @@ from connection_workflow.cad import (
     write_connection_dxf,
     write_connection_pdf,
 )
-from connection_workflow.design import design_portal_connections
+from connection_workflow.design import (
+    design_base_plate_connections,
+    design_portal_connections,
+)
 from connection_workflow.report import write_connection_report_html
 from reporting_workflow.calculations import (
     ReportScope,
@@ -26,16 +29,25 @@ from reporting_workflow.calculations import (
     write_json_data,
 )
 from reporting_workflow.markup import write_markup
+from reporting_workflow.boq import (
+    build_structural_boq_takeoff,
+    build_truss_structural_boq_takeoff,
+    write_structural_boq_xlsx,
+)
+from reporting_workflow.civil_boq import build_civil_boq_takeoff, write_civil_boq_xlsx
 from foundation_workflow.design import design_pad_foundations
 from reporting_workflow.snapshot import load_analysis_snapshot
 from portal_workflow.preview import build_preview_geometry
 from portal_workflow.prokon_export import (
+    build_gable_columns_comparison,
+    build_girder_comparison,
     build_portal_comparison,
     build_truss_comparison,
-    write_comparison_package,
+    write_comparison_bundle,
 )
 from portal_workflow.runner import run_analysis
 from truss_workflow import (
+    build_truss_analysis_snapshot,
     design_truss,
     preview_truss,
     write_truss_html,
@@ -298,6 +310,33 @@ def _run_job(analysis_id: str, payload: dict[str, Any]) -> None:
     try:
         if payload.get("structural_system") == "Truss":
             result = design_truss(payload)
+            truss_snapshot = build_truss_analysis_snapshot(
+                result, payload, analysis_id
+            )
+            connection_result = design_base_plate_connections(truss_snapshot)
+            result["connection_design"] = connection_result
+            result["validation_status"] = (
+                "CALCULATION DRAFT - truss members, eave columns and column "
+                "base plates calculated; truss joints and independent "
+                "verification outstanding"
+            )
+            result["warnings"] = [
+                (
+                    "CALCULATION SCOPE: truss member actions, axial resistance, "
+                    "slenderness, vertical deflection, eave columns and column "
+                    "base plates are calculated. Truss bearings, gussets, "
+                    "splices, restraint connections and independent project "
+                    "verification remain outstanding."
+                    if str(item).startswith("CALCULATION SCOPE:")
+                    else item
+                )
+                for item in result.get("warnings", [])
+            ]
+            truss_snapshot["results"]["connection_design"] = connection_result
+            snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+            snapshot_path.write_text(
+                json.dumps(truss_snapshot, indent=2), encoding="utf-8"
+            )
             report_html = write_truss_html(
                 result, report_dir / "preliminary_truss_design_report.html"
             )
@@ -307,22 +346,65 @@ def _run_job(analysis_id: str, payload: dict[str, Any]) -> None:
             markup_html = write_truss_markup_html(
                 result, markup_dir / "truss_member_markup.html"
             )
-            comparison = build_truss_comparison(result)
-            comparison_paths = write_comparison_package(
-                comparison, directory / "prokon"
+            connection_path = directory / "connections" / "connection_design.json"
+            connection_path.parent.mkdir(parents=True, exist_ok=True)
+            connection_path.write_text(
+                json.dumps(connection_result, indent=2), encoding="utf-8"
             )
+            connection_report = write_connection_report_html(
+                connection_result,
+                report_dir / "truss_base_plate_calculations.html",
+            )
+            connection_pdf = write_connection_pdf(
+                connection_result,
+                markup_dir / "truss_base_plate_markup.pdf",
+            )
+            connection_dxf = write_connection_dxf(
+                connection_result,
+                markup_dir / "truss_base_plate_markup.dxf",
+            )
+            comparison = build_truss_comparison(result)
+            comparison_with_columns = build_truss_comparison(
+                result, include_columns=True
+            )
+            girder_comparison = build_girder_comparison(result)
+            gable_comparison = build_gable_columns_comparison(
+                result.get("bracing_design", {}),
+                comparison["load_combinations"],
+                analysis_id=analysis_id,
+                source_system="Truss",
+            )
+            comparison_bundle = write_comparison_bundle({
+                "truss": comparison,
+                "truss-with-columns": comparison_with_columns,
+                "girder": girder_comparison,
+                "gable-columns": gable_comparison,
+            }, directory / "prokon")
+            comparison_paths = comparison_bundle["models"]["truss"]
+            prokon_artifacts = {
+                "prokon-input-json": str(comparison_paths["json"]),
+                "prokon-input-a03": str(comparison_paths["a03"]),
+                "prokon-package-zip": str(comparison_bundle["zip"]),
+            }
+            for key, paths in comparison_bundle["models"].items():
+                prokon_artifacts[f"prokon-{key}-json"] = str(paths["json"])
+                prokon_artifacts[f"prokon-{key}-a03"] = str(paths["a03"])
             job.update(
                 {
                     "status": "complete",
                     "completed": _now(),
                     "message": "Preliminary truss, girder and eave-column design is complete.",
+                    "snapshot_path": str(snapshot_path),
                     "design_summary": result,
                     "artifact_paths": {
                         "truss-report-html": str(report_html),
                         "truss-report-json": str(report_json),
                         "truss-markup-html": str(markup_html),
-                        "prokon-input-json": str(comparison_paths["json"]),
-                        "prokon-input-a03": str(comparison_paths["a03"]),
+                        "connection-design-json": str(connection_path),
+                        "connection-report-html": str(connection_report),
+                        "connection-markup-pdf": str(connection_pdf),
+                        "connection-markup-dxf": str(connection_dxf),
+                        **prokon_artifacts,
                     },
                 }
             )
@@ -342,7 +424,7 @@ def _run_job(analysis_id: str, payload: dict[str, Any]) -> None:
 
         calculation_data = load_calculation_sheet_data(
             written_snapshot,
-            scope=ReportScope.CRITICAL,
+            scope=ReportScope(payload.get("report_scope", ReportScope.CRITICAL.value)),
         )
         report_html = write_html_report(
             calculation_data, report_dir / "portal_frame_design_report.html"
@@ -357,12 +439,19 @@ def _run_job(analysis_id: str, payload: dict[str, Any]) -> None:
         connection_result = design_portal_connections(
             load_analysis_snapshot(written_snapshot)
         )
-        comparison = build_portal_comparison(
-            load_analysis_snapshot(written_snapshot)
+        portal_snapshot = load_analysis_snapshot(written_snapshot)
+        comparison = build_portal_comparison(portal_snapshot)
+        gable_comparison = build_gable_columns_comparison(
+            portal_snapshot.get("results", {}).get("bracing_design", {}),
+            comparison["load_combinations"],
+            analysis_id=analysis_id,
+            source_system="Portal frame",
         )
-        comparison_paths = write_comparison_package(
-            comparison, directory / "prokon"
-        )
+        comparison_bundle = write_comparison_bundle({
+            "portal-frame": comparison,
+            "gable-columns": gable_comparison,
+        }, directory / "prokon")
+        comparison_paths = comparison_bundle["models"]["portal-frame"]
         connection_path = directory / "connections" / "connection_design.json"
         connection_path.parent.mkdir(parents=True, exist_ok=True)
         connection_path.write_text(
@@ -413,7 +502,11 @@ def _run_job(analysis_id: str, payload: dict[str, Any]) -> None:
             "connection-markup-dxf": str(connection_dxf),
             "prokon-input-json": str(comparison_paths["json"]),
             "prokon-input-a03": str(comparison_paths["a03"]),
+            "prokon-package-zip": str(comparison_bundle["zip"]),
         }
+        for key, paths in comparison_bundle["models"].items():
+            artifact_paths[f"prokon-{key}-json"] = str(paths["json"])
+            artifact_paths[f"prokon-{key}-a03"] = str(paths["a03"])
         if connection_dwg is not None:
             artifact_paths["connection-markup-dwg"] = str(connection_dwg)
         if markup_pdf is not None:
@@ -525,16 +618,23 @@ def design_foundations(
         raise ValueError("Foundation design requires a completed analysis.")
     snapshot_value = job.get("snapshot_path")
     if not snapshot_value:
-        raise ValueError(
-            "Foundation design is currently available for portal-frame "
-            "analyses only."
-        )
+        raise ValueError("The completed analysis has no foundation-reaction snapshot.")
     snapshot_path = Path(snapshot_value)
     if not snapshot_path.is_file():
         raise ValueError("The analysis snapshot is unavailable.")
-    result = design_pad_foundations(
-        load_analysis_snapshot(snapshot_path), inputs
+    snapshot = load_analysis_snapshot(snapshot_path)
+    result = design_pad_foundations(snapshot, inputs)
+    support_quantities = snapshot.get("results", {}).get(
+        "foundation_support_quantities", {}
     )
+    if support_quantities:
+        for support in result.get("supports", []):
+            support["quantity"] = int(
+                support_quantities.get(str(support.get("node", "")), 1)
+            )
+        result["whole_building_support_count"] = sum(
+            int(item.get("quantity", 1)) for item in result.get("supports", [])
+        )
     output_path = _job_dir(analysis_id) / "foundation" / "foundation_design.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
@@ -544,3 +644,115 @@ def design_foundations(
     job["foundation_design"] = result
     _write_job(job)
     return result
+
+
+def create_structural_boq(
+    analysis_id: str,
+    additional_items: Sequence[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Create and persist a tender-format structural-steel BOQ workbook."""
+
+    job = get_analysis_job(analysis_id)
+    if job.get("status") != "complete":
+        raise ValueError("Structural BOQ export requires a completed analysis.")
+    snapshot_value = job.get("snapshot_path")
+    if not snapshot_value:
+        raise ValueError("The completed analysis has no BOQ quantity snapshot.")
+    snapshot_path = Path(snapshot_value)
+    if not snapshot_path.is_file():
+        raise ValueError("The completed analysis snapshot is unavailable.")
+    connection_design = (
+        job.get("design_summary", {}).get("connection_design", {})
+    )
+    snapshot = load_analysis_snapshot(snapshot_path)
+    if job.get("design_summary", {}).get("structural_system") == "Truss":
+        takeoff = build_truss_structural_boq_takeoff(
+            snapshot,
+            connection_design,
+            additional_items,
+        )
+    else:
+        takeoff = build_structural_boq_takeoff(
+            snapshot,
+            connection_design,
+            additional_items,
+        )
+    output_dir = _job_dir(analysis_id) / "boq"
+    workbook_path = write_structural_boq_xlsx(
+        takeoff,
+        output_dir / "structural_steel_boq.xlsx",
+    )
+    takeoff_path = output_dir / "structural_steel_boq_quantities.json"
+    takeoff_path.write_text(json.dumps(takeoff, indent=2), encoding="utf-8")
+    artifact_paths = dict(job.get("artifact_paths", {}))
+    artifact_paths.update({
+        "structural-steel-boq-xlsx": str(workbook_path),
+        "structural-steel-boq-json": str(takeoff_path),
+    })
+    job["artifact_paths"] = artifact_paths
+    job["structural_boq"] = {
+        "generated": takeoff["generated"],
+        "fabricated_steel_mass_t": takeoff["fabricated_steel_mass_t"],
+        "calculated_item_count": (
+            len(takeoff["steel_items"])
+            + len(takeoff["bolt_items"])
+            + len(takeoff["cladding_items"])
+        ),
+        "additional_item_count": len(takeoff["additional_items"]),
+    }
+    _write_job(job)
+    return {
+        "status": "complete",
+        "summary": job["structural_boq"],
+        "download_url": (
+            f"/api/analysis/{analysis_id}/artifacts/"
+            "structural-steel-boq-xlsx"
+        ),
+        "quantities_download_url": (
+            f"/api/analysis/{analysis_id}/artifacts/"
+            "structural-steel-boq-json"
+        ),
+    }
+
+
+def create_civil_boq(
+    analysis_id: str,
+    inputs: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Create the first civil/concrete BOQ sheet from the supplied example."""
+
+    job = get_analysis_job(analysis_id)
+    if job.get("status") != "complete":
+        raise ValueError("Civil BOQ export requires a completed analysis.")
+    snapshot_value = job.get("snapshot_path")
+    if not snapshot_value:
+        raise ValueError("The completed analysis has no civil-quantity snapshot.")
+    foundation = job.get("foundation_design")
+    if not foundation:
+        raise ValueError("Run the foundation design before creating the civil BOQ.")
+    snapshot = load_analysis_snapshot(Path(snapshot_value))
+    takeoff = build_civil_boq_takeoff(
+        snapshot,
+        foundation,
+        inputs,
+        job.get("design_summary", {}).get("connection_design", {}),
+    )
+    output_dir = _job_dir(analysis_id) / "boq"
+    workbook_path = write_civil_boq_xlsx(takeoff, output_dir / "civil_concrete_boq.xlsx")
+    json_path = output_dir / "civil_concrete_boq_quantities.json"
+    json_path.write_text(json.dumps(takeoff, indent=2), encoding="utf-8")
+    artifact_paths = dict(job.get("artifact_paths", {}))
+    artifact_paths["civil-boq-xlsx"] = str(workbook_path)
+    artifact_paths["civil-boq-json"] = str(json_path)
+    job["artifact_paths"] = artifact_paths
+    job["civil_boq"] = {
+        "generated": _now(),
+        "item_count": len(takeoff["items"]),
+    }
+    _write_job(job)
+    return {
+        "status": "complete",
+        "summary": job["civil_boq"],
+        "download_url": f"/api/analysis/{analysis_id}/artifacts/civil-boq-xlsx",
+        "quantities_download_url": f"/api/analysis/{analysis_id}/artifacts/civil-boq-json",
+    }

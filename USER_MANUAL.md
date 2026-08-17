@@ -205,11 +205,34 @@ of the exported nodes, members, sections, supports, characteristic loads,
 load-case aliases and paired ULS/SLS factors. The A03 is generated from that
 same record for Prokon Frame Analysis file version 12.
 
+Use **Download all Prokon models** for the complete ZIP package. A portal-frame
+package contains the main portal frame and the calculated gable columns. A
+truss package contains the main truss alone, the truss with its selected main
+and centre columns, the longitudinal lattice girder when that support option is
+required, and the calculated gable columns. Every A03 has a matching audit
+JSON; models in different structural planes are deliberately kept separate.
+
+PortalFrame reports and Prokon inputs use combinations `C1` through `C6.2` and
+the project load-case labels `D`, `DLMAX`, `DLMIN`, `LL`, `W03D`, `W03U`,
+`W02D`, `W02U`, `W9.3` and `W9.2`.
+
+The **SANS 10160 loading-code editions** input is separate from those
+combination names. Select either the latest permitted set—SANS 10160-1:2019
+Ed. 1.3, SANS 10160-2:2011 Ed. 1.1 and SANS 10160-3:2019 Ed. 2.1—or the one
+previous set—SANS 10160-1:2010 Ed. 1, SANS 10160-2:2011 Ed. 1.1 and
+SANS 10160-3:2011 Ed. 1.1. The previous set uses the Part 1 and Part 2 editions
+applicable when Part 3:2011 was issued; editions cannot be mixed independently.
+The 2018 second edition of Part 3 is superseded by
+the 2019 Ed. 2.1 amendment and is therefore not offered as the previous
+edition.
+
 Portal-frame haunches are stepped at the same eight analysis stations used by
 PortalFrame. Each haunch boundary and each existing bracing subdivision is an
 explicit Prokon node because Prokon can only place member restraint at nodes.
-The truss export is the pin-jointed truss-only model used by PortalFrame;
-eave-column and longitudinal-girder designs remain separate calculation models.
+The truss-only export remains the pin-jointed model used by PortalFrame. The
+combined truss-and-columns export adds the selected support-column sections and
+the characteristic wall-wind load segments on the two main columns. The girder
+and gable-column exports retain their separate calculation-model planes.
 
 Before analysing the A03, replot the structure in Prokon and verify the global
 axes, local load arrows, support fixities, rotational spring values, truss end

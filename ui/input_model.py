@@ -19,6 +19,11 @@ from connection_workflow.haunch_geometry import (
     maximum_haunch_cut_depth_mm,
 )
 from portal_workflow.roof_layout import calculate_roof_bracing_layout
+from portal_workflow.standards import (
+    SANS_10160_LATEST_EDITIONS,
+    SANS_10160_LOADING_CODES,
+    normalize_sans_10160_loading_code,
+)
 from truss_workflow import (
     WARREN_ALL_VERTICALS,
     WARREN_INTERMEDIATE_VERTICALS,
@@ -33,7 +38,8 @@ STRUCTURAL_SYSTEMS = ("Portal frame", "Truss")
 ROOF_TYPES = ("Duo Pitched", "Mono Pitched")
 WIND_DESIGN_MODES = ("Prelim", "Final design")
 ROOF_ACCESSIBILITY = ("Inaccessible", "Accessible")
-LOAD_COMBINATION_STANDARDS = ("SANS 10160-1:2019", "Pre-2019")
+LOAD_COMBINATION_STANDARDS = SANS_10160_LOADING_CODES
+REPORT_SCOPES = ("Critical", "Detailed")
 TERRAIN_CATEGORIES = ("A", "B", "C", "D")
 STEEL_GRADES = ("Steel_S355", "Steel_S275")
 BASE_SUPPORTS = ("Pinned", "Fixed", "Spring")
@@ -173,7 +179,8 @@ DEFAULT_VALUES: dict[str, Any] = {
     "building_length_m": "48",
     "wind_design_mode": "Prelim",
     "roof_accessibility": "Inaccessible",
-    "load_combination_standard": "SANS 10160-1:2019",
+    "load_combination_standard": SANS_10160_LATEST_EDITIONS,
+    "report_scope": "Critical",
     "use_permanent_deflection_baseline": True,
     "ignore_1_1_dl_1_0_ll_vertical_deflection_limit": False,
     "steel_grade": "Steel_S355",
@@ -252,6 +259,13 @@ DEFAULT_VALUES: dict[str, Any] = {
     "truss_solar_load_kpa": "0",
     "truss_fire_load_kpa": "0",
     "truss_hvac_load_kpa": "0",
+    # Civil/earthworks BOQ inputs. These are deliberately separate from the
+    # structural-analysis payload and are entered on the BOQ worksheet.
+    "civil_surface_bed_area_m2": "0",
+    "civil_surface_bed_thickness_mm": "150",
+    "civil_joint_spacing_m": "6",
+    "civil_excavation_below_surface_bed_m": "0.3",
+    "civil_concrete_footing_backfill_m3": "0",
 }
 DEFAULT_VALUES.update(DEFAULT_FOUNDATION_VALUES)
 
@@ -262,6 +276,46 @@ class InputValidationError(ValueError):
     def __init__(self, errors: Mapping[str, str]):
         self.errors = dict(errors)
         super().__init__("Structural design input validation failed")
+
+
+def build_civil_boq_inputs(raw: Mapping[str, Any]) -> dict[str, float]:
+    """Validate the first civil/earthworks BOQ input page."""
+
+    errors: dict[str, str] = {}
+
+    def number(key: str, *, minimum: float = 0.0, strictly_positive: bool = False) -> float:
+        try:
+            value = float(raw.get(key, ""))
+        except (TypeError, ValueError):
+            errors[key] = "Enter a number."
+            return 0.0
+        if not math.isfinite(value):
+            errors[key] = "Enter a finite number."
+        elif strictly_positive and value <= 0.0:
+            errors[key] = "Enter a value greater than zero."
+        elif value < minimum:
+            errors[key] = f"Enter a value of at least {minimum:g}."
+        return value
+
+    result = {
+        "surface_bed_area_m2": number("civil_surface_bed_area_m2"),
+        "surface_bed_thickness_mm": number("civil_surface_bed_thickness_mm", strictly_positive=True),
+        "joint_spacing_m": number("civil_joint_spacing_m", strictly_positive=True),
+        "excavation_below_surface_bed_m": number("civil_excavation_below_surface_bed_m"),
+        "concrete_footing_backfill_m3": number("civil_concrete_footing_backfill_m3"),
+    }
+    if errors:
+        raise InputValidationError(errors)
+    result["surface_bed_concrete_m3"] = (
+        result["surface_bed_area_m2"] * result["surface_bed_thickness_mm"] / 1000.0
+    )
+    result["surface_bed_joint_length_m"] = (
+        2.0 * result["surface_bed_area_m2"] / result["joint_spacing_m"]
+    )
+    result["excavation_volume_m3"] = (
+        result["surface_bed_area_m2"] * result["excavation_below_surface_bed_m"]
+    )
+    return result
 
 
 def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
@@ -332,9 +386,16 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
     roof_type = choice("building_roof", ROOF_TYPES)
     wind_mode = choice("wind_design_mode", WIND_DESIGN_MODES)
     roof_accessibility = choice("roof_accessibility", ROOF_ACCESSIBILITY)
-    combination_standard = choice(
-        "load_combination_standard", LOAD_COMBINATION_STANDARDS
+    saved_combination_standard = normalize_sans_10160_loading_code(
+        raw.get("load_combination_standard", SANS_10160_LATEST_EDITIONS)
     )
+    combination_standard = saved_combination_standard
+    if combination_standard not in LOAD_COMBINATION_STANDARDS:
+        errors["load_combination_standard"] = (
+            "Choose either the latest SANS 10160 editions or the immediately "
+            "previous editions."
+        )
+    report_scope = choice("report_scope", REPORT_SCOPES)
     terrain = choice("terrain_category", TERRAIN_CATEGORIES)
     steel_grade = choice("steel_grade", STEEL_GRADES)
     base_support = choice("base_support_condition", BASE_SUPPORTS)
@@ -854,11 +915,13 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
     roof_pitch = math.degrees(math.atan((apex_m - eaves_m) / roof_span_m))
     return {
         "structural_system": structural_system,
+        "report_scope": "full" if report_scope == "Detailed" else "critical",
         "project": {
             "name": str(raw.get("project_name", "")).strip() or "Untitled project",
             "number": str(raw.get("project_number", "")).strip(),
             "designer": str(raw.get("designer", "")).strip(),
             "structural_system": structural_system,
+            "report_scope": report_scope,
         },
         "building_data": {
             "building_type": building_type,
@@ -867,29 +930,11 @@ def build_analysis_payload(raw: Mapping[str, Any]) -> dict[str, Any]:
             "roof_accessibility": roof_accessibility,
             "load_combination_standard": combination_standard,
             "use_permanent_deflection_baseline": (
-                "Yes"
-                if (
-                    structural_system == "Portal frame"
-                    and bool(
-                        raw.get(
-                            "use_permanent_deflection_baseline",
-                            True,
-                        )
-                    )
-                )
-                else "No"
+                "Yes" if bool(raw.get("use_permanent_deflection_baseline", True)) else "No"
             ),
             "ignore_1_1_dl_1_0_ll_vertical_deflection_limit": (
                 "Yes"
-                if (
-                    structural_system == "Portal frame"
-                    and bool(
-                        raw.get(
-                            "ignore_1_1_dl_1_0_ll_vertical_deflection_limit",
-                            False,
-                        )
-                    )
-                )
+                if bool(raw.get("ignore_1_1_dl_1_0_ll_vertical_deflection_limit", False))
                 else "No"
             ),
             "blocking_factor": blocking_factor,

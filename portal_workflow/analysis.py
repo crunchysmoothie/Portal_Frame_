@@ -791,6 +791,21 @@ def extract_member_actions(frame, r_type, r_mem, c_type, c_mem,
             Mx_bot = round(
                 analysis_member.moment('Mz', end_position, combo) / 1000, 3
             )
+            shear_stations = [
+                member_length_mm * index / 12.0 for index in range(13)
+            ]
+            shear_values = [
+                float(analysis_member.shear('Fy', distance, combo))
+                for distance in shear_stations
+            ]
+            Vy_max = round(max(abs(value) for value in shear_values), 3)
+            Vy_top = round(shear_values[0], 3)
+            Vy_bot = round(shear_values[-1], 3)
+
+            segment_start_mm = sum(
+                float(item.L()) for item in list(physical.sub_members.values())[:segment_index - 1]
+            ) if design_segments else 0.0
+            segment_end_mm = segment_start_mm + member_length_mm
 
             w1, w2 = element_properties(Mx_max, Mx_top, Mx_bot)
             mem_type = mem.type
@@ -828,6 +843,12 @@ def extract_member_actions(frame, r_type, r_mem, c_type, c_mem,
                 'Mx_max': Mx_max,
                 'Mx_top': Mx_top,
                 'Mx_bot': Mx_bot,
+                'Vy_max': Vy_max,
+                'Vy_top': Vy_top,
+                'Vy_bot': Vy_bot,
+                'segment_start_mm': round(segment_start_mm, 3),
+                'segment_end_mm': round(segment_end_mm, 3),
+                'parent_length_mm': round(float(physical.L()), 3),
                 'w1': w1,
                 'w2': w2,
             }

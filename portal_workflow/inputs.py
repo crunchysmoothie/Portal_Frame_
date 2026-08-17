@@ -11,6 +11,12 @@ from .crawl_loading import (
 )
 from .crawl_inputs import ALL_AT_ONCE, ONE_AT_A_TIME, resolve_crawl_selection
 from .roof_layout import calculate_roof_bracing_layout
+from .standards import (
+    SANS_10160_LATEST_EDITIONS,
+    SANS_10160_LOADING_CODES,
+    SANS_10160_PREVIOUS_EDITIONS,
+    normalize_sans_10160_loading_code,
+)
 
 
 ADDITIONAL_PERMANENT_LOAD_KEYS = (
@@ -211,13 +217,16 @@ def add_materials():
 
     return materials
 
-PRE_2019_COMBINATIONS = "Pre-2019"
-SANS_2019_COMBINATIONS = "SANS 10160-1:2019"
-LOAD_COMBINATION_STANDARDS = (PRE_2019_COMBINATIONS, SANS_2019_COMBINATIONS)
+PRE_2019_COMBINATIONS = SANS_10160_PREVIOUS_EDITIONS
+SANS_2019_COMBINATIONS = SANS_10160_LATEST_EDITIONS
+LOAD_COMBINATION_STANDARDS = SANS_10160_LOADING_CODES
 
 
 def _wind_factor(load_combination_standard):
     """Return the STR wind factor for the selected SANS 10160-1 edition."""
+    load_combination_standard = normalize_sans_10160_loading_code(
+        load_combination_standard
+    )
     if load_combination_standard == PRE_2019_COMBINATIONS:
         return 1.3
     if load_combination_standard == SANS_2019_COMBINATIONS:
@@ -231,6 +240,51 @@ def _wind_factor(load_combination_standard):
 def _roof_accompanying_factor(roof_accessibility):
     # SANS 10160-1 Table 2: category H = 0; category J = 0.3.
     return 0.0 if roof_accessibility == "Inaccessible" else 0.3
+
+
+LOAD_CASE_DISPLAY_NAMES = {
+    "D": "D",
+    "D_MAX": "DLMAX",
+    "D_MIN": "DLMIN",
+    "L": "LL",
+    "W0_0.3D": "W03D",
+    "W0_0.3U": "W03U",
+    "W0_0.2D": "W02D",
+    "W0_0.2U": "W02U",
+    "W90_0.3": "W9.3",
+    "W90_0.2": "W9.2",
+}
+
+
+def display_load_case_name(name):
+    """Return the project/Prokon load-case label for an internal case name."""
+
+    return LOAD_CASE_DISPLAY_NAMES.get(str(name), str(name))
+
+
+def _named_project_combinations(w0_positive, w0_negative, w90_positive, w90_negative):
+    """Return the paired ULS/SLS combinations in the project's C1-C6 format."""
+
+    rows = (
+        ("C1", {"D": 1.5, "D_MAX": 1.5}, {"D": 1.1, "D_MAX": 1.1}),
+        ("C2", {"D": 1.2, "D_MAX": 1.2, "L": 1.6}, {"D": 1.1, "D_MAX": 1.1, "L": 1.0}),
+        ("C3.1", {"D": 0.9, "D_MIN": 0.9, w0_negative["D"]: 1.3}, {"D": 1.0, "D_MIN": 1.0, w0_negative["D"]: 0.6}),
+        ("C3.2", {"D": 0.9, "D_MIN": 0.9, w0_negative["U"]: 1.3}, {"D": 1.0, "D_MIN": 1.0, w0_negative["U"]: 0.6}),
+        ("C3.3", {"D": 0.9, "D_MIN": 0.9, w0_positive["D"]: 1.3}, {"D": 1.0, "D_MIN": 1.0, w0_positive["D"]: 0.6}),
+        ("C3.4", {"D": 0.9, "D_MIN": 0.9, w0_positive["U"]: 1.3}, {"D": 1.0, "D_MIN": 1.0, w0_positive["U"]: 0.6}),
+        ("C4.1", {"D": 1.2, "D_MAX": 1.2, "L": 0.5, w0_negative["D"]: 1.3}, {"D": 1.1, "D_MAX": 1.1, "L": 0.3, w0_negative["D"]: 0.6}),
+        ("C4.2", {"D": 1.2, "D_MAX": 1.2, "L": 0.5, w0_negative["U"]: 1.3}, {"D": 1.1, "D_MAX": 1.1, "L": 0.3, w0_negative["U"]: 0.6}),
+        ("C4.3", {"D": 1.2, "D_MAX": 1.2, "L": 0.5, w0_positive["D"]: 1.3}, {"D": 1.1, "D_MAX": 1.1, "L": 0.3, w0_positive["D"]: 0.6}),
+        ("C4.4", {"D": 1.2, "D_MAX": 1.2, "L": 0.5, w0_positive["U"]: 1.3}, {"D": 1.1, "D_MAX": 1.1, "L": 0.3, w0_positive["U"]: 0.6}),
+        ("C5.1", {"D": 0.9, "D_MIN": 0.9, w90_negative: 1.3}, {"D": 1.0, "D_MIN": 1.0, w90_negative: 0.6}),
+        ("C5.2", {"D": 0.9, "D_MIN": 0.9, w90_positive: 1.3}, {"D": 1.0, "D_MIN": 1.0, w90_positive: 0.6}),
+        ("C6.1", {"D": 1.2, "D_MAX": 1.2, "L": 0.5, w90_negative: 1.3}, {"D": 1.1, "D_MAX": 1.1, "L": 0.3, w90_negative: 0.6}),
+        ("C6.2", {"D": 1.2, "D_MAX": 1.2, "L": 0.5, w90_positive: 1.3}, {"D": 1.1, "D_MAX": 1.1, "L": 0.3, w90_positive: 0.6}),
+    )
+    return (
+        [{"name": name, "factors": dict(uls)} for name, uls, _ in rows],
+        [{"name": name, "factors": dict(sls)} for name, _, sls in rows],
+    )
 
 
 def _wind_combinations(wind_cases, roof_accessibility, load_combination_standard):
@@ -271,7 +325,15 @@ def add_load_cases(
     crawl_beams=None,
     crawl_application=ONE_AT_A_TIME,
 ):
-    """Return fixed load cases and edition-dependent SLS/ULS combinations."""
+    """Return fixed load cases and the named C1-C6.2 SLS/ULS schedule."""
+    load_combination_standard = normalize_sans_10160_loading_code(
+        load_combination_standard
+    )
+    if load_combination_standard not in LOAD_COMBINATION_STANDARDS:
+        raise ValueError(
+            f"Unknown SANS 10160 loading code {load_combination_standard!r}. "
+            f"Choose one of {LOAD_COMBINATION_STANDARDS}."
+        )
     final_wind = normalize_design_mode(wind_design_mode) == "Final design"
     positive = "CPI_MAX" if final_wind else "0.2"
     negative = "CPI_MIN" if final_wind else "0.3"
@@ -298,47 +360,14 @@ def add_load_cases(
                          w0_positive["M2"], w0_negative["M2"])
         )
 
-    psi_live = _roof_accompanying_factor(roof_accessibility)
-    serviceability_load_combinations = [
-        {"name": "1.1 DL", "factors": {"D": 1.1, "D_MAX": 1.1}},
-        {"name": "1.1 DL + 1.0 LL", "factors": {"D": 1.1, "D_MAX": 1.1, "L": 1.0}},
-    ]
-    wind_actions = [
-        (w0_positive["U"], "up"), (w0_positive["D"], "down"),
-        (w0_negative["U"], "up"), (w0_negative["D"], "down"),
-        (w90_positive, "variable"), (w90_negative, "variable"),
-    ]
-    if include_mixed:
-        wind_actions.extend((case, "variable") for case in (
-            w0_positive["M1"], w0_negative["M1"],
-            w0_positive["M2"], w0_negative["M2"]
-        ))
-    for case, action in wind_actions:
-        if action in ("up", "variable"):
-            serviceability_load_combinations.append({
-                "name": f"1.0 DL + 0.6 {case}",
-                "factors": {"D": 1.0, "D_MIN": 1.0, case: 0.6},
-            })
-        if action in ("down", "variable"):
-            live_text = f" + {psi_live:g} LL" if psi_live else ""
-            factors = {"D": 1.1, "D_MAX": 1.1, case: 0.6}
-            if psi_live:
-                factors["L"] = psi_live
-            serviceability_load_combinations.append({
-                "name": f"1.1 DL{live_text} + 0.6 {case}",
-                "factors": factors,
-            })
-
-    load_combinations = [
-        {"name": "1.35 DL", "factors": {"D": 1.35, "D_MAX": 1.35}},
-        {"name": "1.2 DL + 1.6 LL", "factors": {"D": 1.2, "D_MAX": 1.2, "L": 1.6}},
-    ]
-    load_combinations.extend(_wind_combinations(
-        wind_actions,
-        roof_accessibility,
-        load_combination_standard,
-    ))
-    variable_cases = {case for case, _ in wind_actions} | {"L"}
+    load_combinations, serviceability_load_combinations = _named_project_combinations(
+        w0_positive, w0_negative, w90_positive, w90_negative
+    )
+    variable_cases = {
+        w0_positive["U"], w0_positive["D"],
+        w0_negative["U"], w0_negative["D"],
+        w90_positive, w90_negative, "L",
+    }
 
     crawls = list(crawl_beams or [])
     if include_crawl_beams and crawls:
@@ -513,6 +542,10 @@ def update_json_file(json_filename, b_data, wind_data):
     load_combination_standard = b_data.get(
         "load_combination_standard", SANS_2019_COMBINATIONS
     )
+    load_combination_standard = normalize_sans_10160_loading_code(
+        load_combination_standard
+    )
+    b_data["load_combination_standard"] = load_combination_standard
     configured_crawls = list(b_data.get("crawl_beams", []))
     enabled, crawl_application, crawl_beams = resolve_crawl_selection(
         b_data.get("use_crawl_beams", "Yes" if configured_crawls else "No"),

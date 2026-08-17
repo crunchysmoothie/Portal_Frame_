@@ -120,6 +120,7 @@ def supporting_member_components(
     row_demand_kN: float,
     flange_force_kN: float,
     panel_shear_kN: float,
+    fy_mpa: float = STEEL_FY_MPA,
 ) -> dict[str, Any]:
     """Check the unreinforced supporting flange and web components."""
 
@@ -142,7 +143,7 @@ def supporting_member_components(
 
     tw = float(supporting_member["tw"])
     hw = float(supporting_member["hw"])
-    fy = STEEL_FY_MPA
+    fy = float(fy_mpa)
     connected_width = float(connected_member["b"])
     tension_effective_length = 2.0 * connected_width
     compression_effective_length = max(

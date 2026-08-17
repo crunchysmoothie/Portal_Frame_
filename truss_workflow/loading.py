@@ -89,6 +89,16 @@ def _source_portal_data(
         return json.loads(path.read_text(encoding="utf-8"))
 
 
+def build_source_portal_data(
+    building_data: Mapping[str, Any],
+    wind_data: Mapping[str, Any],
+    geometry: PrattTrussGeometry,
+) -> dict[str, Any]:
+    """Return the generated portal-format loading model used by a truss design."""
+
+    return _source_portal_data(building_data, wind_data, geometry)
+
+
 def _source_rafter_at_x(source: Mapping[str, Any], x_mm: float) -> tuple[dict, float]:
     nodes = {node["name"]: node for node in source["nodes"]}
     candidates = []
@@ -289,6 +299,64 @@ def _eave_column_wall_actions(source: Mapping[str, Any]) -> dict[str, Any]:
             "height_mm": height_mm,
             "cases": cases,
         }
+    return result
+
+
+def _eave_column_member_loads(source: Mapping[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """Return characteristic wall-load segments on the two source eave columns."""
+
+    nodes = {node["name"]: node for node in source["nodes"]}
+    column_members = [
+        member for member in source["members"]
+        if str(member.get("type", "")).lower() == "column"
+    ]
+    columns_by_x: dict[float, list[dict[str, Any]]] = {}
+    for member in column_members:
+        centre_x = round(
+            (float(nodes[member["i_node"]]["x"]) + float(nodes[member["j_node"]]["x"])) / 2.0,
+            6,
+        )
+        columns_by_x.setdefault(centre_x, []).append(member)
+    column_lines = sorted(columns_by_x.items())
+    if len(column_lines) != 2:
+        raise ValueError("The source portal must contain two eave column lines.")
+    loads_by_member: dict[str, list[dict[str, Any]]] = {}
+    for load in source.get("member_loads", []):
+        if str(load.get("direction", "")).lower() == "fy":
+            loads_by_member.setdefault(str(load["member"]), []).append(load)
+    result: dict[str, list[dict[str, Any]]] = {}
+    for side, (_, members) in zip(("left", "right"), column_lines):
+        base_y = min(
+            float(nodes[node_name]["y"])
+            for member in members
+            for node_name in (member["i_node"], member["j_node"])
+        )
+        segments = []
+        for member in members:
+            i_node, j_node = nodes[member["i_node"]], nodes[member["j_node"]]
+            dx = float(j_node["x"]) - float(i_node["x"])
+            dy = float(j_node["y"]) - float(i_node["y"])
+            length_mm = math.hypot(dx, dy)
+            if length_mm <= 0.0:
+                continue
+            for load in loads_by_member.get(str(member["name"]), []):
+                x1 = float(load.get("x1", 0.0) or 0.0)
+                x2 = float(load.get("x2", length_mm) or length_mm)
+                y1 = float(i_node["y"]) + dy * x1 / length_mm
+                y2 = float(i_node["y"]) + dy * x2 / length_mm
+                w1 = float(load["w1"]) * 1000.0
+                w2 = float(load["w2"]) * 1000.0
+                if y2 < y1:
+                    y1, y2 = y2, y1
+                    w1, w2 = w2, w1
+                segments.append({
+                    "case": str(load["case"]),
+                    "start_m": (y1 - base_y) / 1000.0,
+                    "length_m": (y2 - y1) / 1000.0,
+                    "w1_kn_m": w1,
+                    "w2_kn_m": w2,
+                })
+        result[side] = segments
     return result
 
 
@@ -557,6 +625,7 @@ def build_panel_point_loads(
             ),
         },
         "eave_column_wall_actions": _eave_column_wall_actions(source),
+        "eave_column_member_loads": _eave_column_member_loads(source),
     }
 
 

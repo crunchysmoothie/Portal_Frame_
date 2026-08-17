@@ -40,6 +40,7 @@ from ui.input_model import (
     LOAD_COMBINATION_STANDARDS,
     PORTAL_SECTION_FAMILIES,
     PORTAL_SECTIONS_BY_FAMILY,
+    REPORT_SCOPES,
     ROOF_ACCESSIBILITY,
     ROOF_TYPES,
     STRUCTURAL_SYSTEMS,
@@ -54,6 +55,8 @@ from ui.input_model import (
     WIND_DESIGN_MODES,
     InputValidationError,
     build_analysis_payload,
+    build_civil_boq_inputs,
+    normalize_sans_10160_loading_code,
     rafter_haunch_cut_limit,
 )
 from ui.project_file import (
@@ -398,8 +401,16 @@ def main(page: ft.Page) -> None:
     )
     load_standard = dropdown(
         "load_combination_standard",
-        "Load-combination standard",
+        "SANS 10160 loading-code editions",
         LOAD_COMBINATION_STANDARDS,
+        helper="Choose the current edition set or one previous edition set. Combination names remain C1 to C6.2.",
+        col=12,
+    )
+    report_scope = dropdown(
+        "report_scope",
+        "Calculation report detail",
+        REPORT_SCOPES,
+        helper="Critical keeps governing results concise; Detailed reports one physical member per load case.",
     )
     use_permanent_deflection_baseline = ft.Switch(
         key="use_permanent_deflection_baseline",
@@ -1356,7 +1367,7 @@ def main(page: ft.Page) -> None:
         )
 
     foundation_status_text = ft.Text(
-        "Run a portal-frame analysis before designing foundations.",
+        "Run an analysis before designing foundations.",
         size=12,
         weight=ft.FontWeight.W_600,
         color=TEXT_PRIMARY,
@@ -1447,7 +1458,11 @@ def main(page: ft.Page) -> None:
             )
             rows.extend([
                 analysis_summary_line(
-                    f"Support {support['node']} - {support['status']}",
+                    f"Support {support['node']} - {support['status']}"
+                    + (
+                        f" ({int(support['quantity'])} bases)"
+                        if int(support.get('quantity', 1)) > 1 else ""
+                    ),
                     f"Bearing {bearing['status']} {float(bearing['q_max_kpa']):.1f} kPa "
                     f"(util {float(bearing['utilisation']):.3f}, {bearing['contact']} contact) | "
                     f"ULS sliding {sliding.get('status', 'PASS')} "
@@ -1554,6 +1569,309 @@ def main(page: ft.Page) -> None:
         icon=ft.Icons.FOUNDATION,
         disabled=True,
         on_click=run_foundation_design,
+    )
+
+    boq_status_text = ft.Text(
+        "Run an analysis before creating the structural steel BOQ.",
+        size=12,
+        weight=ft.FontWeight.W_600,
+        color=TEXT_PRIMARY,
+    )
+    boq_status_card = ft.Container(
+        bgcolor=WARNING_BG,
+        border_radius=10,
+        padding=12,
+        content=ft.Row(
+            spacing=9,
+            controls=[
+                ft.Icon(ft.Icons.INFO_OUTLINE, size=18, color="#B87900"),
+                boq_status_text,
+            ],
+        ),
+    )
+    boq_additional_items = ft.Column(spacing=10)
+    boq_item_rows: list[dict[str, ft.Control]] = []
+
+    def add_boq_item(_=None, *, update_page: bool = True) -> None:
+        description = ft.TextField(
+            label="Description",
+            col={"sm": 12, "lg": 5},
+            dense=True,
+            color=TEXT_PRIMARY,
+            border_color="#93AAA7",
+            focused_border_color=ACCENT,
+        )
+        unit = ft.Dropdown(
+            label="Unit",
+            value="No",
+            options=[
+                ft.DropdownOption(key=value, content=ft.Text(value, color=TEXT_PRIMARY))
+                for value in ("t", "kg", "m", "m2", "m3", "No", "Sum")
+            ],
+            col={"sm": 4, "lg": 2},
+            dense=True,
+            color=TEXT_PRIMARY,
+            border_color="#93AAA7",
+            focused_border_color=ACCENT,
+        )
+        quantity = ft.TextField(
+            label="Quantity",
+            keyboard_type=ft.KeyboardType.NUMBER,
+            col={"sm": 4, "lg": 2},
+            dense=True,
+            color=TEXT_PRIMARY,
+            border_color="#93AAA7",
+            focused_border_color=ACCENT,
+        )
+        rate = ft.TextField(
+            label="Rate (optional)",
+            keyboard_type=ft.KeyboardType.NUMBER,
+            col={"sm": 4, "lg": 2},
+            dense=True,
+            color=TEXT_PRIMARY,
+            border_color="#93AAA7",
+            focused_border_color=ACCENT,
+        )
+        record: dict[str, ft.Control] = {
+            "description": description,
+            "unit": unit,
+            "quantity": quantity,
+            "rate": rate,
+        }
+
+        def remove_item(_=None) -> None:
+            boq_item_rows.remove(record)
+            boq_additional_items.controls.remove(item_row)
+            page.update()
+
+        item_row = ft.Container(
+            bgcolor="#F8FBFA",
+            border=ft.Border.all(1, "#D8E5E3"),
+            border_radius=10,
+            padding=10,
+            content=ft.ResponsiveRow(
+                controls=[
+                    description,
+                    unit,
+                    quantity,
+                    rate,
+                    ft.IconButton(
+                        icon=ft.Icons.DELETE_OUTLINE,
+                        tooltip="Remove item",
+                        col={"sm": 12, "lg": 1},
+                        on_click=remove_item,
+                    ),
+                ]
+            ),
+        )
+        boq_item_rows.append(record)
+        boq_additional_items.controls.append(item_row)
+        if update_page:
+            page.update()
+
+    boq_download_button = ft.OutlinedButton(
+        "Download Structural Steel BOQ",
+        icon=ft.Icons.DOWNLOAD,
+        disabled=True,
+    )
+    boq_generate_button = ft.FilledButton(
+        "Create Structural Steel BOQ",
+        icon=ft.Icons.TABLE_VIEW,
+        disabled=True,
+    )
+
+    async def create_boq(_=None) -> None:
+        if current_analysis_id is None:
+            return
+        additional_items = []
+        for record in boq_item_rows:
+            description = str(record["description"].value or "").strip()
+            quantity = str(record["quantity"].value or "").strip()
+            rate = str(record["rate"].value or "").strip()
+            if not description and not quantity and not rate:
+                continue
+            additional_items.append({
+                "description": description,
+                "unit": str(record["unit"].value or ""),
+                "quantity": quantity,
+                "rate": rate,
+            })
+        boq_generate_button.disabled = True
+        boq_generate_button.content = "Creating BOQ..."
+        boq_download_button.disabled = True
+        boq_status_card.bgcolor = WARNING_BG
+        boq_status_card.content.controls[0].name = ft.Icons.HOURGLASS_TOP
+        boq_status_card.content.controls[0].color = "#B87900"
+        boq_status_text.value = "Calculating member weights, sheeting, plates and bolts..."
+        page.update()
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{API_URL}/api/analysis/{current_analysis_id}/structural-boq",
+                    json={"additional_items": additional_items},
+                )
+                if response.status_code == 422:
+                    raise ValueError(str(response.json().get("detail", "Invalid BOQ item.")))
+                response.raise_for_status()
+                result = response.json()
+            summary = result["summary"]
+            boq_download_button.url = f"{API_URL}{result['download_url']}"
+            boq_download_button.disabled = False
+            boq_status_card.bgcolor = SUCCESS_BG
+            boq_status_card.content.controls[0].name = ft.Icons.CHECK_CIRCLE
+            boq_status_card.content.controls[0].color = "#1C8C62"
+            boq_status_text.value = (
+                f"BOQ ready: {float(summary['fabricated_steel_mass_t']):,.3f} t "
+                f"fabricated steel, {int(summary['calculated_item_count'])} calculated "
+                f"items and {int(summary['additional_item_count'])} additional items."
+            )
+        except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
+            boq_status_card.bgcolor = ERROR_BG
+            boq_status_card.content.controls[0].name = ft.Icons.ERROR_OUTLINE
+            boq_status_card.content.controls[0].color = "#C43D34"
+            boq_status_text.value = f"Structural BOQ error: {exc}"
+        finally:
+            boq_generate_button.disabled = current_analysis_id is None
+            boq_generate_button.content = "Create Structural Steel BOQ"
+            page.update()
+
+    boq_generate_button.on_click = create_boq
+    add_boq_item(update_page=False)
+
+    civil_boq_status = ft.Text(
+        "Enter the project-specific civil and earthworks quantities below.",
+        size=12,
+        color=TEXT_PRIMARY,
+    )
+    civil_surface_bed_area = ft.TextField(
+        label="Surface bed area (m²)", value=str(DEFAULT_VALUES["civil_surface_bed_area_m2"]),
+        keyboard_type=ft.KeyboardType.NUMBER, dense=True, color=TEXT_PRIMARY,
+        border_color="#93AAA7", focused_border_color=ACCENT,
+    )
+    civil_surface_bed_thickness = ft.TextField(
+        label="Surface bed thickness (mm)", value=str(DEFAULT_VALUES["civil_surface_bed_thickness_mm"]),
+        keyboard_type=ft.KeyboardType.NUMBER, dense=True, color=TEXT_PRIMARY,
+        border_color="#93AAA7", focused_border_color=ACCENT,
+    )
+    civil_joint_spacing = ft.TextField(
+        label="Surface bed joint spacing (m)", value=str(DEFAULT_VALUES["civil_joint_spacing_m"]),
+        keyboard_type=ft.KeyboardType.NUMBER, dense=True, color=TEXT_PRIMARY,
+        border_color="#93AAA7", focused_border_color=ACCENT,
+    )
+    civil_excavation_depth = ft.TextField(
+        label="Excavation below surface bed (m)", value=str(DEFAULT_VALUES["civil_excavation_below_surface_bed_m"]),
+        keyboard_type=ft.KeyboardType.NUMBER, dense=True, color=TEXT_PRIMARY,
+        border_color="#93AAA7", focused_border_color=ACCENT,
+    )
+    civil_footing_backfill = ft.TextField(
+        label="Concrete footing backfill (m³)", value=str(DEFAULT_VALUES["civil_concrete_footing_backfill_m3"]),
+        keyboard_type=ft.KeyboardType.NUMBER, dense=True, color=TEXT_PRIMARY,
+        border_color="#93AAA7", focused_border_color=ACCENT,
+    )
+    civil_boq_summary = ft.Text("Calculated quantities will appear here.", size=12, color=TEXT_MUTED)
+
+    def update_civil_boq_summary(_=None) -> None:
+        try:
+            values = build_civil_boq_inputs({
+                "civil_surface_bed_area_m2": civil_surface_bed_area.value,
+                "civil_surface_bed_thickness_mm": civil_surface_bed_thickness.value,
+                "civil_joint_spacing_m": civil_joint_spacing.value,
+                "civil_excavation_below_surface_bed_m": civil_excavation_depth.value,
+                "civil_concrete_footing_backfill_m3": civil_footing_backfill.value,
+            })
+        except InputValidationError:
+            civil_boq_summary.value = "Complete the civil BOQ inputs to calculate quantities."
+            return
+        civil_boq_summary.value = (
+            f"Surface bed concrete: {values['surface_bed_concrete_m3']:.3f} m³ | "
+            f"excavation: {values['excavation_volume_m3']:.3f} m³ | "
+            f"joint length allowance: {values['surface_bed_joint_length_m']:.3f} m"
+        )
+
+    for field in (
+        civil_surface_bed_area, civil_surface_bed_thickness, civil_joint_spacing,
+        civil_excavation_depth, civil_footing_backfill,
+    ):
+        field.on_change = update_civil_boq_summary
+    civil_boq_download_button = ft.OutlinedButton(
+        "Download Civil BOQ", icon=ft.Icons.DOWNLOAD, disabled=True
+    )
+    civil_boq_generate_button = ft.FilledButton(
+        "Create Civil BOQ", icon=ft.Icons.TABLE_VIEW, disabled=True
+    )
+
+    async def create_civil_boq(_=None) -> None:
+        if current_analysis_id is None:
+            return
+        try:
+            inputs = build_civil_boq_inputs({
+                "civil_surface_bed_area_m2": civil_surface_bed_area.value,
+                "civil_surface_bed_thickness_mm": civil_surface_bed_thickness.value,
+                "civil_joint_spacing_m": civil_joint_spacing.value,
+                "civil_excavation_below_surface_bed_m": civil_excavation_depth.value,
+                "civil_concrete_footing_backfill_m3": civil_footing_backfill.value,
+            })
+        except InputValidationError as exc:
+            civil_boq_status.value = str(exc)
+            page.update()
+            return
+        civil_boq_generate_button.disabled = True
+        civil_boq_status.value = "Creating civil/concrete BOQ from the completed foundation design..."
+        page.update()
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{API_URL}/api/analysis/{current_analysis_id}/civil-boq",
+                    json=inputs,
+                )
+                response.raise_for_status()
+                result = response.json()
+            civil_boq_download_button.url = f"{API_URL}{result['download_url']}"
+            civil_boq_download_button.disabled = False
+            civil_boq_status.value = (
+                f"Civil BOQ ready: {int(result['summary']['item_count'])} calculated items."
+            )
+        except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
+            civil_boq_status.value = f"Civil BOQ error: {exc}"
+        finally:
+            civil_boq_generate_button.disabled = current_analysis_id is None
+            page.update()
+
+    civil_boq_generate_button.on_click = create_civil_boq
+    civil_boq_page = ft.Column(
+        spacing=18,
+        controls=[
+            section_heading(
+                "Civil and Earthworks BOQ Inputs",
+                "First input page for the civil/concrete and earthworks BOQs based on the supplied examples.",
+            ),
+            ft.Container(
+                bgcolor=WARNING_BG, border_radius=10, padding=12,
+                content=ft.Text(
+                    "These inputs are quantity drivers only. The civil BOQ will retain the example workbook's descriptions, units and layout.",
+                    color="#745B2B", weight=ft.FontWeight.BOLD,
+                ),
+            ),
+            card(
+                "Surface bed and joints",
+                "Enter the surface-bed geometry and the joint spacing used to derive the first civil quantities.",
+                ft.ResponsiveRow(controls=[
+                    civil_surface_bed_area, civil_surface_bed_thickness, civil_joint_spacing,
+                ]),
+            ),
+            card(
+                "Excavation and footing backfill",
+                "Enter the excavation level below the surface bed and the concrete footing backfill allowance.",
+                ft.ResponsiveRow(controls=[civil_excavation_depth, civil_footing_backfill]),
+            ),
+            card("Calculated preview", "Derived quantities from the entered civil assumptions.", civil_boq_summary),
+            civil_boq_status,
+            ft.Row(
+                alignment=ft.MainAxisAlignment.END,
+                wrap=True,
+                controls=[civil_boq_generate_button, civil_boq_download_button],
+            ),
+        ],
     )
     analysis_view_dropdown = ft.Dropdown(
         label="Engineering view",
@@ -1908,6 +2226,11 @@ def main(page: ft.Page) -> None:
         icon=ft.Icons.DATA_OBJECT,
         disabled=True,
     )
+    download_prokon_package_button = ft.OutlinedButton(
+        "Download all Prokon models",
+        icon=ft.Icons.FOLDER_ZIP,
+        disabled=True,
+    )
 
     def show_connection_results(result: dict[str, Any]) -> None:
         detailed = result.get("detailed_checks", {})
@@ -2095,6 +2418,13 @@ def main(page: ft.Page) -> None:
             key: control.value
             for key, control in controls.items()
         }
+        values.update({
+            "civil_surface_bed_area_m2": civil_surface_bed_area.value,
+            "civil_surface_bed_thickness_mm": civil_surface_bed_thickness.value,
+            "civil_joint_spacing_m": civil_joint_spacing.value,
+            "civil_excavation_below_surface_bed_m": civil_excavation_depth.value,
+            "civil_concrete_footing_backfill_m3": civil_footing_backfill.value,
+        })
         values["crawl_beams"] = [
             {
                 field: control.value
@@ -2174,7 +2504,11 @@ def main(page: ft.Page) -> None:
             if isinstance(control, (ft.Checkbox, ft.Switch)):
                 control.value = bool(value)
             elif isinstance(control, (ft.TextField, ft.Dropdown)):
-                control.value = str(value)
+                control.value = (
+                    normalize_sans_10160_loading_code(value)
+                    if key == "load_combination_standard"
+                    else str(value)
+                )
 
         for row in crawl_rows:
             for field in row["fields"].values():
@@ -2202,6 +2536,16 @@ def main(page: ft.Page) -> None:
                     control.value = str(value)
 
         controls["use_crawl_beams"].value = bool(inputs["use_crawl_beams"])
+        for key, control in {
+            "civil_surface_bed_area_m2": civil_surface_bed_area,
+            "civil_surface_bed_thickness_mm": civil_surface_bed_thickness,
+            "civil_joint_spacing_m": civil_joint_spacing,
+            "civil_excavation_below_surface_bed_m": civil_excavation_depth,
+            "civil_concrete_footing_backfill_m3": civil_footing_backfill,
+        }.items():
+            if key in inputs:
+                control.value = str(inputs[key])
+        update_civil_boq_summary()
         clear_errors()
         update_conditionals()
         validate_form()
@@ -2614,9 +2958,16 @@ def main(page: ft.Page) -> None:
                 connection_destination.disabled = True
                 foundation_destination.disabled = True
                 foundation_design_button.disabled = True
+                boq_destination.disabled = True
+                civil_boq_destination.disabled = True
+                civil_boq_generate_button.disabled = True
+                civil_boq_download_button.disabled = True
+                boq_generate_button.disabled = True
+                boq_download_button.disabled = True
                 download_markup_button.disabled = True
                 download_prokon_a03_button.disabled = True
                 download_prokon_json_button.disabled = True
+                download_prokon_package_button.disabled = True
                 connection_markup_button.disabled = True
                 connection_dxf_button.disabled = True
                 connection_dwg_button.disabled = True
@@ -2689,6 +3040,7 @@ def main(page: ft.Page) -> None:
         download_markup_button.disabled = True
         download_prokon_a03_button.disabled = True
         download_prokon_json_button.disabled = True
+        download_prokon_package_button.disabled = True
         connection_markup_button.disabled = True
         connection_dxf_button.disabled = True
         connection_dwg_button.disabled = True
@@ -2712,6 +3064,12 @@ def main(page: ft.Page) -> None:
         connection_destination.disabled = True
         foundation_destination.disabled = True
         foundation_design_button.disabled = True
+        boq_destination.disabled = True
+        civil_boq_destination.disabled = True
+        civil_boq_generate_button.disabled = True
+        civil_boq_download_button.disabled = True
+        boq_generate_button.disabled = True
+        boq_download_button.disabled = True
         page.update()
 
     def show_analysis_results(result: dict[str, Any]) -> None:
@@ -2719,21 +3077,29 @@ def main(page: ft.Page) -> None:
         nonlocal current_connection_design
         summary = result["design_summary"]
         if summary.get("structural_system") == "Truss":
-            current_analysis_id = None
-            current_connection_design = {}
+            current_analysis_id = str(result["analysis_id"])
+            current_connection_design = dict(
+                summary.get("connection_design", {})
+            )
             connection_3d_viewer.content = None
             connection_3d_viewer.visible = False
             connection_view_status.value = (
-                "Connection 3D models are currently available for portal "
-                "frames only."
+                "The truss connection scope contains calculated column base "
+                "plates only; use the dimensioned 2D output for review."
             )
             connection_export_status_text.value = (
-                "Portal-frame connection exports are not available for truss "
-                "analysis."
+                "Base-plate calculation and 2D markup outputs are available. "
+                "Truss haunch connections are not applicable."
             )
-            connection_destination.disabled = True
-            foundation_destination.disabled = True
-            foundation_design_button.disabled = True
+            connection_destination.disabled = False
+            foundation_destination.disabled = False
+            foundation_design_button.disabled = False
+            boq_destination.disabled = False
+            civil_boq_destination.disabled = False
+            civil_boq_generate_button.disabled = False
+            civil_boq_download_button.disabled = True
+            boq_generate_button.disabled = False
+            boq_download_button.disabled = True
             ranked = list(summary.get("ranked_solutions", []))
             best = ranked[0]
             current_visualisation = dict(
@@ -2809,10 +3175,11 @@ def main(page: ft.Page) -> None:
                 ),
                 analysis_summary_line(
                     "Rank 1 chord restraint",
-                    f"Top every {best['chord_restraint_layout']['top_chord']['brace_every_n_purlins']} purlin(s) "
-                    f"(max {best['chord_restraint_layout']['top_chord']['maximum_spacing_mm'] / 1000:.2f} m) • "
-                    f"bottom every {best['chord_restraint_layout']['bottom_chord']['brace_every_n_purlins']} "
-                    f"(max {best['chord_restraint_layout']['bottom_chord']['maximum_spacing_mm'] / 1000:.2f} m)",
+                    f"Top requested every {best['chord_restraint_layout']['top_chord']['brace_every_n_purlins']} purlin(s) • "
+                    f"bottom requested every {best['chord_restraint_layout']['bottom_chord']['brace_every_n_purlins']} • "
+                    f"paired actual maximum interval "
+                    f"{best['chord_restraint_layout']['top_chord'].get('actual_maximum_purlin_interval', '')} purlin(s), "
+                    f"{max(best['chord_restraint_layout']['top_chord']['maximum_spacing_mm'], best['chord_restraint_layout']['bottom_chord']['maximum_spacing_mm']) / 1000:.2f} m",
                     ft.Icons.SWAP_VERT,
                 ),
                 analysis_summary_line(
@@ -2880,7 +3247,7 @@ def main(page: ft.Page) -> None:
                 ),
                 analysis_summary_line(
                     "Exclusions",
-                    "Independent validation, connections, restraint capacity and concrete tilt-up capacity/detailing",
+                    "Independent validation, truss joints/bearings/splices, restraint-member capacity and concrete tilt-up capacity/detailing",
                     ft.Icons.REPORT_PROBLEM_OUTLINED,
                 ),
             ]
@@ -2899,18 +3266,54 @@ def main(page: ft.Page) -> None:
                 download_markup_button.disabled = False
             else:
                 download_markup_button.disabled = True
+            connection_report = artifacts.get("connection-report-html")
+            connection_markup = artifacts.get("connection-markup-pdf")
+            connection_dxf = artifacts.get("connection-markup-dxf")
+            if connection_report:
+                connection_report_button.url = ft.Url(
+                    url=f"{API_URL}{connection_report['download_url']}",
+                    target=ft.UrlTarget.BLANK,
+                )
+                connection_report_button.disabled = False
+            if connection_markup:
+                connection_markup_button.url = ft.Url(
+                    url=f"{API_URL}{connection_markup['download_url']}",
+                    target=ft.UrlTarget.BLANK,
+                )
+                connection_markup_button.disabled = False
+            if connection_dxf:
+                connection_dxf_button.url = (
+                    f"{API_URL}{connection_dxf['download_url']}"
+                )
+                connection_dxf_button.disabled = False
+            connection_dwg_button.disabled = True
+            show_connection_results(current_connection_design)
+            open_connections_button.disabled = False
+            boq_status_card.bgcolor = WARNING_BG
+            boq_status_card.content.controls[0].name = ft.Icons.INFO_OUTLINE
+            boq_status_card.content.controls[0].color = "#B87900"
+            boq_status_text.value = (
+                "Truss, column, purlin and calculated base-plate quantities "
+                "are ready. Add project-specific items before export."
+            )
+            foundation_status_card.bgcolor = WARNING_BG
+            foundation_status_card.content.controls[0].name = ft.Icons.INFO_OUTLINE
+            foundation_status_card.content.controls[0].color = "#B87900"
+            foundation_status_text.value = (
+                "Truss-column base reactions are ready. Enter the project soil "
+                "inputs, then run the automatic pad-foundation design."
+            )
             prokon_a03 = artifacts.get("prokon-input-a03")
             prokon_json = artifacts.get("prokon-input-json")
+            prokon_package = artifacts.get("prokon-package-zip")
             if prokon_a03 and prokon_json:
                 download_prokon_a03_button.url = f"{API_URL}{prokon_a03['download_url']}"
                 download_prokon_json_button.url = f"{API_URL}{prokon_json['download_url']}"
                 download_prokon_a03_button.disabled = False
                 download_prokon_json_button.disabled = False
-            connection_markup_button.disabled = True
-            connection_dxf_button.disabled = True
-            connection_dwg_button.disabled = True
-            connection_report_button.disabled = True
-            open_connections_button.disabled = True
+            if prokon_package:
+                download_prokon_package_button.url = f"{API_URL}{prokon_package['download_url']}"
+                download_prokon_package_button.disabled = False
             all_names = combination_names(current_visualisation, "SLS")
             analysis_view_dropdown.disabled = not all_names
             open_analysis_button.disabled = not all_names
@@ -2932,7 +3335,8 @@ def main(page: ft.Page) -> None:
             analysis_status_card.bgcolor = WARNING_BG
             analysis_status_text.value = (
                 f"Truss calculation draft {result['analysis_id']} complete; "
-                "connections and independent project verification remain outstanding."
+                "base plates are calculated, while truss joints and independent "
+                "project verification remain outstanding."
             )
             run_analysis_button.disabled = False
             run_analysis_button.content = "Run analysis again"
@@ -3119,6 +3523,7 @@ def main(page: ft.Page) -> None:
         connection_dwg = artifacts.get("connection-markup-dwg")
         prokon_a03 = artifacts.get("prokon-input-a03")
         prokon_json = artifacts.get("prokon-input-json")
+        prokon_package = artifacts.get("prokon-package-zip")
         if report:
             view_report_button.url = ft.Url(
                 url=f"{API_URL}{report['download_url']}",
@@ -3133,6 +3538,9 @@ def main(page: ft.Page) -> None:
             download_prokon_json_button.url = f"{API_URL}{prokon_json['download_url']}"
             download_prokon_a03_button.disabled = False
             download_prokon_json_button.disabled = False
+        if prokon_package:
+            download_prokon_package_button.url = f"{API_URL}{prokon_package['download_url']}"
+            download_prokon_package_button.disabled = False
         if connection_markup:
             connection_markup_button.url = ft.Url(
                 url=f"{API_URL}{connection_markup['download_url']}",
@@ -3211,6 +3619,19 @@ def main(page: ft.Page) -> None:
         connection_destination.disabled = False
         foundation_destination.disabled = False
         foundation_design_button.disabled = False
+        boq_destination.disabled = False
+        civil_boq_destination.disabled = False
+        civil_boq_generate_button.disabled = False
+        civil_boq_download_button.disabled = True
+        boq_generate_button.disabled = False
+        boq_download_button.disabled = True
+        boq_status_card.bgcolor = WARNING_BG
+        boq_status_card.content.controls[0].name = ft.Icons.INFO_OUTLINE
+        boq_status_card.content.controls[0].color = "#B87900"
+        boq_status_text.value = (
+            "Analysis quantities are ready. Add any project-specific items, "
+            "then create the tender-format workbook."
+        )
         foundation_status_card.bgcolor = WARNING_BG
         foundation_status_card.content.controls[0].name = ft.Icons.INFO_OUTLINE
         foundation_status_card.content.controls[0].color = "#B87900"
@@ -3258,9 +3679,16 @@ def main(page: ft.Page) -> None:
         connection_destination.disabled = True
         foundation_destination.disabled = True
         foundation_design_button.disabled = True
+        boq_destination.disabled = True
+        civil_boq_destination.disabled = True
+        civil_boq_generate_button.disabled = True
+        civil_boq_download_button.disabled = True
+        boq_generate_button.disabled = True
+        boq_download_button.disabled = True
         download_markup_button.disabled = True
         download_prokon_a03_button.disabled = True
         download_prokon_json_button.disabled = True
+        download_prokon_package_button.disabled = True
         connection_markup_button.disabled = True
         connection_dxf_button.disabled = True
         connection_dwg_button.disabled = True
@@ -3363,7 +3791,7 @@ def main(page: ft.Page) -> None:
                 ft.Icons.STRAIGHTEN,
             ),
             summary_line(
-                "Design basis",
+                "Steel and loading-code basis",
                 f"{building['steel_grade']} • {building['load_combination_standard']}",
                 ft.Icons.GAVEL,
             ),
@@ -3579,8 +4007,8 @@ def main(page: ft.Page) -> None:
         spring_stiffness.disabled = base_support.value != "Spring"
         use_eaves_haunch.disabled = is_truss
         use_apex_haunch.disabled = is_truss
-        ignore_dead_live_vertical_limit.disabled = is_truss
-        use_permanent_deflection_baseline.disabled = is_truss
+        ignore_dead_live_vertical_limit.disabled = False
+        use_permanent_deflection_baseline.disabled = False
         eaves_haunch_fields.visible = (
             not is_truss and bool(use_eaves_haunch.value)
         )
@@ -4010,7 +4438,7 @@ def main(page: ft.Page) -> None:
                 ),
                 card(
                     "Design basis",
-                    "Selections map directly to implemented calculation branches.",
+                    "Select the SANS 10160 edition set used for the loading design basis. Analysis combinations remain C1 through C6.2.",
                     ft.Column(
                         spacing=10,
                         controls=[
@@ -4020,6 +4448,7 @@ def main(page: ft.Page) -> None:
                                     roof_accessibility,
                                     load_standard,
                                     steel_grade,
+                                    report_scope,
                                 ]
                             ),
                             use_permanent_deflection_baseline,
@@ -4127,6 +4556,7 @@ def main(page: ft.Page) -> None:
                                     download_markup_button,
                                     download_prokon_a03_button,
                                     download_prokon_json_button,
+                                    download_prokon_package_button,
                                     open_connections_button,
                                 ],
                             ),
@@ -4220,13 +4650,14 @@ def main(page: ft.Page) -> None:
                 section_heading(
                     "Connection design",
                     "Post-analysis steel connection calculations using the final "
-                    "frame sections and governing connection actions.",
+                    "member sections and governing connection actions. Truss "
+                    "analyses include column base plates only.",
                 ),
                 connection_status_card,
                 card(
                     "Calculated connection checks",
                     "The governing utilisation remains visible for each base plate "
-                    "and haunch connection, including failed checks.",
+                    "and each applicable haunch connection, including failed checks.",
                     connection_result_summary,
                 ),
                 connection_outputs_card,
@@ -4281,7 +4712,7 @@ def main(page: ft.Page) -> None:
                 section_heading(
                     "Foundation design",
                     "Automatically size identical isolated pads from the completed "
-                    "portal-frame support reactions.",
+                    "column-base support reactions.",
                 ),
                 foundation_status_card,
                 card(
@@ -4357,10 +4788,77 @@ def main(page: ft.Page) -> None:
                             on_click=lambda _: go_to(6),
                         ),
                         foundation_design_button,
+                        ft.FilledButton(
+                            "Continue to BOQ",
+                            icon=ft.Icons.ARROW_FORWARD,
+                            on_click=lambda _: go_to(8),
+                        ),
                     ],
                 ),
             ],
         ),
+        ft.Column(
+            spacing=18,
+            controls=[
+                section_heading(
+                    "Structural Steel BOQ",
+                    "Create the tender-format steelwork schedule from the completed analysis.",
+                ),
+                boq_status_card,
+                card(
+                    "Calculated quantities",
+                    "The designer lists each selected section designation separately. Portal frames include rafters and haunches; trusses include chord/web groups and omit haunches. Calculated base plates, columns, purlins, girts, cladding and flashings are included.",
+                    ft.Text(
+                        "The Excel workbook retains editable rate columns. Member masses use the section databases; sheeting uses the analysed building geometry and entered wall openings.",
+                        size=12,
+                        color=TEXT_MUTED,
+                    ),
+                ),
+                card(
+                    "Additional tender items",
+                    "Add project-specific items that are outside the structural model. Leave the rate blank for tenderer pricing.",
+                    ft.Column(
+                        spacing=12,
+                        controls=[
+                            boq_additional_items,
+                            ft.Row(
+                                controls=[
+                                    ft.OutlinedButton(
+                                        "Add item",
+                                        icon=ft.Icons.ADD,
+                                        on_click=add_boq_item,
+                                    )
+                                ]
+                            ),
+                        ],
+                    ),
+                ),
+                ft.Container(
+                    bgcolor=WARNING_BG,
+                    border_radius=10,
+                    padding=14,
+                    content=ft.Text(
+                        "REFERENCE BOQ ASSUMPTIONS APPLIED: 0.8mm/0.6mm IBR AZ200 sheeting, 82° bullnose to 450mm radius, 600mm-girth ridge cap, SANS 121 galvanising and 4.5% erection-bolt allowance are carried through from the supplied BOQs.",
+                        color="#745B2B",
+                        weight=ft.FontWeight.BOLD,
+                    ),
+                ),
+                ft.Row(
+                    alignment=ft.MainAxisAlignment.END,
+                    wrap=True,
+                    controls=[
+                        ft.OutlinedButton(
+                            "Back to foundations",
+                            icon=ft.Icons.ARROW_BACK,
+                            on_click=lambda _: go_to(7),
+                        ),
+                        boq_generate_button,
+                        boq_download_button,
+                    ],
+                ),
+            ],
+        ),
+        civil_boq_page,
     ]
 
     content_host = ft.Column(
@@ -4491,6 +4989,18 @@ def main(page: ft.Page) -> None:
         label="Foundations",
         disabled=True,
     )
+    boq_destination = ft.NavigationRailDestination(
+        icon=ft.Icon(ft.Icons.TABLE_VIEW_OUTLINED, color="#506A67"),
+        selected_icon=ft.Icon(ft.Icons.TABLE_VIEW, color=ACCENT_DARK),
+        label="Structural BOQ",
+        disabled=True,
+    )
+    civil_boq_destination = ft.NavigationRailDestination(
+        icon=ft.Icon(ft.Icons.CONSTRUCTION_OUTLINED, color="#506A67"),
+        selected_icon=ft.Icon(ft.Icons.CONSTRUCTION, color=ACCENT_DARK),
+        label="Civil BOQ",
+        disabled=True,
+    )
 
     rail = ft.NavigationRail(
         extended=True,
@@ -4556,6 +5066,8 @@ def main(page: ft.Page) -> None:
             analysis_destination,
             connection_destination,
             foundation_destination,
+            boq_destination,
+            civil_boq_destination,
         ],
     )
 
@@ -4570,8 +5082,8 @@ def main(page: ft.Page) -> None:
         current_index = index
         rail.selected_index = index
         content_host.controls = [sections[index]]
-        visual_builder.visible = index not in (5, 6, 7)
-        running_summary_panel.visible = index not in (5, 6, 7)
+        visual_builder.visible = index not in (5, 6, 7, 8, 9)
+        running_summary_panel.visible = index not in (5, 6, 7, 8, 9)
         page.update()
         page.run_task(content_host.scroll_to, offset=0, duration=0)
 

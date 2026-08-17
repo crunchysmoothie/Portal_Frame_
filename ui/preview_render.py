@@ -272,7 +272,12 @@ def truss_type_reference_svg(selected: str) -> str:
                 f'<line x1="{left + index * dx:.2f}" y1="{top_y:.2f}" x2="{left + (index + 1) * dx:.2f}" y2="{top_y:.2f}" stroke="{INK}" stroke-width="2"/>',
                 f'<line x1="{left + index * dx:.2f}" y1="{bottom_y:.2f}" x2="{left + (index + 1) * dx:.2f}" y2="{bottom_y:.2f}" stroke="{INK}" stroke-width="2"/>',
             ])
-        if name in {WARREN_INTERMEDIATE_VERTICALS, WARREN_ALL_VERTICALS}:
+        if name in {
+            WARREN_INTERMEDIATE_VERTICALS,
+            WARREN_ALL_VERTICALS,
+            "Pratt",
+            "Howe",
+        }:
             vertical_indices = (
                 range(1, panels, 2)
                 if name == WARREN_INTERMEDIATE_VERTICALS

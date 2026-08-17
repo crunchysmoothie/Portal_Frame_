@@ -621,14 +621,53 @@ def calculate_chord_restraint_layout(
     top_every_n_purlins: int | float,
     bottom_every_n_purlins: int | float,
 ) -> dict:
-    """Calculate full-building chord restraint at every Nth purlin line."""
+    """Calculate paired top/bottom restraint at common transverse lines.
+
+    A longitudinal bracing line ties into both chords at one transverse
+    position.  Classic Warren layouts do not necessarily contain an analysis
+    node on both chords at every purlin line, so a restraint point may be an
+    intermediate physical connection on an otherwise continuous chord member.
+    Such a point changes the out-of-plane effective length only; it must not
+    introduce an unintended in-plane vertical into the pin-jointed model.
+    """
 
     nodes = {node.name: node for node in geometry.nodes}
-    def chord_layout(role: str, requested_interval: int | float) -> dict:
-        interval_value = float(requested_interval)
+
+    def validated_interval(value: int | float) -> int:
+        interval_value = float(value)
         if not interval_value.is_integer() or interval_value < 1:
             raise ValueError("Chord restraint intervals must be whole purlin counts.")
-        interval = int(interval_value)
+        return int(interval_value)
+
+    requested_intervals = {
+        "top_chord": validated_interval(top_every_n_purlins),
+        "bottom_chord": validated_interval(bottom_every_n_purlins),
+    }
+    purlin_nodes = sorted(
+        (nodes[name] for name in geometry.top_node_names),
+        key=lambda node: (node.x_mm, node.y_mm),
+    )
+    if len(purlin_nodes) < 2:
+        raise ValueError("The truss requires at least two purlin lines.")
+    common_indices = {0, len(purlin_nodes) - 1}
+    for interval in requested_intervals.values():
+        common_indices.update(range(0, len(purlin_nodes), interval))
+    common_index_sequence = sorted(common_indices)
+    common_x_positions = [
+        float(purlin_nodes[index].x_mm) for index in common_index_sequence
+    ]
+    actual_maximum_purlin_interval = max(
+        (
+            end_index - start_index
+            for start_index, end_index in zip(
+                common_index_sequence, common_index_sequence[1:]
+            )
+        ),
+        default=0,
+    )
+
+    def chord_layout(role: str) -> dict:
+        interval = requested_intervals[role]
         chord_members = [
             member for member in geometry.members if member.role == role
         ]
@@ -667,43 +706,113 @@ def calculate_chord_restraint_layout(
                 component, key=lambda name: (nodes[name].x_mm, nodes[name].y_mm)
             ))
 
-        intervals = []
+        intervals: list[dict] = []
         effective_lengths: dict[str, float] = {}
-        restraint_names: list[str] = []
-        for node_names in components:
-            indices = list(range(0, len(node_names), interval))
-            if indices[-1] != len(node_names) - 1:
-                indices.append(len(node_names) - 1)
-            for start_index, end_index in zip(indices, indices[1:]):
-                selected_names = node_names[start_index:end_index + 1]
-                path_members = [
-                    member_by_pair[frozenset((left, right))]
-                    for left, right in zip(selected_names, selected_names[1:])
-                ]
-                interval_length = sum(
-                    member_length_mm(geometry, member)
-                    for member in path_members
+        restraint_points: list[dict] = []
+        for component_index, node_names in enumerate(components, 1):
+            path_members = [
+                member_by_pair[frozenset((left, right))]
+                for left, right in zip(node_names, node_names[1:])
+            ]
+            cumulative = [0.0]
+            for member in path_members:
+                cumulative.append(
+                    cumulative[-1] + member_length_mm(geometry, member)
+                )
+            component_min_x = min(nodes[name].x_mm for name in node_names)
+            component_max_x = max(nodes[name].x_mm for name in node_names)
+            selected_x = [
+                x for x in common_x_positions
+                if component_min_x - 1e-6 <= x <= component_max_x + 1e-6
+            ]
+            selected_x.extend((component_min_x, component_max_x))
+            selected_x = sorted(set(selected_x))
+
+            component_points: list[dict] = []
+            for point_index, x_mm in enumerate(selected_x):
+                matching_name = next(
+                    (
+                        name for name in node_names
+                        if math.isclose(nodes[name].x_mm, x_mm, abs_tol=1e-6)
+                    ),
+                    None,
+                )
+                segment_index = next(
+                    (
+                        index for index, (left, right) in enumerate(
+                            zip(node_names, node_names[1:])
+                        )
+                        if min(nodes[left].x_mm, nodes[right].x_mm) - 1e-6
+                        <= x_mm
+                        <= max(nodes[left].x_mm, nodes[right].x_mm) + 1e-6
+                    ),
+                    max(len(path_members) - 1, 0),
+                )
+                left_name = node_names[segment_index]
+                right_name = node_names[segment_index + 1]
+                left_node = nodes[left_name]
+                right_node = nodes[right_name]
+                dx = right_node.x_mm - left_node.x_mm
+                fraction = (
+                    0.0 if abs(dx) <= 1e-9
+                    else (x_mm - left_node.x_mm) / dx
+                )
+                y_mm = left_node.y_mm + fraction * (
+                    right_node.y_mm - left_node.y_mm
+                )
+                distance_mm = cumulative[segment_index] + fraction * (
+                    cumulative[segment_index + 1] - cumulative[segment_index]
+                )
+                virtual = matching_name is None
+                point_name = matching_name or (
+                    f"R{'T' if role == 'top_chord' else 'B'}"
+                    f"{component_index}-{point_index + 1}"
+                )
+                component_points.append({
+                    "name": point_name,
+                    "x_mm": x_mm,
+                    "y_mm": y_mm,
+                    "analysis_node": not virtual,
+                    "connection_node": True,
+                    "on_member": (
+                        None if not virtual else path_members[segment_index].name
+                    ),
+                    "distance_along_chord_mm": distance_mm,
+                })
+            restraint_points.extend(component_points)
+            for start_point, end_point in zip(
+                component_points, component_points[1:]
+            ):
+                interval_length = (
+                    float(end_point["distance_along_chord_mm"])
+                    - float(start_point["distance_along_chord_mm"])
                 )
                 intervals.append({
-                    "start_node": selected_names[0],
-                    "end_node": selected_names[-1],
-                    "panel_spaces": len(path_members),
+                    "start_node": start_point["name"],
+                    "end_node": end_point["name"],
+                    "panel_spaces": 1,
                     "length_mm": interval_length,
                 })
-                for member in path_members:
-                    effective_lengths[member.name] = interval_length
-                restraint_names.extend((selected_names[0], selected_names[-1]))
+                start_distance = float(start_point["distance_along_chord_mm"])
+                end_distance = float(end_point["distance_along_chord_mm"])
+                for member_index, member in enumerate(path_members):
+                    member_start = cumulative[member_index]
+                    member_end = cumulative[member_index + 1]
+                    if (
+                        member_end > start_distance + 1e-6
+                        and member_start < end_distance - 1e-6
+                    ):
+                        effective_lengths[member.name] = max(
+                            effective_lengths.get(member.name, 0.0),
+                            interval_length,
+                        )
         return {
             "brace_every_n_purlins": interval,
+            "requested_brace_every_n_purlins": interval,
+            "actual_maximum_purlin_interval": actual_maximum_purlin_interval,
+            "actual_common_bracing_lines": len(common_x_positions),
             "coverage": "Entire building length",
-            "restraint_nodes": [
-                {
-                    "name": name,
-                    "x_mm": nodes[name].x_mm,
-                    "y_mm": nodes[name].y_mm,
-                }
-                for name in dict.fromkeys(restraint_names)
-            ],
+            "restraint_nodes": restraint_points,
             "intervals": intervals,
             "maximum_spacing_mm": max(
                 (item["length_mm"] for item in intervals), default=0.0
@@ -713,13 +822,13 @@ def calculate_chord_restraint_layout(
 
     return {
         "basis": (
-            "Chord restraint is assumed to continue over the entire building "
-            "length at every selected Nth purlin line."
+            "Top- and bottom-chord restraint is paired at the same transverse "
+            "bracing lines over the entire building length. Intermediate "
+            "connection nodes are added where a chord has no analysis joint."
         ),
-        "top_chord": chord_layout("top_chord", top_every_n_purlins),
-        "bottom_chord": chord_layout(
-            "bottom_chord", bottom_every_n_purlins
-        ),
+        "common_bracing_x_mm": common_x_positions,
+        "top_chord": chord_layout("top_chord"),
+        "bottom_chord": chord_layout("bottom_chord"),
     }
 
 

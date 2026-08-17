@@ -23,6 +23,7 @@ from .visualisation import build_analysis_visualisation
 from .snapshot import load_analysis_snapshot, validate_snapshot_input
 from connection_workflow.haunch_geometry import maximum_haunch_cut_depth_mm
 from portal_workflow.serviceability import serviceability_deflection_rows
+from portal_workflow.inputs import display_load_case_name
 from portal_workflow.strength import (
     element_property_details,
     member_class_details,
@@ -70,6 +71,15 @@ class MemberCalculation:
     governing_ratio: float
     governing_check: str
     status: str
+    parent_member: str = ""
+    governing_segment: str = ""
+    shear_force: float = 0.0
+    shear_i: float = 0.0
+    shear_j: float = 0.0
+    segment_start_mm: float = 0.0
+    segment_end_mm: float = 0.0
+    parent_length_mm: float = 0.0
+    section_properties: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -511,6 +521,17 @@ def calculate_member_design(
         parameters=parameters, resistances=resistances, calculations=items,
         governing_ratio=governing.result, governing_check=governing.reference,
         status="PASS" if all(item.status == "PASS" for item in items) else "FAIL",
+        parent_member=str(
+            member_actions.get("parent_member", member_actions["Name"])
+        ),
+        governing_segment=str(member_actions["Name"]),
+        shear_force=float(member_actions.get("Vy_max", 0.0)),
+        shear_i=float(member_actions.get("Vy_top", 0.0)),
+        shear_j=float(member_actions.get("Vy_bot", 0.0)),
+        segment_start_mm=float(member_actions.get("segment_start_mm", 0.0)),
+        segment_end_mm=float(member_actions.get("segment_end_mm", 0.0)),
+        parent_length_mm=float(member_actions.get("parent_length_mm", 0.0)),
+        section_properties=dict(member_actions.get("section_properties", {})),
     )
 
 
@@ -563,12 +584,37 @@ def select_member_results(
 ) -> list[MemberCalculation]:
     """Filter results for full, critical-only, or selected-combination reports."""
 
-    if scope is ReportScope.FULL:
-        return list(results)
-    if scope is ReportScope.LOAD_COMBINATION:
-        if not load_combination:
-            raise ValueError("A load combination is required for LOAD_COMBINATION scope.")
-        return [item for item in results if item.load_combination == load_combination]
+    if scope in {ReportScope.FULL, ReportScope.LOAD_COMBINATION}:
+        selected = list(results)
+        if scope is ReportScope.LOAD_COMBINATION:
+            if not load_combination:
+                raise ValueError("A load combination is required for LOAD_COMBINATION scope.")
+            selected = [
+                item for item in selected
+                if item.load_combination == load_combination
+            ]
+
+        # The analysis model is intentionally subdivided at brace points,
+        # haunch transitions and load-layout nodes.  Detailed reports should
+        # still show one physical member per load case, with the governing
+        # subdivision retained as the auditable calculation representative.
+        grouped: dict[tuple[str, str], MemberCalculation] = {}
+        for item in selected:
+            parent = item.parent_member or item.member
+            key = (parent, item.load_combination)
+            representative = replace(
+                item,
+                member=parent,
+                parent_member=parent,
+                governing_segment=item.member,
+            )
+            current = grouped.get(key)
+            if current is None or representative.governing_ratio > current.governing_ratio:
+                grouped[key] = representative
+        return sorted(
+            grouped.values(),
+            key=lambda item: (item.load_combination, item.member_type, item.member),
+        )
 
     # Retain the governing tension and compression result for each member type.
     # This keeps the critical report concise while documenting both clause 13.8
@@ -687,7 +733,7 @@ def governing_serviceability_deflections(
         == "yes"
     )
     ignored_names = (
-        {"1.1 DL + 1.0 LL"} if ignore_dead_live_vertical else set()
+        {"C2"} if ignore_dead_live_vertical else set()
     )
     ignored_vertical = [
         dict(item)
@@ -1168,9 +1214,9 @@ def build_calculation_sheet_data_from_frame(
     assumptions = [
         "Two-dimensional transverse portal-frame analysis.",
         "Member self-weight is applied in load case D.",
-        "Roof permanent actions are represented by D_MIN and D_MAX.",
+        "Roof permanent actions are represented by DLMIN and DLMAX.",
         "Every total-load serviceability roof profile is checked so each generated rafter segment retains its original drainage direction. A reversed or zero fall is rejected as a ponding risk.",
-        "Project-specific services, ceiling, solar, fire-services and HVAC area loads are added to D_MAX; D_MIN excludes services and solar.",
+        "Project-specific services, ceiling, solar, fire-services and HVAC area loads are added to DLMAX; DLMIN excludes services and solar.",
         "Utilisation ratios are calculated using the portal_workflow/strength.py design model.",
         "SANS 10162-1:2011, including Amendment No. 1, is used for the reported steel resistance equations.",
         "The current in-plane effective-length factors are Kx = 1.2 for columns and Kx = 1.0 for rafters; Ky = 1.0 between modeled brace points.",
@@ -1182,7 +1228,7 @@ def build_calculation_sheet_data_from_frame(
     if project["use_permanent_deflection_baseline"]:
         assumptions.extend([
             "Vertical serviceability acceptance uses the algebraic incremental displacement from variable actions after subtracting the matching permanent-action baseline at each node.",
-            "The permanent baseline uses the same D, D_MIN and D_CRAWL factors as each serviceability combination; total deflection remains reported.",
+            "The permanent baseline uses the same D, DLMIN and D_CRAWL factors as each serviceability combination; total deflection remains reported.",
         ])
     else:
         assumptions.append(
@@ -1201,7 +1247,7 @@ def build_calculation_sheet_data_from_frame(
         ])
     if project["ignore_1_1_dl_1_0_ll_vertical_deflection_limit"]:
         assumptions.append(
-            "The 1.1 DL + 1.0 LL combination is analysed and reported, but "
+            "Combination C2 is analysed and reported, but "
             "its vertical span/deflection result is excluded from automatic "
             "portal-section acceptance."
         )
@@ -1244,7 +1290,7 @@ def build_calculation_sheet_data_from_frame(
             ),
             *(
                 [
-                    "The vertical deflection limit for 1.1 DL + 1.0 LL was "
+                    "The vertical deflection limit for combination C2 was "
                     "ignored for automatic section selection; its calculated "
                     "deflection remains in the results."
                 ]
@@ -1806,7 +1852,7 @@ def write_html_report(data, output_path):
                 "(services and solar excluded)"
             ),
         ),
-        ("Combinations", escape(str(data.project["load_combination_standard"]))),
+        ("SANS 10160 loading code", escape(str(data.project["load_combination_standard"]))),
         ("Wind design mode", escape(str(data.project.get("wind_design_mode", "Prelim")))),
         ("Wall openings", escape(str(data.project.get("wall_openings_m2", "Not required")))),
         ("cpi envelopes", escape(
@@ -1862,7 +1908,7 @@ def write_html_report(data, output_path):
          f"{escape(summary['vertical_reaction_node'])} - {escape(summary['vertical_reaction_combination'])}"),
     ]
     combination_rows = [
-        (escape(item["name"]), escape(", ".join(f"{k}={v:g}" for k, v in item["factors"].items())))
+        (escape(item["name"]), escape(", ".join(f"{display_load_case_name(k)}={v:g}" for k, v in item["factors"].items())))
         for item in data.load_combinations
     ]
     deflection_rows = [
@@ -2232,7 +2278,7 @@ def write_pdf_from_json(json_path, output_path):
         story += [Paragraph("Limitations", styles["CalcH4"])]
         story += [Paragraph(f"- {escape(item)}", styles["Small"]) for item in source["warnings"]]
 
-    combo_rows = [["Combination", "Factors"]] + [[c["name"], ", ".join(f"{k}={v:g}" for k,v in c["factors"].items())] for c in source["load_combinations"]]
+    combo_rows = [["Combination", "Factors"]] + [[c["name"], ", ".join(f"{display_load_case_name(k)}={v:g}" for k,v in c["factors"].items())] for c in source["load_combinations"]]
     combo_table = Table(combo_rows, colWidths=[100*mm,70*mm], repeatRows=1)
     combo_table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#174f78")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),0.3,colors.HexColor("#cbd2d9")),("FONTSIZE",(0,0),(-1,-1),7)]))
     story += [Paragraph("4. Ultimate load combinations", styles["CalcH2"]), combo_table]

@@ -7,6 +7,8 @@ import html
 import math
 from typing import Any
 
+from portal_workflow.inputs import display_load_case_name
+
 
 INK = "#173C3A"
 MUTED = "#607472"
@@ -165,6 +167,28 @@ def _halo_text(
     )
 
 
+def _load_value_label(
+    text: str,
+    x: float,
+    y: float,
+    *,
+    colour: str,
+) -> str:
+    """Render a readable value tag over a hatched load block."""
+
+    width = min(190.0, max(112.0, len(text) * 5.8 + 14.0))
+    height = 15.0
+    return (
+        f'<g><rect x="{x - width / 2:.2f}" y="{y - height + 3:.2f}" '
+        f'width="{width:.2f}" height="{height:.2f}" rx="3" '
+        f'fill="#FFFFFF" fill-opacity="0.96" stroke="{colour}" '
+        'stroke-opacity="0.45" stroke-width="0.7"/>'
+        f'<text x="{x:.2f}" y="{y:.2f}" text-anchor="middle" '
+        f'fill="{colour}" font-family="Arial,sans-serif" font-size="9" '
+        f'font-weight="700">{html.escape(text)}</text></g>'
+    )
+
+
 def _outside_label_position(
     start_x: float,
     start_y: float,
@@ -186,6 +210,14 @@ def _scaled_arrow_length(value: float, maximum: float) -> float:
     if maximum <= 1e-12:
         return 22.0
     return 18.0 + 42.0 * math.sqrt(min(1.0, abs(value) / maximum))
+
+
+def _scaled_load_block_height(value: float, maximum: float) -> float:
+    """Return a readable screen height for a distributed-load pressure block."""
+
+    if maximum <= 1e-12:
+        return 14.0
+    return 12.0 + 34.0 * math.sqrt(min(1.0, abs(value) / maximum))
 
 
 def _force_definition(component: str) -> tuple[str, str, str]:
@@ -265,7 +297,7 @@ def load_case_svg(
         return baseline - (value - min_y) * scale
 
     factors = ", ".join(
-        f"{html.escape(str(case))}={float(factor):g}"
+        f"{html.escape(display_load_case_name(case))}={float(factor):g}"
         for case, factor in combination.get("factors", {}).items()
         if abs(float(factor)) > 1e-12
     )
@@ -295,6 +327,7 @@ def load_case_svg(
             case: f"load-arrow-{index}" for index, case in enumerate(active_cases)
         }
         marker_defs = []
+        hatch_defs = []
         for case in active_cases:
             colour = case_colours[case]
             marker_defs.append(
@@ -302,7 +335,15 @@ def load_case_svg(
                 f'refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" '
                 f'fill="{colour}"/></marker>'
             )
-        body.insert(1, f'<defs>{"".join(marker_defs)}</defs>')
+            hatch_defs.append(
+                f'<pattern id="load-hatch-{active_cases.index(case)}" '
+                'patternUnits="userSpaceOnUse" width="8" height="8">'
+                f'<rect width="8" height="8" fill="{colour}" fill-opacity="0.10"/>'
+                f'<path d="M-2,2 L2,-2 M0,8 L8,0 M6,10 L10,6" '
+                f'stroke="{colour}" stroke-width="1.2" stroke-opacity="0.65"/>'
+                '</pattern>'
+            )
+        body.insert(1, f'<defs>{"".join(marker_defs)}{"".join(hatch_defs)}</defs>')
 
     for member in members:
         points = member["displacement_points"]
@@ -434,7 +475,7 @@ def _truss_deflection_svg(
 
     node_by_name = {str(node["name"]): node for node in nodes}
     factors = ", ".join(
-        f"{html.escape(str(case))}={float(factor):g}"
+        f"{html.escape(display_load_case_name(case))}={float(factor):g}"
         for case, factor in combination.get("factors", {}).items()
         if abs(float(factor)) > 1e-12
     )
@@ -556,44 +597,45 @@ def _render_loads(
             x2 = float(load["x2_mm"])
             case = str(load["case"])
             colour = case_colours.get(case, LOAD)
-            marker_id = marker_ids.get(case, default_marker)
-            phase = 0.04 * (load_index % 3)
-            for arrow_index, fraction in enumerate((0.18 + phase, 0.50, 0.82 - phase)):
-                distance = x1 + (x2 - x1) * fraction
-                px, py = _point_on_member(points, distance)
-                magnitude = float(load["w1_kn_per_m"]) + (
-                    float(load["w2_kn_per_m"]) - float(load["w1_kn_per_m"])
-                ) * fraction
-                start_x, start_y = _arrow_start(
-                    member,
-                    str(load["direction"]),
-                    magnitude,
-                    sx(px),
-                    sy(py),
-                    _scaled_arrow_length(magnitude, distributed_max),
+            direction = str(load["direction"])
+            axis_x, axis_y = _load_direction(member, direction)
+            axis_length = math.hypot(axis_x, axis_y) or 1.0
+            w1 = float(load["w1_kn_per_m"])
+            w2 = float(load["w2_kn_per_m"])
+            sign = 1.0 if (w1 + w2) >= 0.0 else -1.0
+            outward_x = -sign * axis_x / axis_length
+            outward_y = sign * axis_y / axis_length
+            p1x, p1y = _point_on_member(points, x1)
+            p2x, p2y = _point_on_member(points, x2)
+            q1x, q1y = sx(p1x), sy(p1y)
+            q2x, q2y = sx(p2x), sy(p2y)
+            h1 = _scaled_load_block_height(w1, distributed_max)
+            h2 = _scaled_load_block_height(w2, distributed_max)
+            pattern_index = active_cases.index(case) if case in active_cases else 0
+            pattern_id = f'load-hatch-{pattern_index}'
+            body.append(
+                f'<polygon points="{q1x:.2f},{q1y:.2f} {q2x:.2f},{q2y:.2f} '
+                f'{q2x + outward_x * h2:.2f},{q2y + outward_y * h2:.2f} '
+                f'{q1x + outward_x * h1:.2f},{q1y + outward_y * h1:.2f}" '
+                f'fill="url(#{pattern_id})" stroke="{colour}" stroke-width="1.2"/>'
+            )
+            midpoint_x = (q1x + q2x) / 2.0 + outward_x * (h1 + h2) / 4.0
+            midpoint_y = (q1y + q2y) / 2.0 + outward_y * (h1 + h2) / 4.0 - 3.0
+            member_screen_length = math.hypot(q2x - q1x, q2y - q1y) or 1.0
+            tangent_x = (q2x - q1x) / member_screen_length
+            tangent_y = (q2y - q1y) / member_screen_length
+            label_lane = load_index % 3 - 1
+            label_stack = load_index // 3
+            midpoint_x += tangent_x * label_lane * 55.0 + outward_x * label_stack * 15.0
+            midpoint_y += tangent_y * label_lane * 55.0 + outward_y * label_stack * 15.0
+            body.append(
+                _load_value_label(
+                    f'{direction} {w1:+.2f} to {w2:+.2f} kN/m',
+                    midpoint_x,
+                    midpoint_y,
+                    colour=colour,
                 )
-                body.append(
-                    f'<line x1="{start_x:.2f}" y1="{start_y:.2f}" '
-                    f'x2="{sx(px):.2f}" y2="{sy(py):.2f}" stroke="{colour}" '
-                    f'stroke-width="1.6" marker-end="url(#{marker_id})"/>'
-                )
-                if arrow_index == load_index % 3:
-                    label_x, label_y = _outside_label_position(
-                        start_x,
-                        start_y,
-                        sx(px),
-                        sy(py),
-                        0,
-                    )
-                    body.append(
-                        _halo_text(
-                            f'{load["direction"]} {magnitude:+.2f}',
-                            label_x,
-                            label_y,
-                            colour=colour,
-                            size=11,
-                        )
-                    )
+            )
 
         for load_index, load in enumerate(member.get("point_loads", [])):
             px, py = _point_on_member(points, float(load["x_mm"]))
@@ -675,8 +717,8 @@ def _render_loads(
 
     body.append(
         f'<text x="28" y="482" fill="{INK}" font-family="Arial,sans-serif" '
-        'font-size="12" font-weight="700">Values are beside the arrows: distributed '
-        'loads in kN/m; point and nodal loads in kN. Colour identifies the source case.</text>'
+        'font-size="12" font-weight="700">Hatched blocks show distributed loads in kN/m; '
+        'arrows show point and nodal loads in kN. Colour identifies the source case.</text>'
     )
     legend_x = 28
     for case in active_cases:
@@ -686,9 +728,9 @@ def _render_loads(
             f'<line x1="{legend_x}" y1="510" x2="{legend_x + 26}" y2="510" '
             f'stroke="{colour}" stroke-width="3"/><text x="{legend_x + 32}" y="514" '
             f'fill="{MUTED}" font-family="Arial,sans-serif" font-size="10">'
-            f'{html.escape(case)} &#215; {factor:g}</text>'
+            f'{html.escape(display_load_case_name(case))} &#215; {factor:g}</text>'
         )
-        legend_x += 115 + 7 * len(case)
+        legend_x += 115 + 7 * len(display_load_case_name(case))
     body.append(
         f'<text x="28" y="542" fill="{MUTED}" font-family="Arial,sans-serif" '
         'font-size="10">Arrow direction follows the stored global or local member axis; '
