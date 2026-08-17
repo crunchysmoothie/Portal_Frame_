@@ -4,5 +4,5 @@
 - [ ] Fix the connection markups. (`connection_workflow/cad.py`)
 - [x] Complete the truss markup section. (`truss_workflow/report.py`)
 - [ ] Improve the connection calculation sheets. (`connection_workflow/report.py`)
-- [ ] Create foundation calculation sheets. (`foundation_workflow/design.py`)
+- [x] Create foundation calculation sheets. (`foundation_workflow/report.py`)
 - [ ] Finalise the UI. (`ui/main.py`)

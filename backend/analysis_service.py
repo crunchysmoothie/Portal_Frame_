@@ -36,6 +36,7 @@ from reporting_workflow.boq import (
 )
 from reporting_workflow.civil_boq import build_civil_boq_takeoff, write_civil_boq_xlsx
 from foundation_workflow.design import design_pad_foundations
+from foundation_workflow.report import write_foundation_report_html
 from reporting_workflow.snapshot import load_analysis_snapshot
 from portal_workflow.preview import build_preview_geometry
 from portal_workflow.prokon_export import (
@@ -635,15 +636,66 @@ def design_foundations(
         result["whole_building_support_count"] = sum(
             int(item.get("quantity", 1)) for item in result.get("supports", [])
         )
-    output_path = _job_dir(analysis_id) / "foundation" / "foundation_design.json"
+    job_directory = _job_dir(analysis_id)
+    output_path = job_directory / "foundation" / "foundation_design.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    project = snapshot.get("results", {}).get("project", {})
+    if not isinstance(project, Mapping):
+        project = job.get("design_summary", {}).get("project", {})
+    report_path = write_foundation_report_html(
+        result,
+        job_directory / "report" / "foundation_calculation_sheets.html",
+        project,
+    )
     artifact_paths = dict(job.get("artifact_paths", {}))
     artifact_paths["foundation-design-json"] = str(output_path)
+    artifact_paths["foundation-report-html"] = str(report_path)
+
+    # Building markups exist before the post-analysis foundation design. Rebuild
+    # the applicable markup so the same artifact changes from an explicit
+    # not-designed notice to the calculated common-pad plan and detail.
+    portal_report_path = artifact_paths.get("design-report-json")
+    if portal_report_path and Path(portal_report_path).is_file():
+        markup_source = json.loads(Path(portal_report_path).read_text(encoding="utf-8"))
+        markup_source["foundation_design"] = result
+        markup_html, markup_pdf = write_markup(
+            markup_source, job_directory / "markup", create_pdf=True
+        )
+        artifact_paths["markup-html"] = str(markup_html)
+        if markup_pdf is not None:
+            artifact_paths["markup-pdf"] = str(markup_pdf)
+        else:
+            artifact_paths.pop("markup-pdf", None)
+    elif artifact_paths.get("truss-markup-html"):
+        truss_result = job.get("design_summary", {})
+        if isinstance(truss_result, Mapping):
+            truss_markup = write_truss_markup_html(
+                truss_result,
+                job_directory / "markup" / "truss_member_markup.html",
+                foundation_design=result,
+            )
+            artifact_paths["truss-markup-html"] = str(truss_markup)
+
     job["artifact_paths"] = artifact_paths
     job["foundation_design"] = result
     _write_job(job)
-    return result
+    response = dict(result)
+    response["artifacts"] = {
+        key: {
+            "filename": Path(path).name,
+            "download_url": f"/api/analysis/{analysis_id}/artifacts/{key}",
+        }
+        for key, path in artifact_paths.items()
+        if key in {
+            "foundation-design-json",
+            "foundation-report-html",
+            "markup-html",
+            "markup-pdf",
+            "truss-markup-html",
+        }
+    }
+    return response
 
 
 def create_structural_boq(

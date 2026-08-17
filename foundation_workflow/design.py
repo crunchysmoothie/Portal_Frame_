@@ -24,13 +24,15 @@ FOUNDATION_PASSIVE_RESISTANCE_OPTIONS = (
     "Passive Resistance Excluded",
     "Passive Resistance Included",
 )
+FOUNDATION_PLAN_SHAPES = (
+    "Rectangular",
+    "Square",
+)
 FAILED_NUMERIC = 1e12
 DESIGN_CONCRETE_STRENGTH_MPA = 25.0
-# TODO(advanced-finishes): Create printable foundation calculation sheets from
-# the completed foundation design result.
-
 DEFAULT_FOUNDATION_VALUES: dict[str, Any] = {
     "foundation_standard": "SANS 10100-1",
+    "foundation_plan_shape": "Rectangular",
     "foundation_length_m": "2.4",
     "foundation_width_m": "2.0",
     "foundation_thickness_mm": "500",
@@ -119,6 +121,11 @@ def _validated_inputs(raw: Mapping[str, Any]) -> dict[str, float | str]:
     if standard not in FOUNDATION_STANDARDS:
         errors["foundation_standard"] = (
             f"Choose one of: {', '.join(FOUNDATION_STANDARDS)}."
+        )
+    plan_shape = str(raw.get("foundation_plan_shape", "Rectangular")).strip()
+    if plan_shape not in FOUNDATION_PLAN_SHAPES:
+        errors["foundation_plan_shape"] = (
+            f"Choose one of: {', '.join(FOUNDATION_PLAN_SHAPES)}."
         )
     length = number("foundation_length_m")
     width = number("foundation_width_m")
@@ -222,6 +229,20 @@ def _validated_inputs(raw: Mapping[str, Any]) -> dict[str, float | str]:
         errors["foundation_loaded_width_mm"] = (
             "Loaded width must be smaller than the footing width."
         )
+    if length > 0 and width > 0:
+        aspect_ratio = max(length, width) / min(length, width)
+        if aspect_ratio > float(
+            AUTOMATIC_FOUNDATION_ASSUMPTIONS["maximum_plan_aspect_ratio"]
+        ) + 1e-12:
+            errors["foundation_width_m"] = (
+                "The footing length-to-breadth ratio must not exceed 1:1.5."
+            )
+        if plan_shape == "Square" and not math.isclose(
+            length, width, rel_tol=0.0, abs_tol=1e-9
+        ):
+            errors["foundation_width_m"] = (
+                "Square footings require equal length and breadth."
+            )
     effective_depth = thickness - cover - diameter / 2
     if effective_depth <= 0:
         errors["foundation_thickness_mm"] = (
@@ -235,6 +256,7 @@ def _validated_inputs(raw: Mapping[str, Any]) -> dict[str, float | str]:
         raise FoundationInputError(errors)
     return {
         "standard": standard,
+        "plan_shape": plan_shape,
         "length_m": length,
         "width_m": width,
         "thickness_mm": thickness,
@@ -1104,7 +1126,7 @@ def passive_sliding_resistance(
 def _automatic_user_inputs(
     raw_inputs: Mapping[str, Any],
 ) -> tuple[
-    float, float, float, float, float, float, str, float, str, float, float
+    float, float, float, float, float, float, str, float, str, float, float, str
 ]:
     errors: dict[str, str] = {}
 
@@ -1160,6 +1182,13 @@ def _automatic_user_inputs(
             "Passive Resistance Excluded",
         )
     ).strip()
+    plan_shape = str(
+        raw_inputs.get("foundation_plan_shape", "Rectangular")
+    ).strip()
+    if plan_shape not in FOUNDATION_PLAN_SHAPES:
+        errors["foundation_plan_shape"] = (
+            f"Choose one of: {', '.join(FOUNDATION_PLAN_SHAPES)}."
+        )
     if passive not in FOUNDATION_PASSIVE_RESISTANCE_OPTIONS:
         errors["foundation_passive_resistance"] = (
             f"Choose one of: {', '.join(FOUNDATION_PASSIVE_RESISTANCE_OPTIONS)}."
@@ -1211,6 +1240,7 @@ def _automatic_user_inputs(
         passive,
         passive_mobilisation,
         uls_sliding_required_sf,
+        plan_shape,
     )
 
 
@@ -1247,6 +1277,7 @@ def design_pad_foundations(
         passive,
         passive_mobilisation,
         uls_sliding_required_sf,
+        plan_shape,
     ) = _automatic_user_inputs(raw_inputs)
     _, _, characteristic_reactions = _reaction_sets(snapshot)
     downward = max(
@@ -1260,18 +1291,24 @@ def design_pad_foundations(
     dimensions: set[tuple[float, float, float]] = set()
     for length_tenth in range(8, 81):
         length = length_tenth / 10.0
-        starting_width = max(
-            0.8, _round_up(preliminary_area / length, 0.1)
-        )
-        for extra_tenth in range(0, 16):
-            width = starting_width + extra_tenth / 10.0
+        if plan_shape == "Square":
+            width_values = (length,)
+        else:
+            starting_width = max(
+                0.8, _round_up(preliminary_area / length, 0.1)
+            )
+            width_values = tuple(
+                starting_width + extra_tenth / 10.0
+                for extra_tenth in range(0, 16)
+            )
+        for width in width_values:
             if width > 8.0 + 1e-9:
                 continue
             if max(length, width) / min(length, width) > float(
                 AUTOMATIC_FOUNDATION_ASSUMPTIONS[
                     "maximum_plan_aspect_ratio"
                 ]
-            ):
+            ) + 1e-12:
                 continue
             for thickness_mm in range(300, 2001, 50):
                 dimensions.add((length, width, float(thickness_mm)))
@@ -1293,6 +1330,7 @@ def design_pad_foundations(
         attempted += 1
         internal_inputs = {
             "foundation_standard": assumptions["foundation_standard"],
+            "foundation_plan_shape": plan_shape,
             "foundation_length_m": length,
             "foundation_width_m": width,
             "foundation_thickness_mm": thickness_mm,
@@ -1352,6 +1390,7 @@ def design_pad_foundations(
     selected["mode"] = "automatic_common_pad"
     selected["user_inputs"] = {
         "soil_unit_weight_kn_m3": soil_weight,
+        "plan_shape": plan_shape,
         "permissible_bearing_kpa": bearing,
         "concrete_strength_mpa": concrete,
         "soil_cover_depth_m": soil_cover,
@@ -1376,6 +1415,14 @@ def design_pad_foundations(
         "length_m": float(selected["inputs"]["length_m"]),
         "width_m": float(selected["inputs"]["width_m"]),
         "height_mm": float(selected["inputs"]["thickness_mm"]),
+        "plan_shape": plan_shape,
+        "plan_aspect_ratio": max(
+            float(selected["inputs"]["length_m"]),
+            float(selected["inputs"]["width_m"]),
+        ) / min(
+            float(selected["inputs"]["length_m"]),
+            float(selected["inputs"]["width_m"]),
+        ),
         "search_increment_plan_m": 0.1,
         "search_increment_height_mm": 50.0,
         "maximum_plan_aspect_ratio": float(
@@ -1405,7 +1452,8 @@ def design_pad_foundations(
             f"{friction:.2f}, soil friction angle {soil_friction_angle:.1f} degrees, "
             f"{passive} at mobilisation factor {passive_mobilisation:.2f}, "
             f"ULS sliding SF {uls_sliding_required_sf:.2f}."
-            f" Maximum plan aspect ratio {float(assumptions['maximum_plan_aspect_ratio']):.2f}."
+            f" Plan shape {plan_shape}; plan aspect ratio must not exceed "
+            f"1:{float(assumptions['maximum_plan_aspect_ratio']):.2f}."
         ),
     ]
     return selected

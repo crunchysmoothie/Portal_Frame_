@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+from typing import Any, Mapping
 
 from portal_workflow.roof_layout import calculate_roof_bracing_layout, roof_brace_pairs
 
@@ -120,11 +121,11 @@ class Svg:
         self.line(x - 8, y2, x + 8, y2, "dim")
         self.text(x - 12, (y1 + y2) / 2, value, "dimtext", rotate=-90)
 
-    def render(self, subtitle):
+    def render(self, subtitle, total_sheets=5):
         self.line(70, 1060, 1612, 1060, "primary")
         self.text(75, 1100, "DRAUGHTSMAN MARKUP - NOT FOR CONSTRUCTION", "warning", "start")
         self.text(75, 1134, subtitle, "small", "start")
-        self.text(1470, 1100, f"SHEET {self.sheet_no} OF 4", "note", "end")
+        self.text(1470, 1100, f"SHEET {self.sheet_no} OF {total_sheets}", "note", "end")
         self.text(1470, 1134, self.title, "sheettitle", "end")
         return f'<svg viewBox="0 0 {PAGE_W} {PAGE_H}" role="img" aria-label="{html.escape(self.title)}">{"".join(self.items)}</svg>'
 
@@ -172,7 +173,20 @@ def _context(data):
         "roof_layout": roof_layout,
         "roof_brace": members.get("Roof X-brace", {}).get("section", "TBC"),
         "wall_brace": members.get("Longitudinal side-wall brace", {}).get("section", "TBC"),
+        "foundation": data.get("foundation_design"),
     }
+
+
+def _designed_foundation(c: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    foundation = c.get("foundation")
+    if not isinstance(foundation, Mapping) or not foundation.get("supports"):
+        return None
+    inputs = foundation.get("inputs", {})
+    if not isinstance(inputs, Mapping):
+        return None
+    if min(float(inputs.get("length_m", 0) or 0), float(inputs.get("width_m", 0) or 0)) <= 0:
+        return None
+    return foundation
 
 
 def _plan_sheet(c):
@@ -187,6 +201,28 @@ def _plan_sheet(c):
     for index, position in enumerate(frames, 1):
         x = X(position); s.line(x, y0 - 45, x, y1 + 45, "gridline"); s.grid(x, y0 - 75, index)
         s.rect(x - 7, y0 - 7, 14, 14, "column"); s.rect(x - 7, y1 - 7, 14, 14, "column")
+    foundation = _designed_foundation(c)
+    if foundation is not None:
+        inputs = foundation["inputs"]
+        pad_w = max(14.0, float(inputs["width_m"]) * 1000 * (x1 - x0) / length)
+        pad_h = max(14.0, float(inputs["length_m"]) * 1000 * (y1 - y0) / span)
+        for position in frames:
+            xx = X(position)
+            for yy in (y0, y1):
+                s.rect(xx - pad_w / 2, yy - pad_h / 2, pad_w, pad_h, "foundation")
+        # Redraw the column symbol above the filled footing so both remain legible.
+        for position in frames:
+            xx = X(position)
+            for yy in (y0, y1):
+                s.rect(xx - 7, yy - 7, 14, 14, "column")
+        s.text(
+            840,
+            190,
+            f"TYPICAL PAD {float(inputs['length_m']):.1f} x {float(inputs['width_m']):.1f} m - SEE SHEET 5",
+            "foundationnote",
+        )
+    else:
+        s.text(840, 190, "FOUNDATIONS HAVE NOT YET BEEN DESIGNED - NO PAD SIZES SHOWN", "warning")
     for label, yy in (("A", y0), ("B", y1)):
         s.line(x0 - 45, yy, x1 + 45, yy, "gridline"); s.grid(x0 - 75, yy, label)
     for col in b.get("gable_layout", {}).get("columns", []):
@@ -257,6 +293,16 @@ def _portal_sheet(c):
     s=Svg("TYPICAL PORTAL FRAME AND GABLE COLUMN ELEVATION",4); x0,x1,yb=210,1470,520; X=lambda v:x0+(x1-x0)*v/span; Y=lambda v:yb-330*v/apex
     mid=span/2; roof=[(X(0),Y(eaves)),(X(mid),Y(apex)),(X(span),Y(eaves))] if p.get("roof_type")=="Duo Pitched" else [(X(0),Y(eaves)),(X(span),Y(apex))]
     s.line(X(0),yb,X(0),Y(eaves),"primary"); s.line(X(span),yb,X(span),Y(eaves if p.get("roof_type")=="Duo Pitched" else apex),"primary"); s.poly(roof,"primary")
+    foundation = _designed_foundation(c)
+    if foundation is not None:
+        inputs = foundation["inputs"]
+        pad_draw = max(70.0, min(170.0, float(inputs["length_m"]) * 35.0))
+        pad_depth = max(12.0, min(28.0, float(inputs["thickness_mm"]) / 20.0))
+        for xx in (X(0), X(span)):
+            s.rect(xx - pad_draw / 2, yb + 5, pad_draw, pad_depth, "foundation")
+            s.rect(xx - 12, yb - 12, 24, 17, "foundation")
+    else:
+        s.text(840, 655, "FOUNDATIONS HAVE NOT YET BEEN DESIGNED", "warning")
     haunch=span/15; depth=float(str(p.get("rafter_section","0")).split("x")[0] or 0); dy=330*depth/apex
     left_end=(X(haunch),Y(eaves+(apex-eaves)*haunch/mid)); right_end=(X(span-haunch),left_end[1])
     s.poly([(X(0),Y(eaves)),left_end,(X(0),Y(eaves)+dy),(X(0),Y(eaves))],"haunch")
@@ -275,11 +321,81 @@ def _portal_sheet(c):
     return s
 
 
+def _foundation_sheet(c):
+    s = Svg("FOUNDATION PLAN AND TYPICAL DETAIL", 5)
+    foundation = _designed_foundation(c)
+    s.text(840, 105, "TYPICAL ISOLATED PAD FOUNDATION", "viewtitle")
+    if foundation is None:
+        s.rect(250, 300, 1180, 380, "warningbox")
+        s.text(840, 440, "FOUNDATIONS HAVE NOT YET BEEN DESIGNED", "largewarning")
+        s.text(840, 500, "Run the post-analysis foundation design before using this markup for foundation coordination.", "note")
+        s.text(840, 555, "No pad size, thickness, reinforcement, pedestal or founding depth is issued on this sheet.", "note")
+        return s
+
+    inputs = foundation["inputs"]
+    length_m = float(inputs["length_m"])
+    width_m = float(inputs["width_m"])
+    thickness_mm = float(inputs["thickness_mm"])
+    loaded_length = float(inputs.get("loaded_length_mm", 400.0))
+    loaded_width = float(inputs.get("loaded_width_mm", 400.0))
+    pedestal_height = float(inputs.get("pedestal_height_m", 0.0)) * 1000
+    soil_cover = float(inputs.get("soil_cover_depth_m", 0.0)) * 1000
+    base_depth = float(inputs.get("base_depth_m", 0.0)) * 1000
+    bar_diameter = float(inputs.get("bar_diameter_mm", 0.0))
+    bar_spacing = float(inputs.get("bar_spacing_mm", 0.0))
+    cover = float(inputs.get("cover_mm", 0.0))
+
+    # Plan view: length is in the portal-frame direction and breadth is transverse.
+    px, py, pw, ph = 170.0, 245.0, 560.0, 470.0
+    plan_scale = min(pw / (width_m * 1000), ph / (length_m * 1000))
+    draw_w = width_m * 1000 * plan_scale
+    draw_h = length_m * 1000 * plan_scale
+    x0, y0 = px + (pw - draw_w) / 2, py + (ph - draw_h) / 2
+    s.rect(x0, y0, draw_w, draw_h, "foundation")
+    pedestal_w = loaded_width * plan_scale
+    pedestal_h = loaded_length * plan_scale
+    s.rect(x0 + (draw_w - pedestal_w) / 2, y0 + (draw_h - pedestal_h) / 2, pedestal_w, pedestal_h, "pedestal")
+    for index in range(1, 7):
+        xx = x0 + draw_w * index / 7
+        yy = y0 + draw_h * index / 7
+        s.line(xx, y0 + 8, xx, y0 + draw_h - 8, "rebar")
+        s.line(x0 + 8, yy, x0 + draw_w - 8, yy, "rebar")
+    s.dim_h(x0, x0 + draw_w, y0 + draw_h + 55, f"BREADTH {width_m * 1000:,.0f} mm")
+    s.dim_v(x0 - 55, y0, y0 + draw_h, f"LENGTH {length_m * 1000:,.0f} mm")
+    s.text(px + pw / 2, 205, "FOUNDATION PLAN", "viewtitle")
+    s.text(px + pw / 2, 820, f"BOTTOM REINFORCEMENT T{bar_diameter:.0f} @ {bar_spacing:.0f} EACH WAY", "note")
+
+    # Typical section.
+    ground_y = 310.0
+    footing_top = ground_y + soil_cover * 0.30
+    footing_depth = max(45.0, thickness_mm * 0.30)
+    sx0, sx1 = 900.0, 1480.0
+    footing_w = 470.0
+    footing_x = (sx0 + sx1 - footing_w) / 2
+    s.line(sx0, ground_y, sx1, ground_y, "ground")
+    s.rect(footing_x, footing_top, footing_w, footing_depth, "foundation")
+    pedestal_draw_w = max(50.0, loaded_length / max(length_m * 1000, 1.0) * footing_w)
+    pedestal_draw_h = max(60.0, pedestal_height * 0.30)
+    pedestal_x = (sx0 + sx1 - pedestal_draw_w) / 2
+    s.rect(pedestal_x, footing_top - pedestal_draw_h, pedestal_draw_w, pedestal_draw_h, "pedestal")
+    s.line(footing_x + 30, footing_top + footing_depth - 18, footing_x + footing_w - 30, footing_top + footing_depth - 18, "rebar")
+    s.dim_h(footing_x, footing_x + footing_w, footing_top + footing_depth + 55, f"{length_m * 1000:,.0f} mm")
+    s.dim_v(footing_x - 55, footing_top, footing_top + footing_depth, f"{thickness_mm:,.0f} mm")
+    s.dim_v(sx1 + 20, ground_y, footing_top + footing_depth, f"BASE DEPTH {base_depth:,.0f} mm")
+    s.text((sx0 + sx1) / 2, 205, "TYPICAL SECTION", "viewtitle")
+    s.text((sx0 + sx1) / 2, 790, f"NOMINAL BOTTOM COVER {cover:.0f} mm; PEDESTAL {loaded_length:.0f} x {loaded_width:.0f} mm", "note")
+    s.text(840, 875, f"DESIGN STATUS {foundation.get('status', '')}; {foundation.get('standard', '')}; PLAN SHAPE {inputs.get('plan_shape', '')}; ASPECT RATIO {max(length_m, width_m) / min(length_m, width_m):.3f} <= 1.500", "note")
+    s.text(840, 920, "FOUNDATION MARKUP IS FOR DESIGN COORDINATION. CONFIRM GEOTECHNICAL VALUES, PEDESTAL/DOWELS, ANCHORS, DEVELOPMENT LENGTH AND DURABILITY DETAILING.", "warning")
+    quantities = sum(int(item.get("quantity", 1)) for item in foundation.get("supports", []))
+    s.text(840, 970, f"TYPICAL COMMON PAD QUANTITY {quantities}; REFER TO FOUNDATION CALCULATION SHEETS FOR SUPPORT-BY-SUPPORT ACTIONS AND CHECKS.", "note")
+    return s
+
+
 def build_markup_html(data):
     c=_context(data); subtitle=f'{c["p"].get("roof_type","")} PORTAL FRAME - GENERATED FROM COMPLETED DESIGN REPORT'
-    sheets=[_plan_sheet(c),_roof_sheet(c),_wall_sheet(c),_portal_sheet(c)]
-    css="""@page{size:841mm 594mm;margin:0}*{box-sizing:border-box}html,body{margin:0;padding:0}body{background:#ddd;font-family:Arial,sans-serif}.sheet{width:841mm;height:594mm;margin:8mm auto;background:white;break-after:page;page-break-after:always;overflow:hidden}.sheet:last-child{break-after:auto;page-break-after:auto}svg{display:block;width:100%;height:100%}.thin,.primary,.secondary,.gridline,.brace,.dim,.column,.gablecolumn,.haunch,.gablecolumnline{fill:none;vector-effect:non-scaling-stroke}.thin{stroke:#555;stroke-width:1}.primary{stroke:#111;stroke-width:2}.secondary{stroke:#777;stroke-width:1;stroke-dasharray:7 5}.gridline{stroke:#999;stroke-width:1;stroke-dasharray:12 5 2 5}.brace{stroke:#a8202d;stroke-width:3}.haunch{stroke:#174f78;stroke-width:3}.column{stroke:#111;stroke-width:2;fill:#fff}.gablecolumn{stroke:#a8202d;stroke-width:2;fill:#fff}.gablecolumnline{stroke:#a8202d;stroke-width:2}.dim{stroke:#555;stroke-width:1}.gridbubble{fill:#fff;stroke:#777;stroke-width:1}.note{font-size:18px;fill:#111}.small{font-size:14px;fill:#222}.dimtext{font-size:14px;fill:#333}.gridtext{font-size:25px;fill:#111}.viewtitle{font-size:25px;font-weight:bold;text-decoration:underline}.warning{font-size:18px;font-weight:bold;fill:#a8202d}.sheettitle{font-size:18px;font-weight:bold}.sheettitle,.note,.small,.dimtext,.gridtext,.viewtitle,.warning{font-family:Arial,sans-serif}@media print{body{background:white}.sheet{margin:0}}"""
-    pages="".join(f'<section class="sheet">{sheet.render(subtitle)}</section>' for sheet in sheets)
+    sheets=[_plan_sheet(c),_roof_sheet(c),_wall_sheet(c),_portal_sheet(c),_foundation_sheet(c)]
+    css="""@page{size:841mm 594mm;margin:0}*{box-sizing:border-box}html,body{margin:0;padding:0}body{background:#ddd;font-family:Arial,sans-serif}.sheet{width:841mm;height:594mm;margin:8mm auto;background:white;break-after:page;page-break-after:always;overflow:hidden}.sheet:last-child{break-after:auto;page-break-after:auto}svg{display:block;width:100%;height:100%}.thin,.primary,.secondary,.gridline,.brace,.dim,.column,.gablecolumn,.haunch,.gablecolumnline,.foundation,.pedestal,.rebar,.ground,.warningbox{fill:none;vector-effect:non-scaling-stroke}.thin{stroke:#555;stroke-width:1}.primary{stroke:#111;stroke-width:2}.secondary{stroke:#777;stroke-width:1;stroke-dasharray:7 5}.gridline{stroke:#999;stroke-width:1;stroke-dasharray:12 5 2 5}.brace{stroke:#a8202d;stroke-width:3}.haunch{stroke:#174f78;stroke-width:3}.foundation{stroke:#7a4b16;stroke-width:3;fill:#f8efe3}.pedestal{stroke:#111;stroke-width:3;fill:#ddd}.rebar{stroke:#a8202d;stroke-width:1}.ground{stroke:#3f6b3f;stroke-width:2;stroke-dasharray:12 5}.warningbox{stroke:#a8202d;stroke-width:4;stroke-dasharray:18 8}.column{stroke:#111;stroke-width:2;fill:#fff}.gablecolumn{stroke:#a8202d;stroke-width:2;fill:#fff}.gablecolumnline{stroke:#a8202d;stroke-width:2}.dim{stroke:#555;stroke-width:1}.gridbubble{fill:#fff;stroke:#777;stroke-width:1}.note{font-size:18px;fill:#111}.foundationnote{font-size:18px;font-weight:bold;fill:#7a4b16}.largewarning{font-size:34px;font-weight:bold;fill:#a8202d}.small{font-size:14px;fill:#222}.dimtext{font-size:14px;fill:#333}.gridtext{font-size:25px;fill:#111}.viewtitle{font-size:25px;font-weight:bold;text-decoration:underline}.warning{font-size:18px;font-weight:bold;fill:#a8202d}.sheettitle{font-size:18px;font-weight:bold}.sheettitle,.note,.foundationnote,.largewarning,.small,.dimtext,.gridtext,.viewtitle,.warning{font-family:Arial,sans-serif}@media print{body{background:white}.sheet{margin:0}}"""
+    pages="".join(f'<section class="sheet">{sheet.render(subtitle, len(sheets))}</section>' for sheet in sheets)
     return f'<!doctype html><html><head><meta charset="utf-8"><title>Draughtsman markup</title><style>{css}</style></head><body>{pages}</body></html>'
 
 

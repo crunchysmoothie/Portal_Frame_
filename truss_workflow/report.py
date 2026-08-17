@@ -142,7 +142,9 @@ def _wind_audit_html(best: Mapping[str, Any]) -> str:
 
 
 def write_truss_markup_html(
-    result: Mapping[str, Any], path: str | Path
+    result: Mapping[str, Any],
+    path: str | Path,
+    foundation_design: Mapping[str, Any] | None = None,
 ) -> Path:
     """Write a member-marked rank-1 elevation and section schedule."""
 
@@ -434,6 +436,38 @@ def write_truss_markup_html(
     restraint_rows_html = "".join(
         restraint_rows(role) for role in ("top_chord", "bottom_chord")
     )
+    if foundation_design and foundation_design.get("supports"):
+        foundation_inputs = foundation_design.get("inputs", {})
+        length_m = float(foundation_inputs.get("length_m", 0) or 0)
+        width_m = float(foundation_inputs.get("width_m", 0) or 0)
+        thickness_mm = float(foundation_inputs.get("thickness_mm", 0) or 0)
+        bar_diameter = float(foundation_inputs.get("bar_diameter_mm", 0) or 0)
+        bar_spacing = float(foundation_inputs.get("bar_spacing_mm", 0) or 0)
+        support_count = sum(
+            int(item.get("quantity", 1))
+            for item in foundation_design.get("supports", [])
+        )
+        foundation_markup = f"""
+<section class="page-break"><h2>Typical foundation markup</h2>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 620">
+<rect width="1800" height="620" fill="#FFFFFF"/><style>text{{font-family:Arial,sans-serif}}</style>
+<text x="70" y="55" font-size="25" font-weight="700" fill="#173C3A">COMMON ISOLATED PAD - DESIGN COORDINATION DETAIL</text>
+<rect x="140" y="145" width="620" height="340" fill="#f8efe3" stroke="#7a4b16" stroke-width="5"/>
+<rect x="405" y="255" width="90" height="90" fill="#ddd" stroke="#111" stroke-width="4"/>
+<line x1="140" y1="525" x2="760" y2="525" stroke="#555"/><text x="450" y="560" text-anchor="middle" font-size="18">BREADTH {width_m * 1000:,.0f} mm</text>
+<text x="95" y="320" text-anchor="middle" font-size="18" transform="rotate(-90 95 320)">LENGTH {length_m * 1000:,.0f} mm</text>
+<line x1="980" y1="205" x2="1660" y2="205" stroke="#3f6b3f" stroke-width="3" stroke-dasharray="14 7"/>
+<rect x="1040" y="350" width="560" height="105" fill="#f8efe3" stroke="#7a4b16" stroke-width="5"/>
+<rect x="1260" y="150" width="120" height="200" fill="#ddd" stroke="#111" stroke-width="4"/>
+<line x1="1080" y1="430" x2="1560" y2="430" stroke="#a8202d" stroke-width="4"/>
+<text x="1320" y="500" text-anchor="middle" font-size="18">THICKNESS {thickness_mm:,.0f} mm; T{bar_diameter:.0f} @ {bar_spacing:.0f} EACH WAY</text>
+<text x="900" y="600" text-anchor="middle" font-size="18" font-weight="700" fill="#a8202d">STATUS {escape(str(foundation_design.get('status', '')))}; TYPICAL QUANTITY {support_count}; REFER TO FOUNDATION CALCULATION SHEETS</text>
+</svg></section>"""
+    else:
+        foundation_markup = """
+<section class="page-break"><h2>Foundation markup</h2>
+<div class="warning"><strong>FOUNDATIONS HAVE NOT YET BEEN DESIGNED.</strong> No pad size, thickness, reinforcement, pedestal or founding depth is issued with this building markup.</div>
+</section>"""
     html = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Truss member markup</title>
 <style>
@@ -448,6 +482,7 @@ tr:nth-child(even){{background:#f7fafb}}
 </style></head><body>
 <div class="warning"><strong>Review markup.</strong> This drawing identifies truss geometry, member labels, selected sections and calculated restraint points. It is not a fabrication drawing and contains no connection detailing.</div>
 {"".join(svg)}
+{foundation_markup}
 <h2>Enlarged labelled member strips</h2>
 {"".join(detail_svgs)}
 <h2>Member legend</h2>

@@ -139,6 +139,12 @@ results also provide **Open connection design**. The Connections page provides
 **Download DWG** for the calculated plates, bolts, distances, welds and
 stiffeners.
 
+Foundation design offers **Rectangular** and **Square** plan shapes. Square pads
+keep equal plan dimensions; rectangular pads cannot exceed a 1.5 plan aspect
+ratio. **View foundation calculation sheets** opens the printable calculations.
+The building markup includes the designed pad plan and typical section, or an
+explicit not-yet-designed foundation note before that workflow has been run.
+
 If an input changes after analysis, run the analysis again before viewing or
 downloading outputs. The browser UI does not open the legacy PyNite deformation window;
 deflection checks and renderer data are still calculated and included in the

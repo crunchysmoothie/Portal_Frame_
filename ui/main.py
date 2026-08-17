@@ -18,6 +18,7 @@ import httpx
 from connection_workflow.viewer import list_connection_views
 from foundation_workflow.design import (
     FOUNDATION_PASSIVE_RESISTANCE_OPTIONS,
+    FOUNDATION_PLAN_SHAPES,
     FOUNDATION_SLIDING_OPTIONS,
     FOUNDATION_STANDARDS,
 )
@@ -1106,6 +1107,16 @@ def main(page: ft.Page) -> None:
         FOUNDATION_STANDARDS,
         col=12,
     )
+    foundation_plan_shape = dropdown(
+        "foundation_plan_shape",
+        "Footing plan shape",
+        FOUNDATION_PLAN_SHAPES,
+        col=12,
+        helper=(
+            "Square keeps length equal to breadth. Rectangular pads are always "
+            "limited to a maximum length-to-breadth ratio of 1:1.5."
+        ),
+    )
     foundation_length = number_field(
         "foundation_length_m",
         "Footing length (frame direction)",
@@ -1221,6 +1232,7 @@ def main(page: ft.Page) -> None:
         ),
     )
     foundation_control_keys = {
+        "foundation_plan_shape",
         "foundation_permissible_bearing_kpa",
         "foundation_concrete_strength_mpa",
         "foundation_soil_unit_weight_kn_m3",
@@ -1394,6 +1406,11 @@ def main(page: ft.Page) -> None:
             )
         ],
     )
+    foundation_report_button = ft.OutlinedButton(
+        "View foundation calculation sheets",
+        icon=ft.Icons.DESCRIPTION_OUTLINED,
+        disabled=True,
+    )
 
     def show_foundation_results(result: dict[str, Any]) -> None:
         status = str(result.get("status", "FAIL"))
@@ -1413,6 +1430,22 @@ def main(page: ft.Page) -> None:
         )
         derived = result["derived"]
         automatic = result.get("automatic_design", {})
+        artifacts = result.get("artifacts", {})
+        report_artifact = artifacts.get("foundation-report-html")
+        if report_artifact:
+            foundation_report_button.url = ft.Url(
+                url=f"{API_URL}{report_artifact['download_url']}",
+                target=ft.UrlTarget.SELF,
+            )
+            foundation_report_button.disabled = False
+        markup_artifact = (
+            artifacts.get("markup-pdf")
+            or artifacts.get("markup-html")
+            or artifacts.get("truss-markup-html")
+        )
+        if markup_artifact:
+            download_markup_button.url = f"{API_URL}{markup_artifact['download_url']}"
+            download_markup_button.disabled = False
         rows: list[ft.Control] = [
             analysis_summary_line(
                 "Automatic pad size",
@@ -1420,6 +1453,12 @@ def main(page: ft.Page) -> None:
                 f"{float(automatic.get('width_m', 0)):.2f} m wide Ã— "
                 f"{float(automatic.get('height_mm', 0)):.0f} mm high",
                 ft.Icons.STRAIGHTEN,
+            ),
+            analysis_summary_line(
+                "Plan geometry",
+                f"{automatic.get('plan_shape', result.get('inputs', {}).get('plan_shape', 'Rectangular'))} | "
+                f"aspect ratio {float(automatic.get('plan_aspect_ratio', 1.0)):.3f} <= 1.500",
+                ft.Icons.ASPECT_RATIO,
             ),
             analysis_summary_line(
                 "Design basis",
@@ -1527,6 +1566,7 @@ def main(page: ft.Page) -> None:
             key: controls[key].value for key in foundation_control_keys
         }
         foundation_design_button.disabled = True
+        foundation_report_button.disabled = True
         foundation_design_button.content = "Designing foundations..."
         foundation_status_card.bgcolor = WARNING_BG
         foundation_status_text.value = "Checking service bearing and ULS reinforced concrete design..."
@@ -2958,6 +2998,7 @@ def main(page: ft.Page) -> None:
                 connection_destination.disabled = True
                 foundation_destination.disabled = True
                 foundation_design_button.disabled = True
+                foundation_report_button.disabled = True
                 boq_destination.disabled = True
                 civil_boq_destination.disabled = True
                 civil_boq_generate_button.disabled = True
@@ -3064,6 +3105,7 @@ def main(page: ft.Page) -> None:
         connection_destination.disabled = True
         foundation_destination.disabled = True
         foundation_design_button.disabled = True
+        foundation_report_button.disabled = True
         boq_destination.disabled = True
         civil_boq_destination.disabled = True
         civil_boq_generate_button.disabled = True
@@ -3679,6 +3721,7 @@ def main(page: ft.Page) -> None:
         connection_destination.disabled = True
         foundation_destination.disabled = True
         foundation_design_button.disabled = True
+        foundation_report_button.disabled = True
         boq_destination.disabled = True
         civil_boq_destination.disabled = True
         civil_boq_generate_button.disabled = True
@@ -4724,6 +4767,7 @@ def main(page: ft.Page) -> None:
                         controls=[
                             ft.ResponsiveRow(
                                 controls=[
+                                    foundation_plan_shape,
                                     foundation_bearing,
                                     foundation_concrete,
                                     foundation_soil_weight,
@@ -4742,8 +4786,9 @@ def main(page: ft.Page) -> None:
                 ),
                 card(
                     "Automatic design assumptions",
-                    "Reinforcement and loaded-area assumptions remain fixed; automatic "
-                    "isolated pads are limited to a 1.5 plan aspect ratio. "
+                    "Reinforcement and loaded-area assumptions remain fixed. Square "
+                    "pads keep equal plan dimensions; rectangular pads are limited to "
+                    "a maximum plan aspect ratio of 1:1.5. "
                     "When the pad must resist sliding, the calculation uses the entered "
                     "base-friction and optional passive-pressure inputs. A selected "
                     "external restraint is excluded from pad sizing and remains a design hold point.",
@@ -4764,6 +4809,10 @@ def main(page: ft.Page) -> None:
                     "The common pad passes service bearing/uplift, ULS sliding and "
                     "overturning, flexure, one-way shear and punching shear.",
                     foundation_result_summary,
+                ),
+                ft.Row(
+                    alignment=ft.MainAxisAlignment.END,
+                    controls=[foundation_report_button],
                 ),
                 ft.Container(
                     bgcolor=WARNING_BG,

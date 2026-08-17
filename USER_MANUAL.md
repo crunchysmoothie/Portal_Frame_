@@ -131,10 +131,16 @@ the main eave-column section is used only as a preliminary stiffness proxy.
 After a portal-frame analysis, enter the permissible bearing pressure, soil unit
 weight, soil cover, pedestal height, base-friction coefficient and sliding-resistance basis. If
 passive resistance is credited, also enter the soil friction angle and passive
-mobilisation factor. The automatic common-pad search calculates the footing
-length, width and height in practical increments.
-The automatic search limits the footing plan aspect ratio to 1.5 so a minimum-
-volume solution cannot become an impractical strip footing.
+mobilisation factor. Select **Rectangular** or **Square** for the footing plan.
+Square design keeps length equal to breadth. The automatic common-pad search
+calculates length, breadth and height in practical increments and enforces a
+maximum plan aspect ratio of 1.5 for every rectangular candidate.
+
+After design, use **View foundation calculation sheets** for the printable,
+support-by-support bearing, stability and reinforced-concrete calculations.
+The building markup is regenerated with the calculated pad plan and typical
+section. Before foundations are designed, that markup carries an explicit
+**Foundations have not yet been designed** note and shows no pad sizes.
 
 Choose **Sliding Resisted** only where a separate restraint, such as a designed
 tie or slab load path, will carry the horizontal action. That option removes pad

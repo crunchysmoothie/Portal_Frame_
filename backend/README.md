@@ -78,3 +78,9 @@ deflection from a matching permanent-action baseline and independently rejects
 total-load roof-fall reversal as a ponding risk. The post-analysis foundation endpoint accepts soil unit weight and
 permissible bearing pressure and returns an automatically searched common pad
 length, width and height with ULS sliding and overturning safety factors.
+The request selects rectangular or square plan geometry; square pads retain
+equal dimensions and all rectangular candidates are limited to a maximum 1.5
+aspect ratio. A successful design adds printable foundation calculation sheets
+and regenerates the building markup with a foundation plan and typical detail.
+Pre-design building markups explicitly state that foundations have not yet been
+designed.
